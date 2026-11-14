@@ -12,7 +12,7 @@ v2 与 v1 的关键差别：不再「删除」应用文件，而是「中和」
   1. raw 干净 + guard 完整            → 完整还原（含 assets R3 / fndesk.js）
   2. raw/guard/baseline 全丢           → 反向补丁兜底
   3. guard 基线被旧版污染              → 跳过脏候选，仍用 raw
-  4. 应用已卸载、data-share 被删        → 事后补救（一键还原包场景）
+  4. 应用已卸载、data-share 被删        → 事后补救（仅靠系统级 guard 兜底）
   5. 连一份干净原生副本都没有          → index.html 通用清理必须剥离注入标签
   6. 还原后模拟 nginx 从 www.zip 重建  → 重建出来的仍必须是原生/中和状态
   7. 还原过程中模拟后台 worker 延时写回 → 第二轮必须把样式再中和掉

@@ -162,11 +162,10 @@ def static_checks():
     rec('static', '安装回调同步投递后台执行器',
         'restore_deferred.sh' in (ROOT / 'cmd/install_callback').read_text(
             encoding='utf-8'))
-    rp = (ROOT / 'restore-pack/cmd/install_callback').read_text(encoding='utf-8')
-    rec('static', '还原工具含旧版卸载回调自愈',
-        'disarm_legacy_uninstall' in rp and '.fnstyle-orig' in rp)
-    rec('static', '还原工具回调同样是两段式',
-        '--skip-www' in rp and 'setsid' in rp)
+    rec('static', '主包自带全部还原逻辑（不依赖独立还原工具）',
+        not (ROOT / 'restore-pack').exists() and
+        (ROOT / 'cmd/restore_system.py').is_file() and
+        (ROOT / 'cmd/restore_deferred.sh').is_file())
 
 
 # ------------------------------------------------- ② A 同步阶段零 www 写入
@@ -258,50 +257,6 @@ def sync_hook():
         not (GUARD / 'restore_pending').exists())
 
 
-# ------------------------------------------------- ⑥ E 旧版卸载回调自愈
-def self_heal():
-    build_state()
-    legacy = S / 'legacy' / 'cmd'
-    legacy.mkdir(parents=True, exist_ok=True)
-    old = legacy / 'uninstall_callback'
-    old.write_text('#!/bin/bash\n'
-                   'python3 /usr/trim/www/restore_system.py --settle 5\nexit 0\n',
-                   encoding='utf-8')
-    rp = S / 'rp'
-    rp.mkdir(exist_ok=True)
-    src = (ROOT / 'restore-pack/cmd/install_callback').read_text(encoding='utf-8')
-    src = src.replace('/usr/trim/share/.restore', str(RESTORE))
-    src = src.replace('/usr/trim/www', str(WWW))
-    cb = rp / 'install_callback'
-    cb.write_text(src, encoding='utf-8')
-    os.chmod(str(cb), 0o755)
-    for name in ('restore_system.py', 'restore_deferred.sh'):
-        shutil.copy2(str(ROOT / 'restore-pack/cmd' / name), str(rp / name))
-    e = env(sync=True)
-    e['FNSTYLE_TARGET_APP_DIR'] = str(S / 'legacy')
-    e['FNSTYLE_SKIP_KILL'] = '1'
-    r = subprocess.run(['bash', str(cb)], capture_output=True, text=True,
-                       errors='replace', env=e, timeout=90)
-    rec('E', '还原工具安装回调返回 0', r.returncode == 0,
-        (r.stdout + r.stderr)[-160:])
-    bak = legacy / 'uninstall_callback.fnstyle-orig'
-    rec('E', '旧回调已备份为 .fnstyle-orig',
-        bak.is_file() and 'python3 /usr/trim/www/' in bak.read_text(encoding='utf-8'))
-    new = old.read_text(encoding='utf-8')
-    rec('E', '旧回调被替换为安全 no-op',
-        'FnStyle 系统还原工具替换为安全 no-op' in new and 'exit 0' in new)
-    rec('E', '★ 新回调不再同步写 www/（不含 python3 调用）',
-        'python3' not in new)
-    log = GUARD / 'restore_now.log'
-    rec('E', '日志记录自愈动作',
-        log.is_file() and '已解除旧版卸载回调' in log.read_text(errors='replace'))
-    # 幂等：再跑一次不能把 .fnstyle-orig 覆盖成 no-op
-    subprocess.run(['bash', str(cb)], capture_output=True, text=True,
-                  errors='replace', env=e, timeout=90)
-    rec('E', '重复安装不再覆盖原始备份',
-        bak.is_file() and 'python3 /usr/trim/www/' in bak.read_text(encoding='utf-8'))
-
-
 def main():
     print('===== 卸载异步还原验证 =====')
     static_checks()
@@ -313,8 +268,6 @@ def main():
     switch_off()
     print('\n===== D. 同步验证钩子 =====')
     sync_hook()
-    print('\n===== E. 旧版卸载回调自愈 =====')
-    self_heal()
     passed = sum(1 for x in results if x['status'] == 'PASS')
     print('\n===== 汇总：%d/%d PASS =====' % (passed, len(results)))
     (ROOT / 'verify/result_uninstall_async.json').write_text(

@@ -1,7 +1,0 @@
-{
-    "data-share": {
-        "shares": [
-            { "name": "fnstylerestore", "permission": { "rw": ["fnstylerestore"] } }
-        ]
-    }
-}

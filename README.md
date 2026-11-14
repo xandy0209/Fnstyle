@@ -34,8 +34,7 @@
 
 | 安装包 | 直链 |
 |---|---|
-| 主应用 | `https://github.com/xandy0209/Fnstyle/releases/download/v1.0.0/fnstyle_1.0.0_all.fpk` |
-| 系统还原工具（老版本遗留样式时用） | `https://github.com/xandy0209/Fnstyle/releases/download/v1.0.0/fnstylerestore_1.0.0_all.fpk` |
+| `fnstyle_1.0.0_all.fpk` | `https://github.com/xandy0209/Fnstyle/releases/download/v1.0.0/fnstyle_1.0.0_all.fpk` |
 
 或从 [Releases 页面](https://github.com/xandy0209/Fnstyle/releases/tag/v1.0.0) 下载。
 
@@ -43,8 +42,7 @@
 
 | 文件 | 大小（字节） | MD5 | SHA256 |
 |---|---:|---|---|
-| `fnstyle_1.0.0_all.fpk` | 1,266,479 | `a1c40059194cc4d8cdb05c0a5b1c7ec6` | `52ac78a724cecc8e0764dcff8a9ff9a803dd760e384ebb888303a4b89dfb84ef` |
-| `fnstylerestore_1.0.0_all.fpk` | 62,848 | `a959c500951bceb8989c3f4744513f94` | `b97218c9d65067cfb51389a3269742be85fa7e1e29d337f7d03efc3358d61d73` |
+| `fnstyle_1.0.0_all.fpk` | 1,266,536 | `fcbd4e2924e0888c66e64a8d463931d1` | `fc40b3b1b39ffdb342aed0374f77d0cfda38549359c3c777d069007da784c7ef` |
 
 ### 安装步骤
 
@@ -66,14 +64,12 @@ trim-cli app install-fpk fnstyle_1.0.0_all.fpk --yes
 
 ## 卸载与还原
 
-软件内置「卸载后自动还原系统默认样式」开关（默认开启）。卸载采用**两段式**，避免触发 fnOS nginx 停启重建、切断应用中心的卸载请求：
+软件内置「卸载后自动还原系统默认样式」开关（默认开启），无需另装任何还原工具。卸载采用**两段式**，避免触发 fnOS nginx 停启重建、切断应用中心的卸载请求：
 
 1. **同步阶段**：只中和还原源 `www.zip / tow / raw`，完全不写 `/usr/trim/www/`，卸载请求正常返回。
 2. **后台阶段**：独立进程延迟 12 秒后再处理 `www/`、两轮复查并逐项自检，结果写入 `restore_status.json`。
 
-三次写入源（`www.zip`、`tow/`、`www/`）里的注入脚本会被替换为无操作占位、配置写成空值，因此即使系统重建 `www/` 也不会把旧样式带回来；运行时脚本读到空配置会自行停止套用并自动强刷一次。
-
-如果机器上还留着旧版 FnStyle 卸载后的残留样式（或旧版卸载报 `Failed to fetch`），先安装 `fnstylerestore_1.0.0_all.fpk`（会解除旧版卸载回调并还原），也可用 `sudo bash tools/restore_now.sh` 手动执行。日志位于 `/usr/trim/share/.restore/fnstyle-guard/`。
+三次写入源（`www.zip`、`tow/`、`www/`）里的注入脚本会被替换为无操作占位、配置写成空值，因此即使系统重建 `www/` 也不会把旧样式带回来；运行时脚本读到空配置会自行停止套用并自动强刷一次。卸载日志位于 `/usr/trim/share/.restore/fnstyle-guard/`。
 
 ---
 
@@ -83,10 +79,9 @@ trim-cli app install-fpk fnstyle_1.0.0_all.fpk --yes
 git clone https://github.com/xandy0209/Fnstyle.git
 cd Fnstyle
 bash build.sh              # 产出 ./fnstyle_1.0.0_all.fpk（仓库根目录）
-bash restore-pack/build.sh # 产出 dist/fnstylerestore_1.0.0_all.fpk 与 tools/restore_now.sh
 ```
 
-`build.sh` 输出到仓库根目录，发布前需自行 `cp` 到 `dist/`。两个脚本都会重算 `manifest` 的 `checksum`（即 `app.tgz` 的 MD5）。
+`build.sh` 输出到仓库根目录，发布前需自行 `cp` 到 `dist/`。脚本会重算 `manifest` 的 `checksum`（即 `app.tgz` 的 MD5）。
 
 本地预览：`python3 preview.py`（默认端口 8765，被占用时自动顺延）。
 
@@ -107,17 +102,15 @@ app/ui/
   apply_worker.sh / recheck.sh 后台写入与复查
 app/seed/                       出厂数据：配置、5 张图片、5 个库源、31 个主题快照
 pic/                            界面规格里的 5 张默认图片（原始素材）
-restore-pack/                  独立的一次性系统还原工具
-tools/restore_now.sh            手动还原脚本（有 SSH 时用）
-verify/                         11 组自动化验证脚本
-dist/                           已构建的两个 fpk 安装包
+verify/                         10 组自动化验证脚本
+dist/                           已构建的 fpk 安装包
 ```
 
 ---
 
 ## 验证
 
-`verify/` 下 11 组脚本覆盖写入链路、首次应用、浏览器渲染、默认按钮、空配置自禁用、浮层帧级时序、卸载还原、还原入口、自动还原开关、异步卸载、主题库默认加载；`verify/result_*.json` 是对应结果。当前版本全部通过。
+`verify/` 下 10 组脚本覆盖写入链路、首次应用、浏览器渲染、默认按钮、空配置自禁用、浮层帧级时序、卸载还原、自动还原开关、异步卸载、主题库默认加载；`verify/result_*.json` 是对应结果。当前版本全部通过。
 
 ---
 

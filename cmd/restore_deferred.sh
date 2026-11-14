@@ -1,6 +1,6 @@
 #!/bin/bash
 # ---------------------------------------------------------------------------
-# restore_deferred.sh —— 卸载 / 一键还原的「延迟后台还原执行器」
+# restore_deferred.sh —— 卸载时的「延迟后台还原执行器」
 #
 # ⚠★⚠★ 为什么必须是「延迟 + 完全脱离会话」的独立进程：
 #   fnOS 的 nginx 内置 ngx_http_trim_recover 用 inotify 监控 /usr/trim/www/，

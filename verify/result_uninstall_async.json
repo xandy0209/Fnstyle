@@ -31,13 +31,7 @@
   },
   {
     "group": "static",
-    "item": "还原工具含旧版卸载回调自愈",
-    "status": "PASS",
-    "detail": ""
-  },
-  {
-    "group": "static",
-    "item": "还原工具回调同样是两段式",
+    "item": "主包自带全部还原逻辑（不依赖独立还原工具）",
     "status": "PASS",
     "detail": ""
   },
@@ -45,7 +39,7 @@
     "group": "A",
     "item": "卸载回调立即返回（不等待后台还原）",
     "status": "PASS",
-    "detail": "rc=0 耗时=1.08s 1s，日志 /tmp/fnstyle_uninstall_async/guard/restore_now.log）\n[uninstall_callback] 卸载回调完成（未触碰 /usr/trim/www/，应用中心卸载请求可正常返回）\n"
+    "detail": "rc=0 耗时=1.01s 1s，日志 /tmp/fnstyle_uninstall_async/guard/restore_now.log）\n[uninstall_callback] 卸载回调完成（未触碰 /usr/trim/www/，应用中心卸载请求可正常返回）\n"
   },
   {
     "group": "A",
@@ -105,7 +99,7 @@
     "group": "B",
     "item": "后台任务在延迟后完成（pending 清除）",
     "status": "PASS",
-    "detail": "guard/restore_now.log 尾部: deferred 2026-11-14 22:33:17] 还原脚本退出码 0\n2026-11-14 22:33:17 VERIFY: PASS\n[restore_deferred 2026-11-14 22:33:17] ===== 后台还原结束（浏览器需 Cmd/Ctrl + Shift + R 强刷）=====\n"
+    "detail": "guard/restore_now.log 尾部: 1-14 23:20:23 提示：浏览器需强制刷新（Ctrl/Cmd + Shift + R）；旧标签页里的运行时脚本缓存了配置，不刷新会继续套用旧样式。\n[restore_deferred 2026-11-14 23:20:23] 还原脚本退出码 0\n2026-11-14 23:20:23 VERIFY: PASS\n"
   },
   {
     "group": "B",
@@ -153,7 +147,7 @@
     "group": "C",
     "item": "关闭开关时回调立即返回",
     "status": "PASS",
-    "detail": "耗时 0.35s"
+    "detail": "耗时 0.34s"
   },
   {
     "group": "C",
@@ -194,42 +188,6 @@
   {
     "group": "D",
     "item": "同步钩子不排程后台任务",
-    "status": "PASS",
-    "detail": ""
-  },
-  {
-    "group": "E",
-    "item": "还原工具安装回调返回 0",
-    "status": "PASS",
-    "detail": "[fnstyle-restore] 还原已排程（约 1s 后完成，请强刷浏览器）；日志：/tmp/fnstyle_uninstall_async/guard/restore_now.log\n"
-  },
-  {
-    "group": "E",
-    "item": "旧回调已备份为 .fnstyle-orig",
-    "status": "PASS",
-    "detail": ""
-  },
-  {
-    "group": "E",
-    "item": "旧回调被替换为安全 no-op",
-    "status": "PASS",
-    "detail": ""
-  },
-  {
-    "group": "E",
-    "item": "★ 新回调不再同步写 www/（不含 python3 调用）",
-    "status": "PASS",
-    "detail": ""
-  },
-  {
-    "group": "E",
-    "item": "日志记录自愈动作",
-    "status": "PASS",
-    "detail": ""
-  },
-  {
-    "group": "E",
-    "item": "重复安装不再覆盖原始备份",
     "status": "PASS",
     "detail": ""
   }
