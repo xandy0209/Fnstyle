@@ -10,6 +10,21 @@
 <body>
 <div class="wrap">
 
+  <!-- ====================== 更新提醒横幅（默认隐藏） ====================== -->
+  <!-- 检测到新版本时由 JS 显示：顶部固定提示 + 下载链接 + 忽略/稍后 -->
+  <div class="update-banner" id="updateBanner" hidden>
+    <div class="ub-icon">🆕</div>
+    <div class="ub-main">
+      <div class="ub-title">发现新版本 <b id="ubLatest"></b><span class="ub-current">（当前 <span id="ubCurrent"></span>）</span></div>
+      <div class="ub-changelog" id="ubChangelog"></div>
+    </div>
+    <div class="ub-actions">
+      <a class="btn primary sm" id="ubDownload" target="_blank" rel="noopener">前往下载</a>
+      <button class="btn sm" id="ubIgnore">忽略此版本</button>
+      <button class="btn sm" id="ubLater">稍后</button>
+    </div>
+  </div>
+
   <!-- ============================ 顶栏 ============================ -->
   <!-- 注：这里不再放应用图标 —— fnOS 桌面/窗口标题栏已自带应用图标，
        页面里再画一个会重复（见用户 2026-11-12 反馈）。 -->
@@ -35,6 +50,30 @@
     <div class="card">
       <div class="body" id="personalizeBody">
         <div class="loading"><span class="spin"></span> 正在读取配置…</div>
+      </div>
+    </div>
+
+    <!-- 更新设置：独立于上面的配置表单（不写入 fnstyle.json，
+         状态仅存浏览器 localStorage），由 JS 单独渲染与绑定 -->
+    <div class="card" id="updateCard">
+      <header><h2><span>🔄</span> 更新</h2></header>
+      <div class="body" id="updateBody">
+        <div class="fitem fitem-wide">
+          <div class="fitem-head">
+            <label for="autoCheckUpdate">自动检查更新</label>
+            <span class="hint">打开软件时自动检查 GitHub 上的最新版本，发现新版本后在此提醒</span>
+          </div>
+          <div class="fitem-body">
+            <label class="switch" for="autoCheckUpdate">
+              <input type="checkbox" id="autoCheckUpdate">
+              <span class="slider"></span>
+            </label>
+            <span class="switch-text" id="autoCheckText">开启</span>
+            <div class="spacer"></div>
+            <button class="btn sm" id="btnCheckUpdate">立即检查更新</button>
+            <span class="ub-status" id="updateCheckStatus"></span>
+          </div>
+        </div>
       </div>
     </div>
   </div>

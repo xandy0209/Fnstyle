@@ -1506,6 +1506,94 @@
     });
   }
 
+  /* ---------------------------- 更新检查 ----------------------------
+   * 打开软件时自动检查 GitHub 上的最新版本（后端 /api/version 服务端拉取，
+   * 避开浏览器 CORS），发现新版本后在顶部弹出更新横幅并附下载链接。
+   * 「自动检查更新」开关与「忽略的版本」只存浏览器 localStorage，
+   * 不写 fnstyle.json（属于客户端偏好，不是系统个性化配置）。 */
+  var UPDATE_IGNORE_KEY = 'fnstyle_ignored_version_v1';
+  var AUTOCHECK_KEY = 'fnstyle_autocheck_update_v1';
+
+  function getAutoCheck() {
+    try { return localStorage.getItem(AUTOCHECK_KEY) !== '0'; } catch (e) { return true; }
+  }
+  function setAutoCheck(v) {
+    try { localStorage.setItem(AUTOCHECK_KEY, v ? '1' : '0'); } catch (e) {}
+  }
+
+  function showUpdateBanner(r) {
+    var b = $('#updateBanner');
+    if (!b) return;
+    $('#ubLatest').textContent = 'v' + (r.latest || '');
+    $('#ubCurrent').textContent = 'v' + (r.current || '');
+    var parts = [];
+    if (r.releaseDate) parts.push(r.releaseDate);
+    if (r.changelog) parts.push(r.changelog);
+    $('#ubChangelog').textContent = parts.join('  ·  ');
+    var dl = $('#ubDownload');
+    if (dl) dl.href = r.downloadUrl || '';
+    b.hidden = false;
+  }
+  function hideUpdateBanner() {
+    var b = $('#updateBanner');
+    if (b) b.hidden = true;
+  }
+
+  /* opts.silent=true 时不改写「立即检查更新」按钮的状态文字（自动检查用） */
+  function checkForUpdate(opts) {
+    opts = opts || {};
+    var statusEl = $('#updateCheckStatus');
+    if (statusEl && !opts.silent) statusEl.textContent = '检查中…';
+    return api('version').then(function (r) {
+      if (!r || r.success === false || !r.latest) {
+        if (statusEl && !opts.silent) statusEl.textContent = '检查更新失败';
+        return null;
+      }
+      if (!r.updateAvailable) {
+        if (statusEl && !opts.silent) statusEl.textContent = '已是最新版本（v' + r.latest + '）';
+        hideUpdateBanner();
+        return r;
+      }
+      /* 用户曾点过「忽略此版本」→ 不再弹横幅 */
+      var ig = null;
+      try { ig = localStorage.getItem(UPDATE_IGNORE_KEY); } catch (e) {}
+      if (ig && ig === String(r.latest)) {
+        if (statusEl && !opts.silent) statusEl.textContent = '已是最新（已忽略 v' + r.latest + '）';
+        return r;
+      }
+      showUpdateBanner(r);
+      if (statusEl && !opts.silent) statusEl.textContent = '';
+      return r;
+    }).catch(function () {
+      if (statusEl && !opts.silent) statusEl.textContent = '检查更新失败';
+      return null;
+    });
+  }
+
+  function setupUpdateUI() {
+    var cb = $('#autoCheckUpdate');
+    if (cb) {
+      cb.checked = getAutoCheck();
+      var txt = $('#autoCheckText');
+      if (txt) txt.textContent = cb.checked ? '开启' : '关闭';
+      cb.addEventListener('change', function () {
+        setAutoCheck(cb.checked);
+        if (txt) txt.textContent = cb.checked ? '开启' : '关闭';
+        if (cb.checked) checkForUpdate({ silent: true });
+      });
+    }
+    var ignore = $('#ubIgnore');
+    if (ignore) ignore.addEventListener('click', function () {
+      var latest = ($('#ubLatest').textContent || '').replace(/^v/, '');
+      try { if (latest) localStorage.setItem(UPDATE_IGNORE_KEY, latest); } catch (e) {}
+      hideUpdateBanner();
+    });
+    var later = $('#ubLater');
+    if (later) later.addEventListener('click', hideUpdateBanner);
+    var check = $('#btnCheckUpdate');
+    if (check) check.addEventListener('click', function () { checkForUpdate({ silent: false }); });
+  }
+
   /* ---------------------------- 初始化 ---------------------------- */
   function init() {
     /* 标签页 */
@@ -1574,6 +1662,12 @@
       .then(loadLibs)
       .then(autoLoadDefaultLibs)
       .catch(function () { /* api() 已把网络异常折叠成响应对象，这里只防意外 */ });
+
+    /* 更新检查：绑定「更新」设置卡片，并按开关自动检查一次 */
+    setupUpdateUI();
+    if (getAutoCheck()) {
+      checkForUpdate({ silent: true });
+    }
 
     /* 库源下拉菜单开合 */
     var msToggle = $('#libSelectToggle');

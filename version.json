@@ -1,0 +1,6 @@
+{
+  "version": "1.1.0",
+  "releaseDate": "2026-11-15",
+  "downloadUrl": "https://github.com/xandy0209/Fnstyle/releases/download/v1.1.0/fnstyle_1.1.0_all.fpk",
+  "changelog": "新增「自动更新提醒」：打开软件时自动检查 GitHub 上的最新版本，发现新版本后在顶部弹出更新横幅并附下载链接；可在「更新」设置中关闭自动检查或手动「立即检查更新」。卸载还原、主题库默认加载、两段式卸载等既有能力保持不变。"
+}

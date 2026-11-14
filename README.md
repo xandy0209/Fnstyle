@@ -34,15 +34,15 @@
 
 | 安装包 | 直链 |
 |---|---|
-| `fnstyle_1.0.0_all.fpk` | `https://github.com/xandy0209/Fnstyle/releases/download/v1.0.0/fnstyle_1.0.0_all.fpk` |
+| `fnstyle_1.1.0_all.fpk` | `https://github.com/xandy0209/Fnstyle/releases/download/v1.1.0/fnstyle_1.1.0_all.fpk` |
 
-或从 [Releases 页面](https://github.com/xandy0209/Fnstyle/releases/tag/v1.0.0) 下载。
+或从 [Releases 页面](https://github.com/xandy0209/Fnstyle/releases/tag/v1.1.0) 下载。
 
 校验值：
 
 | 文件 | 大小（字节） | MD5 | SHA256 |
 |---|---:|---|---|
-| `fnstyle_1.0.0_all.fpk` | 1,266,536 | `fcbd4e2924e0888c66e64a8d463931d1` | `fc40b3b1b39ffdb342aed0374f77d0cfda38549359c3c777d069007da784c7ef` |
+| `fnstyle_1.1.0_all.fpk` | 1,269,646 | `63a6d61d067fe7e80f64b73050024739` | `cd3ff59ac89f77b341bb0ed476a72903ad12498a48cbdb4b4c5170b824ad37c3` |
 
 ### 安装步骤
 
@@ -51,8 +51,8 @@
 **方式 B · 命令行**（宿主上以 root 执行）：
 
 ```bash
-trim-cli app install-fpk fnstyle_1.0.0_all.fpk --dry-run --yes
-trim-cli app install-fpk fnstyle_1.0.0_all.fpk --yes
+trim-cli app install-fpk fnstyle_1.1.0_all.fpk --dry-run --yes
+trim-cli app install-fpk fnstyle_1.1.0_all.fpk --yes
 ```
 
 > ⚠️ **不支持覆盖安装**，升级需先卸载再装。卸载不会删除数据目录里的配置、主题与上传图片。
@@ -73,12 +73,36 @@ trim-cli app install-fpk fnstyle_1.0.0_all.fpk --yes
 
 ---
 
+## 自动更新提醒
+
+FnStyle 内置**「有更新自动提醒」**能力，无需接入任何第三方应用商店，纯靠公开 GitHub 仓库即可工作。
+
+**工作原理**（避开 fnOS 浏览器跨域限制）：
+
+1. 打开软件、且「自动检查更新」开关开启时，前端请求本地后端 `GET /api/version`。
+2. 后端（NAS 侧）拉取远程版本清单做语义化版本比较：
+   - 首选仓库根目录的 `version.json`（`raw.githubusercontent.com`）；
+   - 兜底 GitHub Releases API（`api.github.com/.../releases/latest`）。
+   - 两者均可由环境变量 `FNSTYLE_VERSION_URL` / `FNSTYLE_VERSION_API` 覆盖，便于自托管或内网测试。
+3. 发现更高版本时，前端在页面顶部弹出更新横幅，展示**版本号、发布日期、变更说明**，并提供：
+   - **前往下载** —— 跳转到 GitHub Release 附件（fpk 直链）；
+   - **忽略此版本** —— 该版本号写入 `localStorage`，不再打扰；
+   - **稍后** —— 本次会话不再提示。
+
+网络失败、清单不可达或已是最新版时静默降级（`updateAvailable:false`），不报错、不阻塞界面。
+
+**设置入口**：`Fnstyle个性化设置 → 更新` 分组，提供「自动检查更新」开关（默认开启）与「立即检查更新」按钮。开关状态与忽略版本仅存于浏览器 `localStorage`，不写入 `fnstyle.json`，卸载重装后恢复默认。
+
+要发布一个新版本，只需：在仓库根目录 `version.json` 更新 `version` / `downloadUrl` / `changelog`，并将新 fpk 上传到对应 GitHub Release 即可，客户端会自动感知。
+
+---
+
 ## 从源码构建
 
 ```bash
 git clone https://github.com/xandy0209/Fnstyle.git
 cd Fnstyle
-bash build.sh              # 产出 ./fnstyle_1.0.0_all.fpk（仓库根目录）
+bash build.sh              # 产出 ./fnstyle_1.1.0_all.fpk（仓库根目录）
 ```
 
 `build.sh` 输出到仓库根目录，发布前需自行 `cp` 到 `dist/`。脚本会重算 `manifest` 的 `checksum`（即 `app.tgz` 的 MD5）。
@@ -102,15 +126,15 @@ app/ui/
   apply_worker.sh / recheck.sh 后台写入与复查
 app/seed/                       出厂数据：配置、5 张图片、5 个库源、31 个主题快照
 pic/                            界面规格里的 5 张默认图片（原始素材）
-verify/                         10 组自动化验证脚本
+verify/                         11 组自动化验证脚本
 dist/                           已构建的 fpk 安装包
-```
+version.json                    远程版本清单（GitHub 自动更新读取此文件）
 
 ---
 
 ## 验证
 
-`verify/` 下 10 组脚本覆盖写入链路、首次应用、浏览器渲染、默认按钮、空配置自禁用、浮层帧级时序、卸载还原、自动还原开关、异步卸载、主题库默认加载；`verify/result_*.json` 是对应结果。当前版本全部通过。
+`verify/` 下 11 组脚本覆盖写入链路、首次应用、浏览器渲染、默认按钮、空配置自禁用、浮层帧级时序、卸载还原、自动还原开关、异步卸载、主题库默认加载、自动更新检查；`verify/result_*.json` 是对应结果。当前版本全部通过。
 
 ---
 

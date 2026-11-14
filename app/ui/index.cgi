@@ -20,6 +20,11 @@
 # ---------------------------------------------------------------------------
 set -uo pipefail
 
+# ------------------------- 版本与更新检查 -------------------------
+# ⚠️ 必须与 manifest 的 version 保持一致（自动更新靠它判断「是否比线上新」）。
+# GitHub 发布新版本时，两处都要改：manifest 的 version + 本常量。
+APP_VERSION="1.1.0"
+
 # ----------------------------- 路径配置 -----------------------------
 # APP_ROOT 是 fnOS 安装后创建的标准软链：
 #   /var/apps/<pkg>/target -> /volN/@appcenter/<pkg>
@@ -1750,6 +1755,92 @@ url_decode() {
     printf '%s' "${s//+/ }"
 }
 
+# --------------------------- 版本与更新检查 ---------------------------
+# 服务端拉取远程版本清单（避开浏览器 CORS），与本地安装版本比较，
+# 返回 updateAvailable，由前端弹出更新提醒横幅。
+#
+# 远程清单可由环境变量覆盖（便于自托管 / 本地测试）：
+#   FNSTYLE_VERSION_URL → 首选清单地址（默认 GitHub raw 的 version.json）
+#   FNSTYLE_VERSION_API → 兜底地址（默认 GitHub Releases API，自动解析最新 release）
+# 清单 JSON 两种形状都认：
+#   ① version.json：      {version, releaseDate, downloadUrl, changelog}
+#   ② GitHub API：        {tag_name, published_at, body, assets[].browser_download_url}
+# ---------------------------------------------------------------------------
+
+# 语义化版本比较：返回 0 表示 $1 > $2（忽略开头的 v）
+ver_compare() {
+  local a="${1#v}" b="${2#v}"
+  [ "$a" = "$b" ] && return 1
+  local IFS='.'
+  local aa=($a) bb=($b)
+  local i an bn
+  for i in 0 1 2; do
+    an=$(( ${aa[i]:-0} + 0 ))
+    bn=$(( ${bb[i]:-0} + 0 ))
+    if [ "$an" -gt "$bn" ]; then return 0; fi
+    if [ "$an" -lt "$bn" ]; then return 1; fi
+  done
+  return 1
+}
+
+# 解析远程清单（参数 $1=JSON 文件路径），输出 TSV：version<TAB>url<TAB>date<TAB>note
+# ⚠️ 必须用「文件路径参数」而非 stdin 传 JSON：
+#    若写成 `parse_remote < "$tmp"`，外层 `< "$tmp"` 重定向会覆盖函数内
+#    `python3 - <<'PY'` 的 heredoc stdin，导致 python 把 JSON 当成脚本执行而报错。
+parse_remote() {
+  python3 - "$1" <<'PY'
+import sys, json
+try:
+    with open(sys.argv[1], encoding='utf-8', errors='replace') as f:
+        raw = f.read()
+except Exception:
+    sys.exit(1)
+try:
+    d = json.loads(raw)
+except Exception:
+    sys.exit(1)
+if not isinstance(d, dict):
+    sys.exit(1)
+ver = d.get('version') or d.get('tag_name') or ''
+url = d.get('downloadUrl') or ''
+date = d.get('releaseDate') or d.get('published_at') or ''
+note = d.get('changelog') or d.get('body') or ''
+if not url and isinstance(d.get('assets'), list):
+    for a in d['assets']:
+        if str(a.get('name', '')).endswith('.fpk'):
+            url = a.get('browser_download_url', '')
+            break
+print('\t'.join([str(ver), str(url), str(date), str(note)]))
+PY
+}
+
+# 拉取并解析远程版本清单；成功则填充 R_VERSION/R_URL/R_DATE/R_NOTE，返回 0
+get_remote_version() {
+  R_VERSION=""; R_URL=""; R_DATE=""; R_NOTE=""
+  local url="$1"
+  [ -z "$url" ] && return 1
+  local tmp="${DATA_DIR}/.vercheck.$$"
+  if ! curl -fsSL --max-time 15 -H 'User-Agent: Mozilla/5.0' -o "$tmp" "$url" 2>/dev/null; then
+    rm -f "$tmp"; return 1
+  fi
+  [ -s "$tmp" ] || { rm -f "$tmp"; return 1; }
+  # 首字节必须是 JSON（5b='[' / 7b='{' / ef=BOM），否则视为无效响应
+  local first="$(head -c 1 "$tmp" 2>/dev/null | od -An -tx1 2>/dev/null | tr -d ' \n')"
+  case "$first" in 5b|7b|ef) ;; *) rm -f "$tmp"; return 1 ;; esac
+  local out
+  out="$(parse_remote "$tmp" 2>/dev/null)"
+  rm -f "$tmp"
+  [ -z "$out" ] && return 1
+  R_VERSION="$(printf '%s' "$out" | cut -f1)"
+  R_URL="$(printf '%s' "$out" | cut -f2)"
+  R_DATE="$(printf '%s' "$out" | cut -f3)"
+  R_NOTE="$(printf '%s' "$out" | cut -f4)"
+  # 统一去掉版本号前导的 v（GitHub tag 多为 v1.2.0，version.json 多为 1.2.0），
+  # 前端展示时统一用 'v' + latest，避免重复前缀。
+  R_VERSION="${R_VERSION#v}"
+  [ -n "$R_VERSION" ] && return 0 || return 1
+}
+
 # --------------------------- 路由分发 ---------------------------
 REQ_METHOD="${REQUEST_METHOD:-GET}"
 URI="${REQUEST_URI:-/}"
@@ -1766,6 +1857,38 @@ REL="${REL%%\?*}"
 [ -z "$REL" ] && REL="/"
 
 case "$REL" in
+    /api/version)
+        # 检查远程最新版本，与本地安装版本比较，返回是否可更新
+        CUR="$APP_VERSION"
+        R_VERSION=""; R_URL=""; R_DATE=""; R_NOTE=""
+        URL_SRC="${FNSTYLE_VERSION_URL:-https://raw.githubusercontent.com/xandy0209/Fnstyle/main/version.json}"
+        URL_API="${FNSTYLE_VERSION_API:-https://api.github.com/repos/xandy0209/Fnstyle/releases/latest}"
+        # 首选 version.json；失败（网络/被墙）再试 GitHub Releases API；
+        # 都失败则静默返回 updateAvailable:false，不让前端报错。
+        get_remote_version "$URL_SRC" || get_remote_version "$URL_API"
+        AVAIL=0
+        if [ -n "$R_VERSION" ] && ver_compare "$R_VERSION" "$CUR"; then
+            AVAIL=1
+        fi
+        BODY="$(FN_V_CURRENT="$CUR" FN_V_LATEST="$R_VERSION" FN_V_URL="$R_URL" \
+            FN_V_DATE="$R_DATE" FN_V_NOTE="$R_NOTE" FN_V_AVAIL="$AVAIL" \
+            python3 - <<'PY'
+import json, os
+print(json.dumps({
+    "current": os.environ.get("FN_V_CURRENT", ""),
+    "latest": os.environ.get("FN_V_LATEST", ""),
+    "updateAvailable": os.environ.get("FN_V_AVAIL", "0") == "1",
+    "downloadUrl": os.environ.get("FN_V_URL", ""),
+    "releaseDate": os.environ.get("FN_V_DATE", ""),
+    "changelog": os.environ.get("FN_V_NOTE", ""),
+}, ensure_ascii=False))
+PY
+        )"
+        [ -z "$BODY" ] && BODY="{\"current\":\"$CUR\",\"latest\":\"$R_VERSION\",\"updateAvailable\":$AVAIL}"
+        http_json "200 OK" "$BODY"
+        exit 0
+        ;;
+
     /api/config)
         if [ "$REQ_METHOD" = "GET" ]; then
             [ -f "$CFG_FILE" ] || { echo '{}' > "$CFG_FILE"; chmod 644 "$CFG_FILE"; }

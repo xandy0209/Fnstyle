@@ -607,6 +607,61 @@ input[type="range"] {
 .toast.err  { border-left-color: var(--danger);  background: var(--danger-soft); }
 .toast.warn { border-left-color: var(--warning); background: var(--warning-soft); }
 
+/* --------------------------- 更新提醒横幅 --------------------------- */
+.update-banner {
+  display: flex;
+  align-items: center;
+  gap: .9rem;
+  padding: .8rem 1.1rem;
+  margin-bottom: 1.1rem;
+  background: linear-gradient(135deg, var(--accent-soft), rgba(168, 85, 247, .10));
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.update-banner[hidden] { display: none; }
+.update-banner .ub-icon {
+  font-size: 1.5rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.ub-main { flex: 1 1 auto; min-width: 0; }
+.ub-title {
+  font-size: .92rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.ub-title b { color: var(--accent); }
+.ub-current {
+  color: var(--text-secondary);
+  font-weight: 400;
+  font-size: .82rem;
+}
+.ub-changelog {
+  margin-top: .2rem;
+  font-size: .82rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  max-height: 4.8em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ub-actions {
+  display: flex;
+  gap: .45rem;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.ub-actions .btn { text-decoration: none; }
+.ub-status {
+  font-size: .8rem;
+  color: var(--text-muted);
+  margin-left: .3rem;
+  min-width: 2em;
+}
+
+
 /* 同步区 */
 .sync-bar {
   display: flex;
