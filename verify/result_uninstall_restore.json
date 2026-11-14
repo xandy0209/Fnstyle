@@ -1,0 +1,1010 @@
+[
+  {
+    "group": "round1_clean_raw_and_guard",
+    "item": "还原脚本退出码为 0",
+    "status": "PASS",
+    "detail": "26-11-14 22:32:48 统计：zip 剔除 1 / 改写 6，目录改写 12 / 删除 2，反向补丁 0 次，终止后台进程 0 个\n2026-11-14 22:32:48 ===== 系统原生样式还原结束 =====\n2026-11-14 22:32:48 提示：浏览器需强制刷新（Ctrl/Cmd + Shift + R）；旧标签页里的运行时脚本缓存了配置，不刷新会继续套用旧样式。\n\n"
+  },
+  {
+    "group": "round1_clean_raw_and_guard",
+    "item": "zip 已剔除应用图片条目",
+    "status": "PASS",
+    "detail": "['deskdata/fnstyle/']"
+  },
+  {
+    "group": "round1_clean_raw_and_guard",
+    "item": "zip 保留目录条目与原生资源",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round1_clean_raw_and_guard",
+    "item": "zip 注入脚本已中和为 stub",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round1_clean_raw_and_guard",
+    "item": "zip fnstyle.json 已中和为空配置",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round1_clean_raw_and_guard",
+    "item": "zip index.html 恢复原生",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round1_clean_raw_and_guard",
+    "item": "zip assets 主包 R3 恢复原生逻辑",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round1_clean_raw_and_guard",
+    "item": "zip fndesk.js 恢复原生双标题",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round1_clean_raw_and_guard",
+    "item": "tow/index.html 恢复原生",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round1_clean_raw_and_guard",
+    "item": "tow 注入 script 标签已剥离",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round1_clean_raw_and_guard",
+    "item": "tow/assets 主包 R3 恢复",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round1_clean_raw_and_guard",
+    "item": "tow/fndesk.js 恢复",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round1_clean_raw_and_guard",
+    "item": "tow 注入脚本已中和为 stub",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round1_clean_raw_and_guard",
+    "item": "tow 配置已中和",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round1_clean_raw_and_guard",
+    "item": "tow 应用图片目录已清除",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round1_clean_raw_and_guard",
+    "item": "www/index.html 恢复原生",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round1_clean_raw_and_guard",
+    "item": "www 注入 script 标签已剥离",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round1_clean_raw_and_guard",
+    "item": "www/assets 主包 R3 恢复",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round1_clean_raw_and_guard",
+    "item": "www/fndesk.js 恢复",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round1_clean_raw_and_guard",
+    "item": "www 注入脚本已中和为 stub",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round1_clean_raw_and_guard",
+    "item": "www 配置已中和",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round1_clean_raw_and_guard",
+    "item": "www 应用图片目录已清除",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round1_clean_raw_and_guard",
+    "item": "日志同时写入 guard 与 data-share",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round1_clean_raw_and_guard",
+    "item": "日志含 VERIFY: PASS",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round1_clean_raw_and_guard",
+    "item": "日志含两轮执行与 nginx 重建触发",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round1_clean_raw_and_guard",
+    "item": "日志无未捕获异常",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round1_clean_raw_and_guard",
+    "item": "restore_status.json 标记 ok",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round1_clean_raw_and_guard",
+    "item": "--verify-only 自检通过",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round2_no_baseline_reverse_patch",
+    "item": "还原脚本退出码为 0",
+    "status": "PASS",
+    "detail": "26-11-14 22:32:49 统计：zip 剔除 1 / 改写 6，目录改写 12 / 删除 2，反向补丁 6 次，终止后台进程 0 个\n2026-11-14 22:32:49 ===== 系统原生样式还原结束 =====\n2026-11-14 22:32:49 提示：浏览器需强制刷新（Ctrl/Cmd + Shift + R）；旧标签页里的运行时脚本缓存了配置，不刷新会继续套用旧样式。\n\n"
+  },
+  {
+    "group": "round2_no_baseline_reverse_patch",
+    "item": "zip 已剔除应用图片条目",
+    "status": "PASS",
+    "detail": "['deskdata/fnstyle/']"
+  },
+  {
+    "group": "round2_no_baseline_reverse_patch",
+    "item": "zip 保留目录条目与原生资源",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round2_no_baseline_reverse_patch",
+    "item": "zip 注入脚本已中和为 stub",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round2_no_baseline_reverse_patch",
+    "item": "zip fnstyle.json 已中和为空配置",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round2_no_baseline_reverse_patch",
+    "item": "zip index.html 恢复原生",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round2_no_baseline_reverse_patch",
+    "item": "zip assets 主包 R3 恢复原生逻辑",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round2_no_baseline_reverse_patch",
+    "item": "zip fndesk.js 恢复原生双标题",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round2_no_baseline_reverse_patch",
+    "item": "tow/index.html 恢复原生",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round2_no_baseline_reverse_patch",
+    "item": "tow 注入 script 标签已剥离",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round2_no_baseline_reverse_patch",
+    "item": "tow/assets 主包 R3 恢复",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round2_no_baseline_reverse_patch",
+    "item": "tow/fndesk.js 恢复",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round2_no_baseline_reverse_patch",
+    "item": "tow 注入脚本已中和为 stub",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round2_no_baseline_reverse_patch",
+    "item": "tow 配置已中和",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round2_no_baseline_reverse_patch",
+    "item": "tow 应用图片目录已清除",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round2_no_baseline_reverse_patch",
+    "item": "www/index.html 恢复原生",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round2_no_baseline_reverse_patch",
+    "item": "www 注入 script 标签已剥离",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round2_no_baseline_reverse_patch",
+    "item": "www/assets 主包 R3 恢复",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round2_no_baseline_reverse_patch",
+    "item": "www/fndesk.js 恢复",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round2_no_baseline_reverse_patch",
+    "item": "www 注入脚本已中和为 stub",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round2_no_baseline_reverse_patch",
+    "item": "www 配置已中和",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round2_no_baseline_reverse_patch",
+    "item": "www 应用图片目录已清除",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round2_no_baseline_reverse_patch",
+    "item": "日志同时写入 guard 与 data-share",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round2_no_baseline_reverse_patch",
+    "item": "日志含 VERIFY: PASS",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round2_no_baseline_reverse_patch",
+    "item": "日志含两轮执行与 nginx 重建触发",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round2_no_baseline_reverse_patch",
+    "item": "日志无未捕获异常",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round2_no_baseline_reverse_patch",
+    "item": "restore_status.json 标记 ok",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round2_no_baseline_reverse_patch",
+    "item": "--verify-only 自检通过",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round3_guard_polluted",
+    "item": "还原脚本退出码为 0",
+    "status": "PASS",
+    "detail": "26-11-14 22:32:49 统计：zip 剔除 1 / 改写 6，目录改写 12 / 删除 2，反向补丁 0 次，终止后台进程 0 个\n2026-11-14 22:32:49 ===== 系统原生样式还原结束 =====\n2026-11-14 22:32:49 提示：浏览器需强制刷新（Ctrl/Cmd + Shift + R）；旧标签页里的运行时脚本缓存了配置，不刷新会继续套用旧样式。\n\n"
+  },
+  {
+    "group": "round3_guard_polluted",
+    "item": "zip 已剔除应用图片条目",
+    "status": "PASS",
+    "detail": "['deskdata/fnstyle/']"
+  },
+  {
+    "group": "round3_guard_polluted",
+    "item": "zip 保留目录条目与原生资源",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round3_guard_polluted",
+    "item": "zip 注入脚本已中和为 stub",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round3_guard_polluted",
+    "item": "zip fnstyle.json 已中和为空配置",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round3_guard_polluted",
+    "item": "zip index.html 恢复原生",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round3_guard_polluted",
+    "item": "zip assets 主包 R3 恢复原生逻辑",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round3_guard_polluted",
+    "item": "zip fndesk.js 恢复原生双标题",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round3_guard_polluted",
+    "item": "tow/index.html 恢复原生",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round3_guard_polluted",
+    "item": "tow 注入 script 标签已剥离",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round3_guard_polluted",
+    "item": "tow/assets 主包 R3 恢复",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round3_guard_polluted",
+    "item": "tow/fndesk.js 恢复",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round3_guard_polluted",
+    "item": "tow 注入脚本已中和为 stub",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round3_guard_polluted",
+    "item": "tow 配置已中和",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round3_guard_polluted",
+    "item": "tow 应用图片目录已清除",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round3_guard_polluted",
+    "item": "www/index.html 恢复原生",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round3_guard_polluted",
+    "item": "www 注入 script 标签已剥离",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round3_guard_polluted",
+    "item": "www/assets 主包 R3 恢复",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round3_guard_polluted",
+    "item": "www/fndesk.js 恢复",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round3_guard_polluted",
+    "item": "www 注入脚本已中和为 stub",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round3_guard_polluted",
+    "item": "www 配置已中和",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round3_guard_polluted",
+    "item": "www 应用图片目录已清除",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round3_guard_polluted",
+    "item": "日志同时写入 guard 与 data-share",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round3_guard_polluted",
+    "item": "日志含 VERIFY: PASS",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round3_guard_polluted",
+    "item": "日志含两轮执行与 nginx 重建触发",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round3_guard_polluted",
+    "item": "日志无未捕获异常",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round3_guard_polluted",
+    "item": "restore_status.json 标记 ok",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round3_guard_polluted",
+    "item": "--verify-only 自检通过",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round4_after_uninstall_data_deleted",
+    "item": "还原脚本退出码为 0",
+    "status": "PASS",
+    "detail": "26-11-14 22:32:50 统计：zip 剔除 1 / 改写 6，目录改写 12 / 删除 2，反向补丁 0 次，终止后台进程 0 个\n2026-11-14 22:32:50 ===== 系统原生样式还原结束 =====\n2026-11-14 22:32:50 提示：浏览器需强制刷新（Ctrl/Cmd + Shift + R）；旧标签页里的运行时脚本缓存了配置，不刷新会继续套用旧样式。\n\n"
+  },
+  {
+    "group": "round4_after_uninstall_data_deleted",
+    "item": "zip 已剔除应用图片条目",
+    "status": "PASS",
+    "detail": "['deskdata/fnstyle/']"
+  },
+  {
+    "group": "round4_after_uninstall_data_deleted",
+    "item": "zip 保留目录条目与原生资源",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round4_after_uninstall_data_deleted",
+    "item": "zip 注入脚本已中和为 stub",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round4_after_uninstall_data_deleted",
+    "item": "zip fnstyle.json 已中和为空配置",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round4_after_uninstall_data_deleted",
+    "item": "zip index.html 恢复原生",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round4_after_uninstall_data_deleted",
+    "item": "zip assets 主包 R3 恢复原生逻辑",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round4_after_uninstall_data_deleted",
+    "item": "zip fndesk.js 恢复原生双标题",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round4_after_uninstall_data_deleted",
+    "item": "tow/index.html 恢复原生",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round4_after_uninstall_data_deleted",
+    "item": "tow 注入 script 标签已剥离",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round4_after_uninstall_data_deleted",
+    "item": "tow/assets 主包 R3 恢复",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round4_after_uninstall_data_deleted",
+    "item": "tow/fndesk.js 恢复",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round4_after_uninstall_data_deleted",
+    "item": "tow 注入脚本已中和为 stub",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round4_after_uninstall_data_deleted",
+    "item": "tow 配置已中和",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round4_after_uninstall_data_deleted",
+    "item": "tow 应用图片目录已清除",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round4_after_uninstall_data_deleted",
+    "item": "www/index.html 恢复原生",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round4_after_uninstall_data_deleted",
+    "item": "www 注入 script 标签已剥离",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round4_after_uninstall_data_deleted",
+    "item": "www/assets 主包 R3 恢复",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round4_after_uninstall_data_deleted",
+    "item": "www/fndesk.js 恢复",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round4_after_uninstall_data_deleted",
+    "item": "www 注入脚本已中和为 stub",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round4_after_uninstall_data_deleted",
+    "item": "www 配置已中和",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round4_after_uninstall_data_deleted",
+    "item": "www 应用图片目录已清除",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round4_after_uninstall_data_deleted",
+    "item": "日志同时写入 guard 与 data-share",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round4_after_uninstall_data_deleted",
+    "item": "日志含 VERIFY: PASS",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round4_after_uninstall_data_deleted",
+    "item": "日志含两轮执行与 nginx 重建触发",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round4_after_uninstall_data_deleted",
+    "item": "日志无未捕获异常",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round4_after_uninstall_data_deleted",
+    "item": "restore_status.json 标记 ok",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round4_after_uninstall_data_deleted",
+    "item": "--verify-only 自检通过",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round5_no_native_copy_generic_sanitize",
+    "item": "还原脚本退出码为 0",
+    "status": "PASS",
+    "detail": "26-11-14 22:32:50 统计：zip 剔除 1 / 改写 6，目录改写 12 / 删除 2，反向补丁 6 次，终止后台进程 0 个\n2026-11-14 22:32:50 ===== 系统原生样式还原结束 =====\n2026-11-14 22:32:50 提示：浏览器需强制刷新（Ctrl/Cmd + Shift + R）；旧标签页里的运行时脚本缓存了配置，不刷新会继续套用旧样式。\n\n"
+  },
+  {
+    "group": "round5_no_native_copy_generic_sanitize",
+    "item": "zip 已剔除应用图片条目",
+    "status": "PASS",
+    "detail": "['deskdata/fnstyle/']"
+  },
+  {
+    "group": "round5_no_native_copy_generic_sanitize",
+    "item": "zip 保留目录条目与原生资源",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round5_no_native_copy_generic_sanitize",
+    "item": "zip 注入脚本已中和为 stub",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round5_no_native_copy_generic_sanitize",
+    "item": "zip fnstyle.json 已中和为空配置",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round5_no_native_copy_generic_sanitize",
+    "item": "zip index.html 恢复原生",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round5_no_native_copy_generic_sanitize",
+    "item": "zip assets 主包 R3 恢复原生逻辑",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round5_no_native_copy_generic_sanitize",
+    "item": "zip fndesk.js 恢复原生双标题",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round5_no_native_copy_generic_sanitize",
+    "item": "tow/index.html 恢复原生",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round5_no_native_copy_generic_sanitize",
+    "item": "tow 注入 script 标签已剥离",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round5_no_native_copy_generic_sanitize",
+    "item": "tow/assets 主包 R3 恢复",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round5_no_native_copy_generic_sanitize",
+    "item": "tow/fndesk.js 恢复",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round5_no_native_copy_generic_sanitize",
+    "item": "tow 注入脚本已中和为 stub",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round5_no_native_copy_generic_sanitize",
+    "item": "tow 配置已中和",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round5_no_native_copy_generic_sanitize",
+    "item": "tow 应用图片目录已清除",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round5_no_native_copy_generic_sanitize",
+    "item": "www/index.html 恢复原生",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round5_no_native_copy_generic_sanitize",
+    "item": "www 注入 script 标签已剥离",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round5_no_native_copy_generic_sanitize",
+    "item": "www/assets 主包 R3 恢复",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round5_no_native_copy_generic_sanitize",
+    "item": "www/fndesk.js 恢复",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round5_no_native_copy_generic_sanitize",
+    "item": "www 注入脚本已中和为 stub",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round5_no_native_copy_generic_sanitize",
+    "item": "www 配置已中和",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round5_no_native_copy_generic_sanitize",
+    "item": "www 应用图片目录已清除",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round5_no_native_copy_generic_sanitize",
+    "item": "日志同时写入 guard 与 data-share",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round5_no_native_copy_generic_sanitize",
+    "item": "日志含 VERIFY: PASS",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round5_no_native_copy_generic_sanitize",
+    "item": "日志含两轮执行与 nginx 重建触发",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round5_no_native_copy_generic_sanitize",
+    "item": "日志无未捕获异常",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round5_no_native_copy_generic_sanitize",
+    "item": "restore_status.json 标记 ok",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round5_no_native_copy_generic_sanitize",
+    "item": "--verify-only 自检通过",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round6",
+    "item": "还原脚本退出码为 0",
+    "status": "PASS",
+    "detail": "26-11-14 22:32:51 统计：zip 剔除 1 / 改写 6，目录改写 12 / 删除 2，反向补丁 0 次，终止后台进程 0 个\n2026-11-14 22:32:51 ===== 系统原生样式还原结束 =====\n2026-11-14 22:32:51 提示：浏览器需强制刷新（Ctrl/Cmd + Shift + R）；旧标签页里的运行时脚本缓存了配置，不刷新会继续套用旧样式。\n\n"
+  },
+  {
+    "group": "round6",
+    "item": "重建后 index.html 无注入脚本",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round6",
+    "item": "重建后 assets 主包 R3 为原生",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round6",
+    "item": "重建后注入脚本是 stub",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round6",
+    "item": "重建后配置为空（读不出任何样式）",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round6",
+    "item": "重建后没有自定义图片",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round7",
+    "item": "还原脚本退出码为 0",
+    "status": "PASS",
+    "detail": "026-11-14 22:32:52 统计：zip 剔除 1 / 改写 6，目录改写 17 / 删除 2，反向补丁 0 次，终止后台进程 0 个\n2026-11-14 22:32:52 ===== 系统原生样式还原结束 =====\n2026-11-14 22:32:52 提示：浏览器需强制刷新（Ctrl/Cmd + Shift + R）；旧标签页里的运行时脚本缓存了配置，不刷新会继续套用旧样式。\n"
+  },
+  {
+    "group": "round7",
+    "item": "延时写回已被第二轮重新中和",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round7",
+    "item": "延时写回后整体自检仍通过",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round8",
+    "item": "还原脚本退出码为 0",
+    "status": "PASS",
+    "detail": "26-11-14 22:32:53 统计：zip 剔除 1 / 改写 6，目录改写 12 / 删除 2，反向补丁 0 次，终止后台进程 0 个\n2026-11-14 22:32:53 ===== 系统原生样式还原结束 =====\n2026-11-14 22:32:53 提示：浏览器需强制刷新（Ctrl/Cmd + Shift + R）；旧标签页里的运行时脚本缓存了配置，不刷新会继续套用旧样式。\n\n"
+  },
+  {
+    "group": "round8",
+    "item": "raw/ 注入脚本已中和",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round8",
+    "item": "raw/ 配置已中和",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round8",
+    "item": "raw/ 自定义图片已清除且原生首页未被动",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "round8",
+    "item": "raw 污染场景整体自检通过",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "callbacks",
+    "item": "uninstall 优先挑 v2 中和方案脚本",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "callbacks",
+    "item": "uninstall 先终止残留后台写入进程",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "callbacks",
+    "item": "uninstall 同步阶段带 --skip-www（不触发 nginx 重建）",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "callbacks",
+    "item": "uninstall 用 setsid+nohup 排程后台还原",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "callbacks",
+    "item": "install 投递后台执行器到 guard",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "callbacks",
+    "item": "后台执行器含 PYCODE 内联兜底",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "callbacks",
+    "item": "后台执行器兜底同样是中和而非删除",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "callbacks",
+    "item": "后台执行器完整还原 + 自检",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "callbacks",
+    "item": "后台执行器先延迟再写 www/",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "callbacks",
+    "item": "install 建立系统级 guard",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "callbacks",
+    "item": "还原核心含两轮执行与延时等待",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "callbacks",
+    "item": "还原核心含空配置自禁用标记",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "callbacks",
+    "item": "桌面运行时支持卸载后自禁用",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "callbacks",
+    "item": "登录运行时支持卸载后自禁用",
+    "status": "PASS",
+    "detail": ""
+  }
+]

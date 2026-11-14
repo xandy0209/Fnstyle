@@ -1,0 +1,4 @@
+#!/bin/bash
+### fnOS 生命周期回调 —— 空实现。
+### 安装后由 fnOS 网关按需调用 ui/index.cgi，无需常驻进程。
+exit 0

@@ -1,0 +1,53 @@
+{
+  "scenario": "全新安装后第一次应用到系统",
+  "apply_log": "2026-11-14 17:27:50 [fnstyle] 内部模式完成：生效 11 / 跳过 0 / 失败 0",
+  "checks": [
+    {
+      "item": "逐项明细无跳过/失败行",
+      "status": "PASS",
+      "detail": "命中 0 行"
+    },
+    {
+      "item": "loginBackground.png 三处同改",
+      "status": "PASS",
+      "detail": "源=1901401492f9 www=1901401492f9 tow=1901401492f9 zip=1901401492f9"
+    },
+    {
+      "item": "loginLogo.png 三处同改",
+      "status": "PASS",
+      "detail": "源=90378cbdbe48 www=90378cbdbe48 tow=90378cbdbe48 zip=90378cbdbe48"
+    },
+    {
+      "item": "deviceLogo.png 三处同改",
+      "status": "PASS",
+      "detail": "源=46e2dac889d1 www=46e2dac889d1 tow=46e2dac889d1 zip=46e2dac889d1"
+    },
+    {
+      "item": "webFavicon.png 三处同改",
+      "status": "PASS",
+      "detail": "源=46e2dac889d1 www=46e2dac889d1 tow=46e2dac889d1 zip=46e2dac889d1"
+    },
+    {
+      "item": "desktopWallpaper.jpg 三处同改",
+      "status": "PASS",
+      "detail": "源=b9ad9b13129f www=b9ad9b13129f tow=b9ad9b13129f zip=b9ad9b13129f"
+    },
+    {
+      "item": "fnstyle.json 落到 www 与 zip",
+      "status": "PASS",
+      "detail": "源=7fe9616083d2 www=7fe9616083d2 zip=7fe9616083d2"
+    },
+    {
+      "item": "www.zip 含 deskdata/ 目录条目",
+      "status": "PASS",
+      "detail": "deskdata/ 存在"
+    },
+    {
+      "item": "www.zip 含 deskdata/fnstyle/ 目录条目",
+      "status": "PASS",
+      "detail": "deskdata/fnstyle/ 存在"
+    }
+  ],
+  "passed": 9,
+  "total": 9
+}

@@ -1,0 +1,182 @@
+#!/bin/bash
+# ---------------------------------------------------------------------------
+# FnStyle —— 生命周期主控脚本（start / stop / status）
+#
+# 本应用提供三种访问方式，**同一份代码、同一份数据**：
+#   1. 短地址（推荐）：/app/fnstyle
+#      本应用自己监听一个 unix socket（<target>/fnstyle.sock），fnOS 网关整段反代过来，
+#      与 Fndesk（/app/fndesk）、QLink2Desktop（/app/qlink2desktop）同一机制。
+#      走网关鉴权，需要 fnOS 登录态。
+#   2. 长地址（兼容）：/cgi/ThirdParty/fnstyle/index.cgi/
+#      走 fnOS 内置 CGI 分发器，纯 bash 实现，不依赖 python3，作为短地址不可用时的兜底。
+#   3. 独立 HTTP 服务：监听 service_port（默认 9910），供 QLink2Desktop 等
+#      以 HTTPS 反代 —— 因为 fnOS 网关的 CGI 路径强制校验 token，无法被反向
+#      代理直接访问；而 index.cgi 自身零鉴权，所以起一个本地 CGI 包装服务即可。
+#
+# 数据存储在 data-share（/volN/@appshare/fnstyle/deskdata），三个入口完全一致。
+#
+# ⚠️ 可移植性（打包要求）：
+#   - 不硬编码 /vol1：不同设备系统盘可能是 vol2/vol3。
+#     统一走 /var/apps/<app>/shares/<name> 软链 + TRIM_* 环境变量兜底。
+#   - 不依赖手工创建的 systemd 单元：fpk 无法把 unit 文件装进 /etc/systemd/system/，
+#     所以这里用 pidfile + nohup 自管进程，由 fnOS 应用中心调用 start/stop。
+# ---------------------------------------------------------------------------
+set -uo pipefail
+
+APP_NAME="fnstyle"
+# FNSTYLE_APP_ROOT 仅用于调试/测试时指向别处的安装目录；
+# fnOS 正常运行时走标准软链 /var/apps/<app>/target。
+APP_ROOT="${FNSTYLE_APP_ROOT:-/var/apps/${APP_NAME}/target}"
+UI_DIR="${APP_ROOT}/ui"
+SERVER="${UI_DIR}/fnstyle_server.py"
+PORT="${TRIM_SERVICE_PORT:-${FNSTYLE_PORT:-9910}}"
+
+# ---- 数据共享目录：shares 软链 → TRIM_DATA_SHARE_PATHS → /vol1（老设备兜底）----
+resolve_share_root() {
+    local p
+    for p in "/var/apps/${APP_NAME}/shares/${APP_NAME}" \
+             "/var/apps/${APP_NAME}/share/${APP_NAME}"; do
+        if [ -d "$p" ]; then printf '%s' "$p"; return 0; fi
+    done
+    if [ -n "${TRIM_DATA_SHARE_PATHS:-}" ]; then
+        p="${TRIM_DATA_SHARE_PATHS%%:*}"
+        if [ -n "$p" ] && [ -d "$p" ]; then printf '%s' "$p"; return 0; fi
+    fi
+    printf '%s' "/vol1/@appshare/${APP_NAME}"
+}
+SHARE_ROOT="$(resolve_share_root)"
+DATA_DIR="${SHARE_ROOT}/deskdata"
+
+# ---- 运行时数据目录：优先用 fnOS 提供的 TRIM_PKGVAR ----
+RUN_DIR="${TRIM_PKGVAR:-/var/apps/${APP_NAME}/var}"
+PID_FILE="${RUN_DIR}/fnstyle_server.pid"
+LOG_FILE="${DATA_DIR}/server.log"
+
+mkdir -p "${DATA_DIR}" "${RUN_DIR}" 2>/dev/null
+
+log_err() {
+    if [ -n "${TRIM_TEMP_LOGFILE:-}" ]; then
+        echo "$1" > "${TRIM_TEMP_LOGFILE}"
+    fi
+    echo "$1" >&2
+}
+
+is_running() {
+    [ -f "${PID_FILE}" ] || return 1
+    local pid
+    pid=$(cat "${PID_FILE}" 2>/dev/null)
+    [ -n "${pid}" ] || return 1
+    # ⚠️ 不能只看 kill -0：进程是 root 跑的，普通用户 kill -0 会拿到 EPERM，
+    # 于是 status 误报「未运行」，排障时白白走弯路。补一条 /proc 判据
+    # （/proc 对所有用户可读，且不受权限影响）。
+    kill -0 "${pid}" 2>/dev/null && return 0
+    [ -d "/proc/${pid}" ]
+}
+
+start_server() {
+    if is_running; then
+        echo "服务已在运行 (pid=$(cat "${PID_FILE}" 2>/dev/null))，端口 ${PORT}"
+        return 0
+    fi
+    # 端口被别的进程占用 → 直接报错，避免「启动成功但页面其实是别人的」
+    if command -v ss >/dev/null 2>&1 && ss -tln 2>/dev/null | grep -q ":${PORT} "; then
+        log_err "端口 ${PORT} 已被其他进程占用，无法启动"
+        return 1
+    fi
+    if ! command -v python3 >/dev/null 2>&1; then
+        log_err "python3 不可用，无法启动独立 HTTP 服务"
+        return 1
+    fi
+    if [ ! -f "${SERVER}" ]; then
+        log_err "服务脚本不存在: ${SERVER}"
+        return 1
+    fi
+
+    # setsid 让进程脱离当前会话（避免 CGI/父进程退出时被带走）。
+    # 非 Linux 环境（如本地调试）没有该命令，回退到普通 nohup。
+    export FNSTYLE_PORT="${PORT}"
+    export FNSTYLE_UI_DIR="${UI_DIR}"
+    export FNSTYLE_SERVER_LOG="${LOG_FILE}"
+    # 网关短地址 /app/fnstyle：
+    #   应用自己监听一个 unix socket，由 fnOS 网关整段反代过来
+    #   （与 Fndesk / QLink2Desktop 同一机制）。
+    #   ⚠️ gatewayPrefix 必须等于 /app/<应用名>，否则应用中心会**整段丢弃**
+    #      gatewaySocket/gatewayPrefix 两个字段（静默丢弃，没有任何日志），
+    #      短地址就永远打不开。这里正好满足：APP_NAME=fnstyle → /app/fnstyle。
+    #   ⚠️ socket 文件必须在应用中心解析 ui/config 之前就存在，
+    #      所以 install_callback 里也要先把服务拉起来（见 install_callback）。
+    export FNSTYLE_SOCKET="${APP_ROOT}/fnstyle.sock"
+    export FNSTYLE_GATEWAY_PREFIX="/app/${APP_NAME}"
+    if command -v setsid >/dev/null 2>&1; then
+        setsid nohup python3 "${SERVER}" >>"${LOG_FILE}" 2>&1 &
+    else
+        nohup python3 "${SERVER}" >>"${LOG_FILE}" 2>&1 &
+    fi
+    echo $! > "${PID_FILE}"
+
+    # 最多等 10 秒确认服务可用。
+    # 同时用 ss 与 curl 两条判据：某些精简系统没有 ss，单靠它会出现
+    # 「服务其实起来了但脚本报超时」的假失败。
+    local i=0
+    while [ "${i}" -lt 20 ]; do
+        if command -v ss >/dev/null 2>&1 && ss -tln 2>/dev/null | grep -q ":${PORT} "; then
+            echo "独立 HTTP 服务已启动，端口 ${PORT}"
+            return 0
+        fi
+        if command -v curl >/dev/null 2>&1 && \
+           curl -s -o /dev/null --max-time 2 "http://127.0.0.1:${PORT}/" 2>/dev/null; then
+            echo "独立 HTTP 服务已启动，端口 ${PORT}"
+            return 0
+        fi
+        sleep 0.5
+        i=$((i + 1))
+    done
+
+    log_err "独立 HTTP 服务启动超时，详见 ${LOG_FILE}"
+    return 1
+}
+
+stop_server() {
+    if ! is_running; then
+        rm -f "${PID_FILE}" 2>/dev/null
+        # 进程已被回收但 socket 文件可能还在（异常退出/被杀 -9 时服务来不及清）
+        # 留着它会让网关连到一个死 socket → 桌面入口打不开
+        rm -f "${APP_ROOT}/fnstyle.sock" 2>/dev/null
+        echo "服务未运行"
+        return 0
+    fi
+    local pid
+    pid=$(cat "${PID_FILE}")
+    kill "${pid}" 2>/dev/null
+    local i=0
+    while [ "${i}" -lt 20 ] && kill -0 "${pid}" 2>/dev/null; do
+        sleep 0.2
+        i=$((i + 1))
+    done
+    kill -9 "${pid}" 2>/dev/null
+    rm -f "${PID_FILE}" 2>/dev/null
+    rm -f "${APP_ROOT}/fnstyle.sock" 2>/dev/null
+    echo "服务已停止"
+    return 0
+}
+
+case "${1:-}" in
+    start)
+        start_server
+        ;;
+    stop)
+        stop_server
+        ;;
+    status)
+        if is_running; then
+            echo "运行中 (pid=$(cat "${PID_FILE}" 2>/dev/null), 端口 ${PORT})"
+            exit 0
+        fi
+        echo "未运行"
+        exit 3
+        ;;
+    *)
+        log_err "未知的运行控制指令: ${1:-<空>}"
+        exit 1
+        ;;
+esac

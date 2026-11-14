@@ -1,0 +1,29 @@
+#!/bin/bash
+# ---------------------------------------------------------------------------
+# upgrade_callback —— 升级后执行：补齐新增的默认数据 + 清理历史遗留
+#
+# 两件事：
+#   1. 补齐这次版本新增的种子文件（复用 install_callback 的幂等逻辑）
+#   2. 清理 1.0.0（手工部署版）可能残留的 systemd 单元
+#      —— 新版改用 pidfile 自管进程；旧单元若还在，开机时会把 9910 抢走，
+#         导致 cmd/main start 报「端口被其他进程占用」。
+# ---------------------------------------------------------------------------
+set -uo pipefail
+
+APP_NAME="fnstyle"
+CMD_DIR="/var/apps/${APP_NAME}/cmd"
+
+# ---- 1. 清理历史遗留的 systemd 单元 ----
+if command -v systemctl >/dev/null 2>&1 && \
+   systemctl list-unit-files fnstyle-server.service >/dev/null 2>&1; then
+    systemctl disable --now fnstyle-server.service >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/fnstyle-server.service 2>/dev/null || true
+    systemctl daemon-reload >/dev/null 2>&1 || true
+fi
+
+# ---- 2. 补齐种子数据 ----
+if [ -x "${CMD_DIR}/install_callback" ]; then
+    bash "${CMD_DIR}/install_callback"
+fi
+
+exit 0

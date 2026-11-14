@@ -1,0 +1,32 @@
+[
+  {
+    "item": "loginBackground",
+    "status": "PASS",
+    "detail": "改前=https://fndesk.imcq.top/images/theme/原神_t2 点默认后=/deskdata/fnstyle/loginBackground.png 后端=/deskdata/fnstyle/loginBackground.png 缩略图=OK"
+  },
+  {
+    "item": "loginLogo",
+    "status": "PASS",
+    "detail": "改前=https://fndesk.imcq.top/images/theme/原神_t2 点默认后=/deskdata/fnstyle/loginLogo.png 后端=/deskdata/fnstyle/loginLogo.png 缩略图=OK"
+  },
+  {
+    "item": "deviceLogo",
+    "status": "PASS",
+    "detail": "改前=https://fndesk.imcq.top/images/theme/原神_t2 点默认后=/deskdata/fnstyle/deviceLogo.png 后端=/deskdata/fnstyle/deviceLogo.png 缩略图=OK"
+  },
+  {
+    "item": "webFavicon",
+    "status": "PASS",
+    "detail": "改前=https://fndesk.imcq.top/images/theme/原神_t2 点默认后=/deskdata/fnstyle/webFavicon.png 后端=/deskdata/fnstyle/webFavicon.png 缩略图=OK"
+  },
+  {
+    "item": "desktopWallpaper",
+    "status": "PASS",
+    "detail": "改前=https://fndesk.imcq.top/images/theme/原神_t2 点默认后=/deskdata/fnstyle/desktopWallpaper.jpg 后端=/deskdata/fnstyle/desktopWallpaper.jpg 缩略图=OK"
+  },
+  {
+    "item": "无 JS 异常",
+    "status": "PASS",
+    "detail": "[]"
+  }
+]

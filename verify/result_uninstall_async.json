@@ -1,0 +1,236 @@
+[
+  {
+    "group": "static",
+    "item": "卸载回调同步阶段带 --skip-www",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "static",
+    "item": "卸载回调排程 setsid/nohup 后台",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "static",
+    "item": "还原核心 skip_www 时不写 self.www",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "static",
+    "item": "后台执行器先 sleep 再写 www/",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "static",
+    "item": "安装回调同步投递后台执行器",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "static",
+    "item": "还原工具含旧版卸载回调自愈",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "static",
+    "item": "还原工具回调同样是两段式",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "A",
+    "item": "卸载回调立即返回（不等待后台还原）",
+    "status": "PASS",
+    "detail": "rc=0 耗时=1.08s 1s，日志 /tmp/fnstyle_uninstall_async/guard/restore_now.log）\n[uninstall_callback] 卸载回调完成（未触碰 /usr/trim/www/，应用中心卸载请求可正常返回）\n"
+  },
+  {
+    "group": "A",
+    "item": "★ 同步阶段零 www/ 写入（字节一致）",
+    "status": "PASS",
+    "detail": "文件数 7 → 7"
+  },
+  {
+    "group": "A",
+    "item": "★ 同步阶段零 www/ 写入（mtime 一致，不触发 inotify）",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "A",
+    "item": "还原源 www.zip 注入脚本已中和",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "A",
+    "item": "还原源 www.zip 配置已中和",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "A",
+    "item": "还原源 www.zip 首页恢复原生",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "A",
+    "item": "tow/ 注入脚本已中和",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "A",
+    "item": "tow/ 配置已中和",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "A",
+    "item": "后台任务已排程（restore_pending 存在）",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "A",
+    "item": "回调日志明确记录「www/ 未被触碰」",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "B",
+    "item": "后台任务在延迟后完成（pending 清除）",
+    "status": "PASS",
+    "detail": "guard/restore_now.log 尾部: deferred 2026-11-14 22:33:17] 还原脚本退出码 0\n2026-11-14 22:33:17 VERIFY: PASS\n[restore_deferred 2026-11-14 22:33:17] ===== 后台还原结束（浏览器需 Cmd/Ctrl + Shift + R 强刷）=====\n"
+  },
+  {
+    "group": "B",
+    "item": "★ 后台阶段才写 www/（首页恢复原生）",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "B",
+    "item": "后台阶段 assets 主包恢复原生 R3",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "B",
+    "item": "后台阶段注入脚本变为 no-op stub",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "B",
+    "item": "后台阶段配置被中和（读不出任何样式）",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "B",
+    "item": "后台阶段自定义图片已清除",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "B",
+    "item": "后台自检 restore_status.json 标记 ok",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "B",
+    "item": "www/ 确实被后台改过（与同步阶段不同）",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "C",
+    "item": "关闭开关时回调立即返回",
+    "status": "PASS",
+    "detail": "耗时 0.35s"
+  },
+  {
+    "group": "C",
+    "item": "关闭开关时 www/ 完全不动",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "C",
+    "item": "关闭开关时 www.zip 完全不动",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "C",
+    "item": "关闭开关时不排程后台任务",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "C",
+    "item": "日志记录用户关闭",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "D",
+    "item": "同步验证钩子回调返回 0",
+    "status": "PASS",
+    "detail": "uninstall_callback] 同步阶段完成：www.zip / tow / raw 已中和，www/ 未被触碰\n[uninstall_callback] 同步验证模式：立即执行完整还原\n[uninstall_callback] 卸载回调完成（未触碰 /usr/trim/www/，应用中心卸载请求可正常返回）\n"
+  },
+  {
+    "group": "D",
+    "item": "同步钩子下 www/ 在回调返回时已还原",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "D",
+    "item": "同步钩子不排程后台任务",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "E",
+    "item": "还原工具安装回调返回 0",
+    "status": "PASS",
+    "detail": "[fnstyle-restore] 还原已排程（约 1s 后完成，请强刷浏览器）；日志：/tmp/fnstyle_uninstall_async/guard/restore_now.log\n"
+  },
+  {
+    "group": "E",
+    "item": "旧回调已备份为 .fnstyle-orig",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "E",
+    "item": "旧回调被替换为安全 no-op",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "E",
+    "item": "★ 新回调不再同步写 www/（不含 python3 调用）",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "E",
+    "item": "日志记录自愈动作",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "group": "E",
+    "item": "重复安装不再覆盖原始备份",
+    "status": "PASS",
+    "detail": ""
+  }
+]

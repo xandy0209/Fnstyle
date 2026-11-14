@@ -1,0 +1,231 @@
+{
+  "passed": 45,
+  "total": 45,
+  "cases": [
+    {
+      "name": "出厂配置默认开启自动还原",
+      "ok": true,
+      "detail": "seed 值 = 1"
+    },
+    {
+      "name": "UI 定义了该开关字段",
+      "ok": true,
+      "detail": "FIELDS 命中 412 字符"
+    },
+    {
+      "name": "开关定义含 type: 'switch'",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "开关定义含 onValue: '1'",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "开关定义含 offValue: '0'",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "开关定义含 nullValue: '1'",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "开关定义含 numeric: true",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "开关定义含 group: '卸载与还原'",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "分组顺序含「卸载与还原」",
+      "ok": true,
+      "detail": "GROUPS = ['网站信息', '登录框', '桌面与窗口', '图片与壁纸', '卸载与还原']"
+    },
+    {
+      "name": "「默认」按钮回填空值一致",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "CGI null 归一化表登记该字段（缺省=1）",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "CGI 保存配置时写 auto_restore 标记",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "安装回调初始化 data-share 标记",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "安装回调初始化系统级 guard 兜底标记",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "安装回调不覆盖用户已有选择",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "卸载回调读取 data-share 标记",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "卸载回调读取 guard 兜底标记",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "卸载回调 fail-safe 默认开启",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "关闭开关时先退出、不执行还原",
+      "ok": true,
+      "detail": "跳过分支 @3935，还原逻辑 @4120"
+    },
+    {
+      "name": "开启时两段式还原：同步只中和源、后台再写 www/",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "后台执行器完成 v2 中和还原 + 自检",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "卸载回调绝不同步写 www/（避免 Failed to fetch）",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "安装回调语法通过",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "卸载回调语法通过",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "后台执行器语法通过",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "CGI 语法通过",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "manifest 说明该能力",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "CGI 保存开关（关闭）成功",
+      "ok": true,
+      "detail": "rc=0 out=Status: 200 OK Content-Type: application/json; charset=utf-8 Cache-Control: no-store Access-Control-Allow-Origin: * Cont"
+    },
+    {
+      "name": "配置里开关写为 0",
+      "ok": true,
+      "detail": "cfg = 0"
+    },
+    {
+      "name": "auto_restore 标记同步为 0",
+      "ok": true,
+      "detail": "mark = '0'"
+    },
+    {
+      "name": "CGI 保存开关（开启）成功",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "auto_restore 标记同步为 1",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "改其它字段不会误清标记",
+      "ok": true,
+      "detail": "mark = '1'"
+    },
+    {
+      "name": "能提取卸载回调的真实读取片段",
+      "ok": true,
+      "detail": "508 字符"
+    },
+    {
+      "name": "用户关闭优先于 guard",
+      "ok": true,
+      "detail": "期望 0，实得 '0'（rc=0）"
+    },
+    {
+      "name": "用户开启优先于 guard",
+      "ok": true,
+      "detail": "期望 1，实得 '1'（rc=0）"
+    },
+    {
+      "name": "data 缺失时读 guard 关闭",
+      "ok": true,
+      "detail": "期望 0，实得 '0'（rc=0）"
+    },
+    {
+      "name": "两个标记都缺失 → 默认开启",
+      "ok": true,
+      "detail": "期望 1，实得 '1'（rc=0）"
+    },
+    {
+      "name": "data 非法值 → 继续读 guard",
+      "ok": true,
+      "detail": "期望 0，实得 '0'（rc=0）"
+    },
+    {
+      "name": "data 非法且无 guard → 默认开启",
+      "ok": true,
+      "detail": "期望 1，实得 '1'（rc=0）"
+    },
+    {
+      "name": "界面出现「卸载与还原」分组",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "界面出现自动还原开关",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "开关默认处于「开启」",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "开关说明可见",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "UI 无 JS 异常",
+      "ok": true,
+      "detail": "[]"
+    }
+  ]
+}

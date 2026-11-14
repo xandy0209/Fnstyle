@@ -1,0 +1,34 @@
+# ---- 本地运行时 / 项目数据（不发布）----
+.workbuddy/
+.preview-data/
+verify/.sandbox*/
+*.log
+
+# ---- 构建中间产物（根目录）----
+/app.tgz
+/fnstyle_*.fpk
+/fpk/
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ---- macOS ----
+.DS_Store
+.AppleDouble
+._*
+
+# ---- 编辑器 ----
+.vscode/
+.idea/
+*.swp
+
+# ---- 临时文件 ----
+*.bak
+*.orig
+*.pid
+*.sock
+/tmp/

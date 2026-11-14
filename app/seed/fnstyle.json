@@ -1,0 +1,27 @@
+{
+  "FndeskGlass": -1,
+  "FndeskIconSort": 1,
+  "FndeskMenu": [
+    "fnos",
+    "live2d",
+    "custom"
+  ],
+  "FndeskVisit_count": 0,
+  "Fndesk_taskbar": 1,
+  "autoRestoreOnUninstall": 1,
+  "appTitle": "MyNas",
+  "appTitle2": "MyNas",
+  "desktopWallpaper": "/deskdata/fnstyle/desktopWallpaper.jpg",
+  "deviceLogo": "/deskdata/fnstyle/deviceLogo.png",
+  "fnWindows": 1,
+  "fndeskClickSound": 1,
+  "fndeskLoginVH": "0",
+  "fndeskLoginVW": "0",
+  "loginBackground": "/deskdata/fnstyle/loginBackground.png",
+  "loginLogo": "/deskdata/fnstyle/loginLogo.png",
+  "loginOpacity": "8",
+  "nasNameDisplay": 1,
+  "shareMbTitle": "飞牛 fnOS",
+  "webFavicon": "/deskdata/fnstyle/webFavicon.png",
+  "web_desc": "飞牛fnOS私有云存储系统"
+}

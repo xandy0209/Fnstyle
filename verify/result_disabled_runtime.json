@@ -1,0 +1,37 @@
+[
+  {
+    "item": "空配置下不注入自定义壁纸",
+    "status": "PASS",
+    "detail": "{'wallpaper': False, 'bg': False, 'styles': 0, 'flag': True, 'title': '飞牛 fnOS'}"
+  },
+  {
+    "item": "空配置下不注入登录背景层",
+    "status": "PASS",
+    "detail": "{'wallpaper': False, 'bg': False, 'styles': 0, 'flag': True, 'title': '飞牛 fnOS'}"
+  },
+  {
+    "item": "空配置下无注入样式表",
+    "status": "PASS",
+    "detail": "{'wallpaper': False, 'bg': False, 'styles': 0, 'flag': True, 'title': '飞牛 fnOS'}"
+  },
+  {
+    "item": "运行时已进入禁用态",
+    "status": "PASS",
+    "detail": "{'wallpaper': False, 'bg': False, 'styles': 0, 'flag': True, 'title': '飞牛 fnOS'}"
+  },
+  {
+    "item": "页面标题保持系统原生",
+    "status": "PASS",
+    "detail": "{'wallpaper': False, 'bg': False, 'styles': 0, 'flag': True, 'title': '飞牛 fnOS'}"
+  },
+  {
+    "item": "自动刷新不超过 2 次（无死循环）",
+    "status": "PASS",
+    "detail": "['http://127.0.0.1:62366/index.html', 'http://127.0.0.1:62366/index.html']"
+  },
+  {
+    "item": "无 JS 异常",
+    "status": "PASS",
+    "detail": "[]"
+  }
+]

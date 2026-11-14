@@ -1,0 +1,253 @@
+#!/bin/bash
+# ---------------------------------------------------------------------------
+# install_callback —— 安装文件应用后执行：初始化数据目录 + 播种默认数据
+#
+# 设计要点：
+#   1. **幂等**：所有复制都用「不存在才复制」，重复执行安全。
+#      fnOS 明确要求生命周期脚本具备可重复执行能力。
+#   2. **不覆盖用户数据**：升级/重装时已有配置、主题、上传图片必须保留。
+#   3. **可移植**：数据目录走 shares 软链，不硬编码 /vol1。
+#
+# 播什么：
+#   theme_list.json   5 个默认主题库源
+#   default_themes.json → theme.json   默认库 31 个主题（主题库开箱即有内容）
+#   theme_cache/*.json → lib/fnstyle_theme_cache/   各库源出厂快照（离线兜底）
+#   bg_list.json      壁纸库清单
+#   fnstyle.json      默认个性化配置
+#   fnstyle/*.png     5 张默认图片（配置里引用的本地资源）
+# ---------------------------------------------------------------------------
+set -uo pipefail
+
+APP_NAME="fnstyle"
+APP_ROOT="${TRIM_APPDEST:-/var/apps/${APP_NAME}/target}"
+SEED_DIR="${APP_ROOT}/seed"
+
+resolve_share_root() {
+    local p
+    for p in "/var/apps/${APP_NAME}/shares/${APP_NAME}" \
+             "/var/apps/${APP_NAME}/share/${APP_NAME}"; do
+        if [ -d "$p" ]; then printf '%s' "$p"; return 0; fi
+    done
+    if [ -n "${TRIM_DATA_SHARE_PATHS:-}" ]; then
+        p="${TRIM_DATA_SHARE_PATHS%%:*}"
+        if [ -n "$p" ]; then printf '%s' "$p"; return 0; fi
+    fi
+    printf '%s' "/vol1/@appshare/${APP_NAME}"
+}
+
+SHARE_ROOT="$(resolve_share_root)"
+DATA_DIR="${SHARE_ROOT}/deskdata"
+
+log() {
+    echo "[install_callback] $1"
+    if [ -n "${TRIM_TEMP_LOGFILE:-}" ]; then
+        echo "$1" >> "${TRIM_TEMP_LOGFILE}"
+    fi
+}
+
+# 基础目录（含上传、库缓存）
+mkdir -p "${DATA_DIR}/upload" "${DATA_DIR}/lib" "${DATA_DIR}/fnstyle" 2>/dev/null || {
+    log "无法创建数据目录：${DATA_DIR}"
+    exit 1
+}
+
+# 网关 socket 残留（上一次安装/异常退出留下的冷 socket）：
+# 留着它 fnOS 网关会把 /app/fnstyle 转发到一个没人监听的 socket，页面打不开。
+rm -f "${APP_ROOT}/fnstyle.sock" 2>/dev/null || true
+
+# ---- 先把服务拉起来，让 socket 先于「应用中心解析 ui/config」存在 ----
+# ⚠️ 这是短地址能不能成的关键（2026-11-12 实测踩出来的）：
+#    应用中心在解析 ui/config 时会校验 gatewaySocket 指向的文件是否真实存在，
+#    不存在就把 gatewaySocket / gatewayPrefix **整段静默丢弃**（没有任何日志），
+#    结果 /app/fnstyle 永远打不开。
+#    安装时序是 install_callback → APP_INSTALLED（此刻才写 app_service），
+#    所以必须在回调里就把 socket 建出来。
+CMD_DIR="$(cd "$(dirname "$0")" && pwd)"
+if command -v python3 >/dev/null 2>&1 && [ -f "${APP_ROOT}/ui/fnstyle_server.py" ]; then
+    bash "${CMD_DIR}/main" start >/dev/null 2>&1 || \
+        log "提示：服务未能自动启动，短地址可能不可用（长地址不受影响）"
+    if [ -S "${APP_ROOT}/fnstyle.sock" ]; then
+        log "网关 socket 已就绪：${APP_ROOT}/fnstyle.sock"
+    else
+        log "提示：网关 socket 未建立（缺 python3？），短地址 /app/fnstyle 可能不可用"
+    fi
+fi
+
+# ---- 清理历史遗留的 systemd 单元 ----
+# 1.0.0 手工部署版曾用 fnstyle-server.service 守护进程。
+# 新版改用 pidfile 自管（fpk 无法把 unit 装进 /etc/systemd/system/），
+# 旧单元若残留会在开机时抢走 service_port，导致 start 报端口占用。
+if command -v systemctl >/dev/null 2>&1 && \
+   systemctl list-unit-files fnstyle-server.service >/dev/null 2>&1; then
+    systemctl disable --now fnstyle-server.service >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/fnstyle-server.service 2>/dev/null || true
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    log "已清理历史 systemd 单元 fnstyle-server.service"
+fi
+
+# ---- 播种：只在目标不存在时复制，绝不覆盖已有数据 ----
+seed_file() {
+    local src="$1" dst="$2"
+    [ -f "$src" ] || return 0
+    if [ -f "$dst" ]; then
+        return 0          # 已存在 → 保留用户数据
+    fi
+    cp -f "$src" "$dst" 2>/dev/null && log "已播种 $(basename "$dst")"
+}
+
+# 主题库「默认进行加载」的出厂数据：
+#   · theme.json 直接播种默认库的 31 个主题 ⇒ 打开软件首屏就有内容，
+#     不依赖外网、也不用先点「重载选库」；
+#   · theme_cache/*.json 是按 URL md5 命名的各库源快照 ⇒ 外链超时 / 断网时
+#     /api/proxy 能回退到快照，自动加载不会把主题库清空。
+# 两者同样遵守「不覆盖用户已有数据」。
+seed_themes_if_empty() {
+    local src="$1" dst="$2"
+    [ -f "$src" ] || return 0
+    if [ -s "$dst" ]; then
+        # 非空且不是空数组 [] → 用户已有数据，保留
+        if grep -q '[^[:space:]]' "$dst" 2>/dev/null &&
+           ! grep -qE '^[[:space:]]*\[[[:space:]]*\][[:space:]]*$' "$dst" 2>/dev/null; then
+            return 0
+        fi
+    fi
+    cp -f "$src" "$dst" 2>/dev/null &&
+        log "已播种 $(basename "$dst")（出厂默认主题库）"
+}
+
+if [ -d "${SEED_DIR}" ]; then
+    seed_file "${SEED_DIR}/theme_list.json" "${DATA_DIR}/theme_list.json"
+    seed_file "${SEED_DIR}/bg_list.json"    "${DATA_DIR}/bg_list.json"
+    seed_file "${SEED_DIR}/fnstyle.json"    "${DATA_DIR}/fnstyle.json"
+    seed_themes_if_empty "${SEED_DIR}/default_themes.json" "${DATA_DIR}/theme.json"
+
+    if [ -d "${SEED_DIR}/theme_cache" ]; then
+        SNAP_DIR="${DATA_DIR}/lib/fnstyle_theme_cache"
+        mkdir -p "$SNAP_DIR" 2>/dev/null
+        for f in "${SEED_DIR}/theme_cache"/*.json; do
+            [ -f "$f" ] || continue
+            seed_file "$f" "${SNAP_DIR}/$(basename "$f")"
+        done
+    fi
+
+    if [ -d "${SEED_DIR}/fnstyle" ]; then
+        for f in "${SEED_DIR}/fnstyle"/*; do
+            [ -f "$f" ] || continue
+            seed_file "$f" "${DATA_DIR}/fnstyle/$(basename "$f")"
+        done
+    fi
+else
+    log "警告：未找到种子目录 ${SEED_DIR}（安装包可能不完整）"
+fi
+
+# ---- 系统级原生基线 + 卸载还原脚本持久化（guard）-----------------------
+# ⚠️ 2026-11-14 真机实测的教训：
+#   旧版把还原脚本放在 cmd/restore_system.py、基线放在 data-share/system_baseline/，
+#   两者都在「卸载会被删除」的路径下。fnOS 卸载时先删安装目录/数据目录，
+#   回调就找不到脚本，只能走极简兜底（删两个 JS），www.zip 没清 →
+#   桌面一加载又从 zip 把样式还原回来，表现为「卸载后仍是软件最后的样式」。
+#
+#   ★ 所以 guard 放在 /usr/trim/share/.restore/ 下（系统还原点目录，
+#     fnOS 卸载应用不会动它），里面存：
+#       restore_system.py   还原脚本本体（卸载时从这里执行）
+#       index.html          原生首页
+#       assets/index-*.js   ★ 原生桌面主包（R3() 标题逻辑被本应用改写过）
+#       fndesk.js           原生双标题逻辑（如果存在）
+#       manifest.json       幂等标记 + 来源说明
+#     优先从系统出厂副本 raw/ 取，比「当前 www/」更可信 —— 用户可能
+#     先卸过旧版（无还原能力），此刻 www/ 已经是脏的。
+#
+#   data-share/system_baseline/ 仍保留一份（兼容旧逻辑与人工排查），
+#   但卸载还原真正依赖的是 guard + raw。
+GUARD_DIR="/usr/trim/share/.restore/fnstyle-guard"
+RAW_DIR="/usr/trim/share/.restore/raw"
+SYS_WWW="/usr/trim/www"
+
+# 取一个「干净」的原生文件：优先 raw/，其次 www/；含注入痕迹的一律不要
+copy_native() {
+    local rel="$1" dst="$GUARD_DIR/$1" src=""
+    [ -f "${RAW_DIR}/${rel}" ] && src="${RAW_DIR}/${rel}"
+    [ -z "$src" ] && [ -f "${SYS_WWW}/${rel}" ] && src="${SYS_WWW}/${rel}"
+    [ -z "$src" ] && return 1
+    if grep -q 'fnstyle-' "$src" 2>/dev/null || \
+       grep -q 'deskdata/fnstyle.json?v=' "$src" 2>/dev/null; then
+        return 1                      # 被污染，不能当原生基线
+    fi
+    mkdir -p "$(dirname "$dst")" 2>/dev/null || return 1
+    cp -f "$src" "$dst" 2>/dev/null || return 1
+    return 0
+}
+
+install_system_guard() {
+    mkdir -p "$GUARD_DIR" 2>/dev/null || { log "警告：无法创建系统级 guard 目录"; return 0; }
+
+    # ① 脚本本体：每次安装都更新，保证卸载用的是最新版
+    if [ -f "${CMD_DIR}/restore_system.py" ]; then
+        cp -f "${CMD_DIR}/restore_system.py" "${GUARD_DIR}/restore_system.py" 2>/dev/null
+        chmod 755 "${GUARD_DIR}/restore_system.py" 2>/dev/null
+    fi
+    # ①' 后台还原执行器：卸载回调靠它延迟写 www/（同步写会切断卸载请求）
+    if [ -f "${CMD_DIR}/restore_deferred.sh" ]; then
+        cp -f "${CMD_DIR}/restore_deferred.sh" "${GUARD_DIR}/restore_deferred.sh" 2>/dev/null
+        chmod 755 "${GUARD_DIR}/restore_deferred.sh" 2>/dev/null
+    fi
+
+    # ② 原生文件：已有 manifest 就跳过（幂等，绝不覆盖干净基线）
+    if [ -f "${GUARD_DIR}/manifest.json" ]; then
+        log "系统级 guard 基线已存在，跳过（幂等）"
+        return 0
+    fi
+
+    local from_raw=0 n_assets=0 has_html=0 has_fndesk=0 f
+    [ -f "${RAW_DIR}/index.html" ] && from_raw=1
+    if copy_native "index.html"; then has_html=1; fi
+    if copy_native "fndesk.js"; then has_fndesk=1; fi
+    # 只复制含 R3() 的桌面主包，避免把整个 assets/ 搬进系统盘
+    for f in "${RAW_DIR}"/assets/*.js "${SYS_WWW}"/assets/*.js; do
+        [ -f "$f" ] || continue
+        grep -q 'R3=e=>' "$f" 2>/dev/null || continue
+        if copy_native "assets/$(basename "$f")"; then
+            n_assets=$((n_assets + 1))
+        fi
+    done
+    printf '{"index_html":%s,"fndesk":%s,"assets":%s,"from_raw":%s,"created":"%s"}\n' \
+        "$([ "$has_html" = 1 ] && echo true || echo false)" \
+        "$([ "$has_fndesk" = 1 ] && echo true || echo false)" \
+        "$n_assets" "$([ "$from_raw" = 1 ] && echo true || echo false)" \
+        "$(date '+%F %T')" > "${GUARD_DIR}/manifest.json" 2>/dev/null
+    log "系统级 guard 已建立（html=${has_html} fndesk=${has_fndesk} assets=${n_assets} raw=${from_raw}）"
+
+    # ③ data-share 里留一份人工排查用的基线（不参与还原判定）
+    mkdir -p "${DATA_DIR}/system_baseline" 2>/dev/null || true
+    [ "$has_html" = 1 ] && \
+        cp -f "${GUARD_DIR}/index.html" "${DATA_DIR}/system_baseline/index.html" 2>/dev/null
+    cp -f "${GUARD_DIR}/manifest.json" "${DATA_DIR}/system_baseline/manifest.json" 2>/dev/null
+}
+install_system_guard
+
+# ---- 「卸载后自动还原系统默认样式」开关（软件本体能力，默认开启）----
+# 两份标记：
+#   ${DATA_DIR}/auto_restore  —— 用户在界面上改开关时由 index.cgi 实时更新
+#   ${GUARD_DIR}/auto_restore —— root 级兜底，data-share 被卸载清理时仍能读到
+# ⚠️ 只在文件不存在时写：重新安装不能把用户上次的「关闭」重置成「开启」。
+[ -f "${DATA_DIR}/auto_restore" ] || printf '1\n' > "${DATA_DIR}/auto_restore" 2>/dev/null
+[ -f "${GUARD_DIR}/auto_restore" ] || printf '1\n' > "${GUARD_DIR}/auto_restore" 2>/dev/null
+log "卸载后自动还原：默认开启（可在『卸载与还原』设置里关闭）"
+
+# 数据目录属主交给应用账号（config/privilege 里声明的 username）
+OWNER="${TRIM_USERNAME:-${TRIM_RUN_USERNAME:-root}}"
+GROUP="${TRIM_GROUPNAME:-${TRIM_RUN_GROUPNAME:-root}}"
+if [ -n "$OWNER" ]; then
+    chown -R "${OWNER}:${GROUP}" "${DATA_DIR}" 2>/dev/null || true
+fi
+
+log "数据目录就绪：${DATA_DIR}"
+
+# ---- python3 依赖检查（fnOS 系统自带，缺失时降级而非失败）----
+# 桌面内嵌入口（CGI）是纯 bash，不依赖 python3；
+# 但独立 HTTP 服务（service_port）由 fnstyle_server.py 提供，必须 python3。
+if ! command -v python3 >/dev/null 2>&1; then
+    log "提示：未检测到 python3 —— 桌面入口可正常使用，独立 HTTP 服务(端口 ${TRIM_SERVICE_PORT:-9910})将不可用"
+fi
+
+exit 0

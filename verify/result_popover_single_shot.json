@@ -1,0 +1,131 @@
+{
+  "passed": 25,
+  "total": 25,
+  "cases": [
+    {
+      "name": "任务栏沉底已生效",
+      "ok": true,
+      "detail": "注入样式表存在"
+    },
+    {
+      "name": "用例A：浮层确实显示",
+      "ok": true,
+      "detail": "可见帧 41 / 总帧 42"
+    },
+    {
+      "name": "用例A：首帧即在目标左上方（无\"先弹再移\"）",
+      "ok": true,
+      "detail": "目标 x=996，出现过的布局 x=[996]，越界帧 0，首个可见 x=996"
+    },
+    {
+      "name": "用例A：内联定位只写一次（位置不漂移）",
+      "ok": true,
+      "detail": "styleLeft 取值集合 = ['996px']"
+    },
+    {
+      "name": "用例A：可见帧布局位置恒定",
+      "ok": true,
+      "detail": "offsetLeft 取值集合 = [996]"
+    },
+    {
+      "name": "用例A：原生右下角落点从未被绘制",
+      "ok": true,
+      "detail": "原生 x=1264，错误位置可见帧 0"
+    },
+    {
+      "name": "用例B：浮层确实显示",
+      "ok": true,
+      "detail": "可见帧 42 / 总帧 43"
+    },
+    {
+      "name": "用例B：首帧即在目标左上方（无\"先弹再移\"）",
+      "ok": true,
+      "detail": "目标 x=996，出现过的布局 x=[996]，越界帧 0，首个可见 x=996"
+    },
+    {
+      "name": "用例B：内联定位只写一次（位置不漂移）",
+      "ok": true,
+      "detail": "styleLeft 取值集合 = ['996px']"
+    },
+    {
+      "name": "用例B：可见帧布局位置恒定",
+      "ok": true,
+      "detail": "offsetLeft 取值集合 = [996]"
+    },
+    {
+      "name": "用例B：原生右下角落点从未被绘制",
+      "ok": true,
+      "detail": "原生 x=1264，错误位置可见帧 0"
+    },
+    {
+      "name": "用例C：浮层确实显示",
+      "ok": true,
+      "detail": "可见帧 41 / 总帧 42"
+    },
+    {
+      "name": "用例C：首帧即在目标左上方（无\"先弹再移\"）",
+      "ok": true,
+      "detail": "目标 x=860，出现过的布局 x=[860]，越界帧 0，首个可见 x=860"
+    },
+    {
+      "name": "用例C：内联定位只写一次（位置不漂移）",
+      "ok": true,
+      "detail": "styleLeft 取值集合 = ['860px']"
+    },
+    {
+      "name": "用例C：可见帧布局位置恒定",
+      "ok": true,
+      "detail": "offsetLeft 取值集合 = [860]"
+    },
+    {
+      "name": "用例C：原生右下角落点从未被绘制",
+      "ok": true,
+      "detail": "原生 x=1264，错误位置可见帧 0"
+    },
+    {
+      "name": "用例D：普通浮层正常显示",
+      "ok": true,
+      "detail": "可见帧 41 / 总帧 42"
+    },
+    {
+      "name": "用例D：原生定位未被改写",
+      "ok": true,
+      "detail": "styleLeft 取值集合 = ['420px']，原生 = 420px"
+    },
+    {
+      "name": "用例D：未被抑制隐藏",
+      "ok": true,
+      "detail": "hidden 帧 0"
+    },
+    {
+      "name": "用例D：布局位置保持原生",
+      "ok": true,
+      "detail": "offsetLeft 集合 = [420]"
+    },
+    {
+      "name": "用例E：普通浮层正常显示",
+      "ok": true,
+      "detail": "可见帧 42 / 总帧 43"
+    },
+    {
+      "name": "用例E：原生定位未被改写",
+      "ok": true,
+      "detail": "styleLeft 取值集合 = ['420px']，原生 = 420px"
+    },
+    {
+      "name": "用例E：未被抑制隐藏",
+      "ok": true,
+      "detail": "hidden 帧 0"
+    },
+    {
+      "name": "用例E：布局位置保持原生",
+      "ok": true,
+      "detail": "offsetLeft 集合 = [420]"
+    },
+    {
+      "name": "无 JS 运行时异常",
+      "ok": true,
+      "detail": "[]"
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+[
+  {
+    "desc": "建库默认壁纸库",
+    "from": "Fndesk",
+    "name": "Fndesk默认壁纸库",
+    "url": "https://fndesk.imcq.top/theme/bg/bg_test.json"
+  },
+  {
+    "desc": "0812期周榜收集 - 巨应壁纸",
+    "from": "米恋泥",
+    "name": "0812期",
+    "url": "https://fndesk.imcq.top/theme/bg/bg_jy0812.json"
+  },
+  {
+    "desc": "0813期动态壁纸 - 巨应壁纸",
+    "from": "米恋泥",
+    "name": "0813期",
+    "url": "https://fndesk.imcq.top/theme/bg/bg_jy0813.json"
+  },
+  {
+    "desc": "0812期周榜收集 - 巨应壁纸",
+    "from": "米恋泥",
+    "name": "0812期v2",
+    "url": "https://fndesk.imcq.top/theme/bg/bg_jy0812v2.json"
+  },
+  {
+    "desc": "0813期动态壁纸 - 巨应壁纸",
+    "from": "米恋泥",
+    "name": "0813期v2",
+    "url": "https://fndesk.imcq.top/theme/bg/bg_jy0813v2.json"
+  },
+  {
+    "desc": "0914期动态壁纸 - 巨应壁纸",
+    "from": "米恋泥",
+    "name": "0914期",
+    "url": "https://fndesk.imcq.top/theme/bg/bg_jy0914.json"
+  }
+]

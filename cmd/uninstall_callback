@@ -1,0 +1,208 @@
+#!/bin/bash
+# ---------------------------------------------------------------------------
+# uninstall_callback —— 卸载清理后执行
+#
+# 三件事：
+#   1. 清理本应用自己的运行时残留（pid 文件、进程、网关 socket、历史 systemd 单元）
+#   2. ★ 把 fnOS 系统样式还原成安装本应用之前的原生状态（软件本体能力）
+#      默认开启，可在软件「卸载与还原」设置里关闭；不依赖额外还原工具包。
+#   3. ★★ 还原动作**绝不能在卸载回调里同步写 /usr/trim/www/**：
+#
+#      fnOS nginx 的 ngx_http_trim_recover 用 inotify 监控 /usr/trim/www/，
+#      任何写入都会 stop nginx → 从 www.zip 重建整个 www/ → start（约 2~10 秒），
+#      期间应用中心这条「卸载」请求被直接切断，前端 fetch() 抛
+#      "Failed to fetch"，弹窗「无法卸载 fnstyle」。
+#      ⚠️ 2026-11-14 真机实测：把 v2 还原同步放进回调后，卸载必失败。
+#
+#      正确顺序（与 index.cgi::apply_to_system 同一套铁律）：
+#        ① 同步阶段只中和还原源 www.zip / tow / raw（不碰 www/，不触发重建）
+#        ② 回调立刻 exit 0 ⇒ 应用中心的卸载请求正常返回
+#        ③ setsid + nohup 拉起独立后台进程，延迟 12 秒后再写 www/、
+#           触发 nginx 重建、两轮复查并自检（此时已无在途连接）
+#
+# 用户数据（配置 / 主题 / 上传图片）位于 data-share，
+# 是否删除由 fnOS 应用中心按用户选择处理，这里不主动删。
+# ---------------------------------------------------------------------------
+set -uo pipefail
+
+APP_NAME="fnstyle"
+RUN_DIR="${TRIM_PKGVAR:-/var/apps/${APP_NAME}/var}"
+PID_FILE="${RUN_DIR}/fnstyle_server.pid"
+
+if [ -f "${PID_FILE}" ]; then
+    pid=$(cat "${PID_FILE}" 2>/dev/null)
+    if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
+        kill "${pid}" 2>/dev/null || true
+        sleep 1
+        kill -9 "${pid}" 2>/dev/null || true
+    fi
+    rm -f "${PID_FILE}" 2>/dev/null || true
+fi
+
+# 网关 socket 残留：安装目录卸载后会被删，但进程若被 -9 掉会留下冷 socket，
+# 网关仍会把 /app/fnstyle 往它转发（表现为桌面入口打不开）。
+rm -f "${TRIM_APPDEST:-/var/apps/${APP_NAME}/target}/fnstyle.sock" 2>/dev/null || true
+
+# 清理历史遗留的 systemd 单元（1.0.0 手工部署版遗留，不属于 fpk 内容）
+if command -v systemctl >/dev/null 2>&1 && \
+   systemctl list-unit-files fnstyle-server.service >/dev/null 2>&1; then
+    systemctl disable --now fnstyle-server.service >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/fnstyle-server.service 2>/dev/null || true
+    systemctl daemon-reload >/dev/null 2>&1 || true
+fi
+
+# ⚠️ 路径支持环境变量覆盖：生产用默认 /usr/trim/*，本地沙箱验证指向临时目录
+GUARD_DIR="${FNSTYLE_GUARD_DIR:-/usr/trim/share/.restore/fnstyle-guard}"
+RAW_DIR="${FNSTYLE_RAW_DIR:-/usr/trim/share/.restore/raw}"
+SYS_WWW="${FNSTYLE_WWW:-/usr/trim/www}"
+RESTORE_ROOT="${FNSTYLE_RESTORE_ROOT:-/usr/trim/share/.restore}"
+
+# 掐断「还原之后又写回来」的复活源：apply_worker.sh(sleep 4) /
+# recheck.sh(sleep 3) 是 setsid 后台进程。这一步不写 www/，安全。
+if [ -z "${FNSTYLE_SKIP_KILL:-}" ] && command -v pgrep >/dev/null 2>&1; then
+    for pat in apply_worker.sh recheck.sh; do
+        for pid in $(pgrep -f "$pat" 2>/dev/null); do
+            [ "$pid" = "$$" ] && continue
+            kill -9 "$pid" 2>/dev/null || true
+        done
+    done
+fi
+
+resolve_share_root() {
+    local p
+    for p in "/var/apps/${APP_NAME}/shares/${APP_NAME}" \
+             "/var/apps/${APP_NAME}/share/${APP_NAME}"; do
+        if [ -d "$p" ]; then printf '%s' "$p"; return 0; fi
+    done
+    if [ -n "${TRIM_DATA_SHARE_PATHS:-}" ]; then
+        p="${TRIM_DATA_SHARE_PATHS%%:*}"
+        if [ -n "$p" ]; then printf '%s' "$p"; return 0; fi
+    fi
+    printf '%s' "/vol1/@appshare/${APP_NAME}"
+}
+DATA_DIR="$(resolve_share_root)/deskdata"
+CMD_DIR="$(cd "$(dirname "$0")" && pwd)"
+mkdir -p "$GUARD_DIR" 2>/dev/null || true
+CB_LOG="${GUARD_DIR}/uninstall_callback.log"
+cb_log() {
+    echo "[uninstall_callback $(date '+%F %T')] $1" >> "$CB_LOG" 2>/dev/null || true
+    echo "[uninstall_callback] $1"
+}
+
+# ---- ★ 读取「卸载后自动还原系统默认样式」开关 ---------------------------
+# 界面上这个开关默认开启；值由 index.cgi 实时写进 ${DATA_DIR}/auto_restore。
+# 优先级：data-share（用户最新选择）→ 系统级 guard 兜底 → 默认开启。
+# ⚠️ fail-safe：文件缺失 / 不可读 / 内容非法，一律按「开启」处理 ——
+#    宁可多还原一次，也不能像早期版本那样把应用样式永久留在系统里。
+AUTO_RESTORE="1"
+for f in "${DATA_DIR}/auto_restore" "${GUARD_DIR}/auto_restore"; do
+    [ -f "$f" ] || continue
+    v=$(head -n 1 "$f" 2>/dev/null | tr -d ' \t\r\n')
+    case "$v" in
+        0|1) AUTO_RESTORE="$v"; break ;;
+    esac
+done
+cb_log "卸载后自动还原开关 = ${AUTO_RESTORE}（1=还原 / 0=保留样式）"
+if [ "$AUTO_RESTORE" != "1" ]; then
+    cb_log "用户已关闭自动还原：跳过系统样式还原，保留最后一次应用的样式"
+    exit 0
+fi
+
+# ---- ★ 准备系统级还原资产（卸载会删掉应用目录，必须先投到 guard）-------
+# 脚本选择：优先挑带 v2 中和标记且支持 --skip-www 的新版，
+# 再按「安装目录 → guard → /var/apps」兜底（guard 里可能是旧版脚本）。
+RESTORE_SCRIPT=""
+FALLBACK_SCRIPT=""
+for s in "${CMD_DIR}/restore_system.py" \
+         "${GUARD_DIR}/restore_system.py" \
+         "/var/apps/${APP_NAME}/cmd/restore_system.py"; do
+    [ -f "$s" ] || continue
+    [ -z "$FALLBACK_SCRIPT" ] && FALLBACK_SCRIPT="$s"
+    if grep -q '__FNSTYLE_RESTORED_NOOP__' "$s" 2>/dev/null && \
+       grep -q 'skip-www' "$s" 2>/dev/null; then
+        RESTORE_SCRIPT="$s"
+        break
+    fi
+done
+[ -z "$RESTORE_SCRIPT" ] && RESTORE_SCRIPT="$FALLBACK_SCRIPT"
+
+GUARD_SCRIPT="${GUARD_DIR}/restore_system.py"
+if [ -n "$RESTORE_SCRIPT" ] && [ "$RESTORE_SCRIPT" != "$GUARD_SCRIPT" ]; then
+    cp -f "$RESTORE_SCRIPT" "$GUARD_SCRIPT" 2>/dev/null || true
+    chmod 755 "$GUARD_SCRIPT" 2>/dev/null || true
+fi
+
+DEFER_SCRIPT="${GUARD_DIR}/restore_deferred.sh"
+if [ -f "${CMD_DIR}/restore_deferred.sh" ]; then
+    cp -f "${CMD_DIR}/restore_deferred.sh" "$DEFER_SCRIPT" 2>/dev/null || true
+    chmod 755 "$DEFER_SCRIPT" 2>/dev/null || true
+fi
+
+# ---- ① 同步阶段：只中和还原源，绝不写 www/ ---------------------------
+# www.zip / tow / raw 都不在 nginx 的 inotify 监控范围内（fnOS 实测：
+# 单独改写 www.zip 与 tow/ 不触发 nginx 停启），因此这一步不会切断卸载请求。
+if command -v python3 >/dev/null 2>&1 && [ -f "$GUARD_SCRIPT" ]; then
+    python3 "$GUARD_SCRIPT" \
+        --data-dir "$DATA_DIR" --www "$SYS_WWW" \
+        --restore "$RESTORE_ROOT" --guard "$GUARD_DIR" \
+        --skip-www --settle 0 >> "$CB_LOG" 2>&1 || \
+        cb_log "还原源同步中和返回异常（不阻断卸载，后台会重试）"
+    cb_log "同步阶段完成：www.zip / tow / raw 已中和，www/ 未被触碰"
+else
+    cb_log "同步阶段跳过：缺少 python3 或还原脚本，交由后台最小中和"
+fi
+
+# ---- ② 排程后台完整还原 ------------------------------------------------
+printf '%s\n' "$(date '+%F %T')" > "${GUARD_DIR}/restore_pending" 2>/dev/null || true
+
+launch_deferred() {
+    local delay="$1"
+    if command -v setsid >/dev/null 2>&1; then
+        setsid nohup env \
+            FNSTYLE_GUARD_DIR="$GUARD_DIR" \
+            FNSTYLE_WWW="$SYS_WWW" \
+            FNSTYLE_RESTORE_ROOT="$RESTORE_ROOT" \
+            FNSTYLE_DATA_DIR="$DATA_DIR" \
+            FNSTYLE_RESTORE_DELAY="$delay" \
+            FNSTYLE_RESTORE_SETTLE="${FNSTYLE_RESTORE_SETTLE:-5}" \
+            bash "$DEFER_SCRIPT" >> "$CB_LOG" 2>&1 < /dev/null &
+    else
+        nohup env \
+            FNSTYLE_GUARD_DIR="$GUARD_DIR" \
+            FNSTYLE_WWW="$SYS_WWW" \
+            FNSTYLE_RESTORE_ROOT="$RESTORE_ROOT" \
+            FNSTYLE_DATA_DIR="$DATA_DIR" \
+            FNSTYLE_RESTORE_DELAY="$delay" \
+            FNSTYLE_RESTORE_SETTLE="${FNSTYLE_RESTORE_SETTLE:-5}" \
+            bash "$DEFER_SCRIPT" >> "$CB_LOG" 2>&1 < /dev/null &
+    fi
+}
+
+if [ "${FNSTYLE_SYNC_RESTORE:-0}" = "1" ]; then
+    # 仅本地沙箱验证使用：同步跑完整还原（生产绝不进入此分支）
+    cb_log "同步验证模式：立即执行完整还原"
+    FNSTYLE_RESTORE_DELAY=0 bash "$DEFER_SCRIPT" >> "$CB_LOG" 2>&1 || \
+        cb_log "同步验证模式还原返回异常"
+elif [ -f "$DEFER_SCRIPT" ]; then
+    launch_deferred "${FNSTYLE_RESTORE_DELAY:-12}"
+    cb_log "已排程后台还原（延迟 ${FNSTYLE_RESTORE_DELAY:-12}s，日志 ${GUARD_DIR}/restore_now.log）"
+else
+    # 极简兜底：连后台执行器都投递不了时，用内联延迟 shell 做最小中和
+    cb_log "后台执行器缺失，使用内联延迟最小中和"
+    setsid nohup bash -c '
+        sleep "$1"
+        for d in "$2" "$3/tow"; do
+            [ -d "$d" ] || continue
+            mkdir -p "$d/deskdata" 2>/dev/null || true
+            printf "{\"__fnstyleDisabled\": true}\n" > "$d/deskdata/fnstyle.json" 2>/dev/null || true
+            for s in fnstyle-login.js fnstyle-runtime.js; do
+                printf "/*! __FNSTYLE_RESTORED_NOOP__ */\n" > "$d/$s" 2>/dev/null || true
+            done
+            rm -rf "$d/deskdata/fnstyle" 2>/dev/null || true
+        done
+    ' _ "${FNSTYLE_RESTORE_DELAY:-12}" "$SYS_WWW" "$RESTORE_ROOT" \
+        >> "$CB_LOG" 2>&1 < /dev/null &
+fi
+
+cb_log "卸载回调完成（未触碰 /usr/trim/www/，应用中心卸载请求可正常返回）"
+exit 0

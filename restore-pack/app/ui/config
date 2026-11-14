@@ -1,0 +1,14 @@
+{
+ ".url": {
+  "fnstylerestore.main": {
+   "title": "FnStyle 系统还原",
+   "desc": "卸载后恢复飞牛 NAS 原生样式",
+   "icon": "images/icon_{0}.png",
+   "type": "iframe",
+   "url": "/app/fnstylerestore/",
+   "allUsers": false,
+   "noDisplay": true,
+   "control": { "showRoute": 1 }
+  }
+ }
+}

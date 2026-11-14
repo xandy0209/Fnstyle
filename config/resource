@@ -1,0 +1,18 @@
+{
+    "data-share":
+    {
+        "shares":
+        [
+            {
+                "name": "fnstyle",
+                "permission":
+                {
+                    "rw":
+                    [
+                        "fnstyle"
+                    ]
+                }
+            }
+        ]
+    }
+}

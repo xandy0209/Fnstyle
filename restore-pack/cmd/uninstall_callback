@@ -1,0 +1,30 @@
+#!/bin/bash
+# ---------------------------------------------------------------------------
+# 卸载本还原工具时**再排程一次还原**（guard 里的脚本与执行器仍在，
+# 卸载不会删除它们）。这是给用户的第二个触发点。
+#
+# ⚠️ 同样绝不同步写 /usr/trim/www/，否则应用中心的卸载请求会被
+#    nginx 停启重建切断 → "Failed to fetch"。
+# 日志：/usr/trim/share/.restore/fnstyle-guard/restore_now.log
+# ---------------------------------------------------------------------------
+set -uo pipefail
+GUARD="${FNSTYLE_GUARD_DIR:-/usr/trim/share/.restore/fnstyle-guard}"
+CB="$(cd "$(dirname "$0")" && pwd)/install_callback"
+
+echo "===== $(date '+%F %T') 卸载前再排程一次还原 =====" \
+    >> "${GUARD}/restore_now.log" 2>/dev/null || true
+if [ -f "$CB" ]; then
+    bash "$CB" || true
+elif [ -f "${GUARD}/restore_deferred.sh" ]; then
+    # 应用目录已删：直接用 guard 里留下的执行器排程
+    if command -v setsid >/dev/null 2>&1; then
+        setsid nohup env FNSTYLE_GUARD_DIR="$GUARD" \
+            bash "${GUARD}/restore_deferred.sh" \
+            >> "${GUARD}/restore_now.log" 2>&1 < /dev/null &
+    else
+        nohup env FNSTYLE_GUARD_DIR="$GUARD" \
+            bash "${GUARD}/restore_deferred.sh" \
+            >> "${GUARD}/restore_now.log" 2>&1 < /dev/null &
+    fi
+fi
+exit 0

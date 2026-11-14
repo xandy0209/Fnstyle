@@ -1,0 +1,254 @@
+[
+  {
+    "group": "图片资源",
+    "item": "loginBackground.png",
+    "status": "PASS",
+    "detail": "源=5bbf4d7bb287 www=5bbf4d7bb287 tow=5bbf4d7bb287 zip=5bbf4d7bb287"
+  },
+  {
+    "group": "图片资源",
+    "item": "loginLogo.png",
+    "status": "PASS",
+    "detail": "源=72e7d9eaa1e7 www=72e7d9eaa1e7 tow=72e7d9eaa1e7 zip=72e7d9eaa1e7"
+  },
+  {
+    "group": "图片资源",
+    "item": "deviceLogo.png",
+    "status": "PASS",
+    "detail": "源=ff4f31401860 www=ff4f31401860 tow=ff4f31401860 zip=ff4f31401860"
+  },
+  {
+    "group": "图片资源",
+    "item": "webFavicon.png",
+    "status": "PASS",
+    "detail": "源=d97868d53ba6 www=d97868d53ba6 tow=d97868d53ba6 zip=d97868d53ba6"
+  },
+  {
+    "group": "图片资源",
+    "item": "desktopWallpaper.jpg",
+    "status": "PASS",
+    "detail": "源=d71e485c39d6 www=d71e485c39d6 tow=d71e485c39d6 zip=d71e485c39d6"
+  },
+  {
+    "group": "配置",
+    "item": "fnstyle.json 三处同改",
+    "status": "PASS",
+    "detail": "源=f391e1059326 www=f391e1059326 tow=f391e1059326 zip=f391e1059326"
+  },
+  {
+    "group": "配置",
+    "item": "字段写入系统 appTitle",
+    "status": "PASS",
+    "detail": "期望='VerifyNas2026' 实际='VerifyNas2026'"
+  },
+  {
+    "group": "配置",
+    "item": "字段写入系统 web_desc",
+    "status": "PASS",
+    "detail": "期望='验证用站点描述-DESC-2026' 实际='验证用站点描述-DESC-2026'"
+  },
+  {
+    "group": "配置",
+    "item": "字段写入系统 loginOpacity",
+    "status": "PASS",
+    "detail": "期望=25 实际=25"
+  },
+  {
+    "group": "配置",
+    "item": "字段写入系统 nasNameDisplay",
+    "status": "PASS",
+    "detail": "期望=2 实际=2"
+  },
+  {
+    "group": "配置",
+    "item": "字段写入系统 fndeskLoginVW",
+    "status": "PASS",
+    "detail": "期望=15 实际=15"
+  },
+  {
+    "group": "配置",
+    "item": "字段写入系统 fndeskLoginVH",
+    "status": "PASS",
+    "detail": "期望=-8 实际=-8"
+  },
+  {
+    "group": "配置",
+    "item": "字段写入系统 Fndesk_taskbar",
+    "status": "PASS",
+    "detail": "期望=0 实际=0"
+  },
+  {
+    "group": "配置",
+    "item": "字段写入系统 FndeskGlass",
+    "status": "PASS",
+    "detail": "期望=18 实际=18"
+  },
+  {
+    "group": "index.html",
+    "item": "网站标题 <title>",
+    "status": "PASS",
+    "detail": "<title>VerifyNas2026</title>"
+  },
+  {
+    "group": "index.html",
+    "item": "网站标题 og:title / og:site_name",
+    "status": "PASS",
+    "detail": "content=\"VerifyNas2026\""
+  },
+  {
+    "group": "index.html",
+    "item": "网站描述 og:description",
+    "status": "PASS",
+    "detail": "content=\"验证用站点描述-DESC-2026\""
+  },
+  {
+    "group": "index.html",
+    "item": "网站标题 document.title",
+    "status": "PASS",
+    "detail": "document.title=\"VerifyNas2026\""
+  },
+  {
+    "group": "index.html",
+    "item": "favicon og:image",
+    "status": "PASS",
+    "detail": "content=\"/deskdata/fnstyle/webFavicon.png\""
+  },
+  {
+    "group": "index.html",
+    "item": "favicon link",
+    "status": "PASS",
+    "detail": "href=\"/deskdata/fnstyle/webFavicon.png\""
+  },
+  {
+    "group": "index.html",
+    "item": "桌面运行时脚本注入",
+    "status": "PASS",
+    "detail": "./fnstyle-runtime.js"
+  },
+  {
+    "group": "index.html",
+    "item": "登录页运行时脚本注入",
+    "status": "PASS",
+    "detail": "./fnstyle-login.js"
+  },
+  {
+    "group": "index.html",
+    "item": "注入标签带内容指纹 ?v=",
+    "status": "PASS",
+    "detail": "URL 变化才能穿透浏览器缓存"
+  },
+  {
+    "group": "index.html",
+    "item": "login.js 未被重复引入",
+    "status": "PASS",
+    "detail": "出现次数=1"
+  },
+  {
+    "group": "运行时脚本",
+    "item": "fnstyle-runtime.js 三处同改",
+    "status": "PASS",
+    "detail": "源=01bf13f47be5 www=01bf13f47be5 tow=01bf13f47be5 zip=01bf13f47be5"
+  },
+  {
+    "group": "运行时脚本",
+    "item": "fnstyle-login.js 三处同改",
+    "status": "PASS",
+    "detail": "源=974fc39b21d5 www=974fc39b21d5 tow=974fc39b21d5 zip=974fc39b21d5"
+  },
+  {
+    "group": "字段消费者",
+    "item": "appTitle",
+    "status": "PASS",
+    "detail": "fnstyle-login.js（MutationObserver 守标题）"
+  },
+  {
+    "group": "字段消费者",
+    "item": "web_desc",
+    "status": "PASS",
+    "detail": "index.cgi（og:description）"
+  },
+  {
+    "group": "字段消费者",
+    "item": "loginOpacity",
+    "status": "PASS",
+    "detail": "fnstyle-login.js"
+  },
+  {
+    "group": "字段消费者",
+    "item": "nasNameDisplay",
+    "status": "PASS",
+    "detail": "fnstyle-runtime.js"
+  },
+  {
+    "group": "字段消费者",
+    "item": "fndeskLoginVW",
+    "status": "PASS",
+    "detail": "fnstyle-login.js"
+  },
+  {
+    "group": "字段消费者",
+    "item": "fndeskLoginVH",
+    "status": "PASS",
+    "detail": "fnstyle-login.js"
+  },
+  {
+    "group": "字段消费者",
+    "item": "Fndesk_taskbar",
+    "status": "PASS",
+    "detail": "fnstyle-runtime.js"
+  },
+  {
+    "group": "字段消费者",
+    "item": "FndeskGlass",
+    "status": "PASS",
+    "detail": "fnstyle-login.js"
+  },
+  {
+    "group": "字段消费者",
+    "item": "loginBackground",
+    "status": "PASS",
+    "detail": "fnstyle-login.js"
+  },
+  {
+    "group": "字段消费者",
+    "item": "loginLogo",
+    "status": "PASS",
+    "detail": "fnstyle-login.js"
+  },
+  {
+    "group": "字段消费者",
+    "item": "deviceLogo",
+    "status": "PASS",
+    "detail": "fnstyle-login.js"
+  },
+  {
+    "group": "字段消费者",
+    "item": "desktopWallpaper",
+    "status": "PASS",
+    "detail": "fnstyle-runtime.js"
+  },
+  {
+    "group": "字段消费者",
+    "item": "webFavicon",
+    "status": "PASS",
+    "detail": "index.cgi（link rel=icon）"
+  },
+  {
+    "group": "index.html",
+    "item": "www 与 tow 内容一致",
+    "status": "PASS",
+    "detail": "www=00a1baf7fa4a tow=00a1baf7fa4a"
+  },
+  {
+    "group": "apply",
+    "item": "CGI 退出码为 0",
+    "status": "PASS",
+    "detail": "rc=0"
+  },
+  {
+    "group": "apply",
+    "item": "内部模式完成日志",
+    "status": "PASS",
+    "detail": "27:22 [fnstyle] 2026-11-14 17:27:22 [cache-bust]   ⇒ 建议从 /tmp/fnstyle_sandbox/.restore/raw/ 纯净基线回退这些文件。\n2026-11-14 17:27:22 [fnstyle] 内部模式完成：生效 11 / 跳过 0 / 失败 0"
+  }
+]

@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FnStyle</title>
+<link rel="icon" href="images/icon_64.png">
+<link rel="stylesheet" href="static/css/app.css">
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ============================ 顶栏 ============================ -->
+  <!-- 注：这里不再放应用图标 —— fnOS 桌面/窗口标题栏已自带应用图标，
+       页面里再画一个会重复（见用户 2026-11-12 反馈）。 -->
+  <div class="topbar">
+    <div>
+      <h1>FnStyle</h1>
+      <div class="sub">飞牛个性化设置 &amp; 丰富主题库 — 集中管理，一键应用</div>
+    </div>
+  </div>
+
+  <!-- ============================ 标签页 ============================ -->
+  <!-- .tabs 内含 #tabAction 槽位：切到「飞牛个性化设置」时，
+       JS 把「应用到系统」按钮挂进去；切到其它标签时移除。 -->
+  <div class="tabs">
+    <button class="tab active" data-tab="personalize">🎚 Fnstyle个性化设置</button>
+    <button class="tab" data-tab="themes">🎨 Fnstyle主题库</button>
+    <div class="spacer"></div>
+    <span class="tab-action" id="tabAction"></span>
+  </div>
+
+  <!-- ====================== 面板一：个性化设置 ====================== -->
+  <div class="panel active" id="panel-personalize">
+    <div class="card">
+      <div class="body" id="personalizeBody">
+        <div class="loading"><span class="spin"></span> 正在读取配置…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================== 面板二：主题库 ======================== -->
+  <div class="panel" id="panel-themes">
+    <div class="card lib-card">
+      <div class="body">
+        <div class="lib-bar">
+          <strong style="font-size:.88rem">主题库来源</strong>
+          <div class="multi-select" id="libSelect">
+            <button type="button" class="ms-toggle" id="libSelectToggle">
+              <span id="libSelectLabel">请选择库源</span>
+              <span class="ms-caret">▾</span>
+            </button>
+            <div class="ms-menu" id="libSelectMenu" hidden>
+              <div class="ms-options" id="libSelectOptions"></div>
+              <div class="ms-actions">
+                <button type="button" class="btn sm" id="btnAllLibs">全选</button>
+                <button type="button" class="btn sm" id="btnNoLibs">全不选</button>
+              </div>
+            </div>
+          </div>
+          <button type="button" class="btn sm" id="btnManageLibs">⚙ 管理库源</button>
+          <button type="button" class="btn primary sm" id="btnLoadSelected">重载选库</button>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="card">
+      <header>
+        <h2><span>🖼</span> 主题库</h2>
+        <div class="spacer"></div>
+        <span class="theme-count" id="themeCount">—</span>
+      </header>
+      <div class="body">
+        <div class="theme-grid-wrap">
+          <div class="theme-grid" id="themeGrid">
+            <div class="loading" style="grid-column:1/-1"><span class="spin"></span> 加载主题中…</div>
+          </div>
+          <div class="theme-grid-mask" id="themeLoadMask" hidden>
+            <div class="tm-title"><span class="spin"></span><span id="themeLoadTitle">正在加载主题库…</span></div>
+            <div class="tm-sub" id="themeLoadSub"></div>
+          </div>
+        </div>
+        <div class="load-more-wrap">
+          <button class="btn" id="btnLoadMore">加载更多</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="notice" id="notice"></div>
+
+<!-- ================== 主题库来源编辑器（弹窗） ================== -->
+<div class="lib-editor-overlay" id="libEditorOverlay" hidden>
+  <div class="lib-editor-modal" role="dialog" aria-modal="true" aria-labelledby="libEditorTitle">
+    <div class="lib-editor-header">
+      <h3 id="libEditorTitle">主题库来源管理</h3>
+      <button type="button" class="lib-editor-close" id="btnCloseLibEditor" title="关闭">✕</button>
+    </div>
+
+    <!-- 列表视图 -->
+    <div id="libEditorListContainer">
+      <div class="lib-editor-toolbar">
+        <button type="button" class="btn primary sm" id="btnShowAddLibForm">+ 添加库源</button>
+        <span class="lib-editor-count">共 <b id="libEditorCount">0</b> 个来源</span>
+      </div>
+      <div class="lib-editor-list" id="libEditorList">
+        <div class="lib-editor-empty">加载中…</div>
+      </div>
+    </div>
+
+    <!-- 表单视图 -->
+    <form class="lib-editor-form" id="libEditorForm" hidden onsubmit="event.preventDefault();return false;">
+      <h4 id="libEditorFormTitle">添加主题库来源</h4>
+      <div class="lib-editor-group" id="teGroupUrl">
+        <label for="teUrl">源地址（theme.json URL）<span class="req">*</span></label>
+        <input type="url" id="teUrl" class="lib-input" placeholder="https://example.com/theme/theme.json" autocomplete="off">
+        <div class="lib-editor-hint" id="teFetchMetaStatus"></div>
+      </div>
+      <div class="lib-editor-group" id="teGroupName" hidden>
+        <label for="teName">主题库名称</label>
+        <input type="text" id="teName" class="lib-input" placeholder="例如：官方主题库">
+      </div>
+      <div class="lib-editor-group" id="teGroupDesc" hidden>
+        <label for="teDesc">详细描述</label>
+        <textarea id="teDesc" class="lib-input" rows="2" placeholder="对该主题库的详细介绍"></textarea>
+      </div>
+      <div class="lib-editor-group" id="teGroupFrom" hidden>
+        <label for="teFrom">提供者信息</label>
+        <input type="text" id="teFrom" class="lib-input" placeholder="例如：米恋泥">
+      </div>
+      <div class="lib-editor-actions">
+        <button type="button" class="btn" id="btnCancelLibForm">取消</button>
+        <button type="submit" class="btn primary" id="btnSaveLibForm">保存</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ================== 主题预览（弹窗） ================== -->
+<!-- 预览目标：让用户在点「选择」之前，就能看清这个主题套用到飞牛桌面后
+     登录页长什么样、桌面壁纸长什么样、以及每一份素材分别用在哪。 -->
+<div class="tp-overlay" id="themePreviewOverlay" hidden>
+  <div class="tp-modal" role="dialog" aria-modal="true" aria-labelledby="tpTitle">
+    <div class="tp-header">
+      <div class="tp-head-main">
+        <h3 id="tpTitle">主题预览</h3>
+        <div class="tp-sub" id="tpSub"></div>
+      </div>
+      <button type="button" class="tp-close" id="btnCloseThemePreview" title="关闭">✕</button>
+    </div>
+
+    <div class="tp-body">
+      <!-- 左：效果舞台 -->
+      <div class="tp-stage">
+        <div class="tp-stage-tabs" id="tpStageTabs">
+          <button type="button" class="tp-stage-tab active" data-stage="login">登录页效果</button>
+          <button type="button" class="tp-stage-tab" data-stage="desktop">桌面壁纸</button>
+          <button type="button" class="tp-stage-tab" data-stage="asset" data-key="t1">登录LOGO</button>
+          <button type="button" class="tp-stage-tab" data-stage="asset" data-key="t3">设备LOGO</button>
+        </div>
+
+        <!-- 登录页模拟：背景 t2 + 登录框内 LOGO t1 + 设备 LOGO t3 -->
+        <div class="tp-view tp-view-login" id="tpViewLogin">
+          <div class="tp-login-bg" id="tpLoginBg"></div>
+          <div class="tp-login-box">
+            <img class="tp-login-logo" id="tpLoginLogo" alt="" hidden>
+            <div class="tp-fake-input"></div>
+            <div class="tp-fake-input"></div>
+            <div class="tp-fake-btn">登录</div>
+            <img class="tp-device-logo" id="tpDeviceLogo" alt="" hidden>
+          </div>
+        </div>
+
+        <!-- 桌面壁纸模拟：t4 -->
+        <div class="tp-view tp-view-desktop" id="tpViewDesktop" hidden>
+          <div class="tp-wallpaper" id="tpWallpaper"></div>
+          <div class="tp-desk-icons">
+            <span></span><span></span><span></span><span></span>
+            <span></span><span></span>
+          </div>
+        </div>
+
+        <!-- 单份资源大图（登录LOGO / 设备LOGO 两个标签共用） -->
+        <div class="tp-view tp-view-asset" id="tpViewAsset" hidden>
+          <div class="tp-asset-stage" id="tpAssetStage"></div>
+          <div class="tp-asset-cap" id="tpAssetCap"></div>
+        </div>
+      </div>
+
+      <!-- 右：主题资源清单 -->
+      <div class="tp-assets">
+        <div class="tp-assets-title">主题资源</div>
+        <div class="tp-asset-list" id="tpAssetList"></div>
+        <div class="tp-assets-hint">点击任意资源可在上方查看大图</div>
+      </div>
+    </div>
+
+    <div class="tp-footer">
+      <span class="tp-foot-note" id="tpFootNote"></span>
+      <div class="spacer"></div>
+      <button type="button" class="btn" id="btnCloseThemePreview2">关闭</button>
+      <button type="button" class="btn primary" id="btnApplyPreviewedTheme">应用到系统</button>
+    </div>
+  </div>
+</div>
+
+<script src="static/js/app.js"></script>
+</body>
+</html>

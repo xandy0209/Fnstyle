@@ -1,0 +1,254 @@
+[
+  {
+    "round": "轮0 DOM 先于脚本存在",
+    "item": "网站标题（原生覆盖后纠正）",
+    "status": "PASS",
+    "detail": "VerifyNas2026"
+  },
+  {
+    "round": "轮0 DOM 先于脚本存在",
+    "item": "网页 favicon",
+    "status": "PASS",
+    "detail": "http://127.0.0.1:61894/deskdata/fnstyle/webFavicon.png"
+  },
+  {
+    "round": "轮0 DOM 先于脚本存在",
+    "item": "登录页 LOGO",
+    "status": "PASS",
+    "detail": "/deskdata/fnstyle/loginLogo.png?v=1794648444010"
+  },
+  {
+    "round": "轮0 DOM 先于脚本存在",
+    "item": "登录页背景",
+    "status": "PASS",
+    "detail": "#fnstyle-login-bg{display:block!important;position:fixed;inset:0;width:100vw;height:100vh;z-index:0;pointer-events:none;"
+  },
+  {
+    "round": "轮0 DOM 先于脚本存在",
+    "item": "设备 LOGO",
+    "status": "PASS",
+    "detail": "/deskdata/fnstyle/deviceLogo.png?v=1794648444010"
+  },
+  {
+    "round": "轮0 DOM 先于脚本存在",
+    "item": "桌面壁纸",
+    "status": "PASS",
+    "detail": "/deskdata/fnstyle/desktopWallpaper.jpg?v=1794648443507"
+  },
+  {
+    "round": "轮0 DOM 先于脚本存在",
+    "item": "登录框透明度",
+    "status": "PASS",
+    "detail": ".gradient-border{position:relative;margin-left:15vw;margin-top:-8vh;background-color:rgba(255,255,255,0.2500)!important;"
+  },
+  {
+    "round": "轮0 DOM 先于脚本存在",
+    "item": "窗口毛玻璃",
+    "status": "PASS",
+    "detail": ".gradient-border{position:relative;margin-left:15vw;margin-top:-8vh;background-color:rgba(255,255,255,0.2500)!important;"
+  },
+  {
+    "round": "轮0 DOM 先于脚本存在",
+    "item": "登录框水平位置",
+    "status": "PASS",
+    "detail": ".gradient-border{position:relative;margin-left:15vw;margin-top:-8vh;background-color:rgba(255,255,255,0.2500)!important;"
+  },
+  {
+    "round": "轮0 DOM 先于脚本存在",
+    "item": "登录框垂直位置",
+    "status": "PASS",
+    "detail": ".gradient-border{position:relative;margin-left:15vw;margin-top:-8vh;background-color:rgba(255,255,255,0.2500)!important;"
+  },
+  {
+    "round": "轮0 DOM 先于脚本存在",
+    "item": "登录框名字显示/隐藏",
+    "status": "PASS",
+    "detail": "p.select-none 剩余=0"
+  },
+  {
+    "round": "轮0 DOM 先于脚本存在",
+    "item": "任务栏沉底横置",
+    "status": "PASS",
+    "detail": "data 标记=True taskbar 样式数=1"
+  },
+  {
+    "round": "轮0 DOM 先于脚本存在",
+    "item": "应用资源无 4xx",
+    "status": "PASS",
+    "detail": "页面其它404=0（模拟素材）"
+  },
+  {
+    "round": "轮0 DOM 先于脚本存在",
+    "item": "无 JS 异常",
+    "status": "PASS",
+    "detail": "无"
+  },
+  {
+    "round": "轮1 全部开启/非默认值",
+    "item": "网站标题（原生覆盖后纠正）",
+    "status": "PASS",
+    "detail": "VerifyNas2026"
+  },
+  {
+    "round": "轮1 全部开启/非默认值",
+    "item": "网页 favicon",
+    "status": "PASS",
+    "detail": "http://127.0.0.1:61894/deskdata/fnstyle/webFavicon.png"
+  },
+  {
+    "round": "轮1 全部开启/非默认值",
+    "item": "登录页 LOGO",
+    "status": "PASS",
+    "detail": "/deskdata/fnstyle/loginLogo.png?v=1794648447709"
+  },
+  {
+    "round": "轮1 全部开启/非默认值",
+    "item": "登录页背景",
+    "status": "PASS",
+    "detail": "#fnstyle-login-bg{display:block!important;position:fixed;inset:0;width:100vw;height:100vh;z-index:0;pointer-events:none;"
+  },
+  {
+    "round": "轮1 全部开启/非默认值",
+    "item": "设备 LOGO",
+    "status": "PASS",
+    "detail": "/deskdata/fnstyle/deviceLogo.png?v=1794648447709"
+  },
+  {
+    "round": "轮1 全部开启/非默认值",
+    "item": "桌面壁纸",
+    "status": "PASS",
+    "detail": "/deskdata/fnstyle/desktopWallpaper.jpg?v=1794648447707"
+  },
+  {
+    "round": "轮1 全部开启/非默认值",
+    "item": "登录框透明度",
+    "status": "PASS",
+    "detail": ".gradient-border{position:relative;margin-left:15vw;margin-top:-8vh;background-color:rgba(255,255,255,0.2500)!important;"
+  },
+  {
+    "round": "轮1 全部开启/非默认值",
+    "item": "窗口毛玻璃",
+    "status": "PASS",
+    "detail": ".gradient-border{position:relative;margin-left:15vw;margin-top:-8vh;background-color:rgba(255,255,255,0.2500)!important;"
+  },
+  {
+    "round": "轮1 全部开启/非默认值",
+    "item": "登录框水平位置",
+    "status": "PASS",
+    "detail": ".gradient-border{position:relative;margin-left:15vw;margin-top:-8vh;background-color:rgba(255,255,255,0.2500)!important;"
+  },
+  {
+    "round": "轮1 全部开启/非默认值",
+    "item": "登录框垂直位置",
+    "status": "PASS",
+    "detail": ".gradient-border{position:relative;margin-left:15vw;margin-top:-8vh;background-color:rgba(255,255,255,0.2500)!important;"
+  },
+  {
+    "round": "轮1 全部开启/非默认值",
+    "item": "登录框名字显示/隐藏",
+    "status": "PASS",
+    "detail": "p.select-none 剩余=0"
+  },
+  {
+    "round": "轮1 全部开启/非默认值",
+    "item": "任务栏沉底横置",
+    "status": "PASS",
+    "detail": "data 标记=True taskbar 样式数=1"
+  },
+  {
+    "round": "轮1 全部开启/非默认值",
+    "item": "应用资源无 4xx",
+    "status": "PASS",
+    "detail": "页面其它404=0（模拟素材）"
+  },
+  {
+    "round": "轮1 全部开启/非默认值",
+    "item": "无 JS 异常",
+    "status": "PASS",
+    "detail": "无"
+  },
+  {
+    "round": "轮2 全部关闭/恢复原生",
+    "item": "网站标题（原生默认不接管）",
+    "status": "PASS",
+    "detail": "appTitle=飞牛 fnOS ⇒ 运行时不接管标题，属设计行为；title=Stone‘s Wish"
+  },
+  {
+    "round": "轮2 全部关闭/恢复原生",
+    "item": "网页 favicon",
+    "status": "PASS",
+    "detail": "http://127.0.0.1:61894/deskdata/fnstyle/webFavicon.png"
+  },
+  {
+    "round": "轮2 全部关闭/恢复原生",
+    "item": "登录页 LOGO",
+    "status": "PASS",
+    "detail": "/deskdata/fnstyle/loginLogo.png?v=1794648451402"
+  },
+  {
+    "round": "轮2 全部关闭/恢复原生",
+    "item": "登录页背景",
+    "status": "PASS",
+    "detail": "#fnstyle-login-bg{display:block!important;position:fixed;inset:0;width:100vw;height:100vh;z-index:0;pointer-events:none;"
+  },
+  {
+    "round": "轮2 全部关闭/恢复原生",
+    "item": "设备 LOGO",
+    "status": "PASS",
+    "detail": "/deskdata/fnstyle/deviceLogo.png?v=1794648451402"
+  },
+  {
+    "round": "轮2 全部关闭/恢复原生",
+    "item": "桌面壁纸",
+    "status": "PASS",
+    "detail": "/deskdata/fnstyle/desktopWallpaper.jpg?v=1794648451402"
+  },
+  {
+    "round": "轮2 全部关闭/恢复原生",
+    "item": "登录框透明度",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "round": "轮2 全部关闭/恢复原生",
+    "item": "窗口毛玻璃",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "round": "轮2 全部关闭/恢复原生",
+    "item": "登录框水平位置",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "round": "轮2 全部关闭/恢复原生",
+    "item": "登录框垂直位置",
+    "status": "PASS",
+    "detail": ""
+  },
+  {
+    "round": "轮2 全部关闭/恢复原生",
+    "item": "登录框名字显示/隐藏",
+    "status": "PASS",
+    "detail": "p.select-none 剩余=1"
+  },
+  {
+    "round": "轮2 全部关闭/恢复原生",
+    "item": "任务栏沉底横置",
+    "status": "PASS",
+    "detail": "data 标记=False taskbar 样式数=0"
+  },
+  {
+    "round": "轮2 全部关闭/恢复原生",
+    "item": "应用资源无 4xx",
+    "status": "PASS",
+    "detail": "页面其它404=0（模拟素材）"
+  },
+  {
+    "round": "轮2 全部关闭/恢复原生",
+    "item": "无 JS 异常",
+    "status": "PASS",
+    "detail": "无"
+  }
+]
