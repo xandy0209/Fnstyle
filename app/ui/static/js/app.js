@@ -1515,7 +1515,7 @@
   var AUTOCHECK_KEY = 'fnstyle_autocheck_update_v1';
   /* 当前版本号：与 manifest 的 version 保持一致，发版时同步修改。
      顶栏版本胶囊与「发现新版本」提示都基于它展示。 */
-  var APP_VERSION = '1.1.1';
+  var APP_VERSION = '1.1.2';
 
   /* 顶栏右侧更新控件：版本胶囊 + 检查/下载按钮 + 状态文字 */
   function setTopbarUpdate(state, r) {
@@ -1589,13 +1589,21 @@
     if (statusEl && !opts.silent) statusEl.textContent = '检查中…';
     setTopbarUpdate('checking');
     return api('version').then(function (r) {
-      if (!r || r.success === false || !r.latest) {
-        if (statusEl && !opts.silent) statusEl.textContent = '检查更新失败';
+      if (!r || r.success === false) {
+        /* fetch 异常 / 响应解析失败：后端服务或网络层问题 */
+        if (statusEl && !opts.silent) statusEl.textContent = '检查失败：无法连接';
         setTopbarUpdate('error');
         return null;
       }
-      if (!r.updateAvailable) {
-        if (statusEl && !opts.silent) statusEl.textContent = '已是最新版本（v' + r.latest + '）';
+      if (r.checkError) {
+        /* 后端连通，但所有更新源（jsDelivr / ghproxy / GitHub）都拉取失败，
+           典型为内地网络无法直连 GitHub。提示用户，不再弹横幅。 */
+        if (statusEl && !opts.silent) statusEl.textContent = '检查失败：无法连接更新服务器';
+        setTopbarUpdate('error');
+        return null;
+      }
+      if (!r.latest || !r.updateAvailable) {
+        if (statusEl && !opts.silent) statusEl.textContent = '已是最新版本（v' + (r.latest || APP_VERSION) + '）';
         hideUpdateBanner();
         setTopbarUpdate('uptodate', r);
         return r;

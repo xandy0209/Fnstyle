@@ -1,6 +1,6 @@
 {
-  "version": "1.1.1",
+  "version": "1.1.2",
   "releaseDate": "2026-11-15",
-  "downloadUrl": "https://github.com/xandy0209/Fnstyle/releases/download/v1.1.1/fnstyle_1.1.1_all.fpk",
-  "changelog": "顶栏右侧更新控件布局微调：「检查更新」按钮移至版本号与「已是最新」状态文本之后（版本号 → 状态 → 检查更新），顺序更直观。自动更新提醒、卸载还原、主题库默认加载等既有能力保持不变。"
+  "downloadUrl": "https://cdn.jsdelivr.net/gh/xandy0209/Fnstyle@v1.1.2/dist/fnstyle_1.1.2_all.fpk",
+  "changelog": "修复自动更新在内地网络（无法直连 GitHub raw / API）下一直失败的问题：检查更新改为依次尝试 jsDelivr 镜像、ghproxy 代理、GitHub raw、GitHub Releases API 多个源，任一可达即返回；下载地址改用 jsDelivr 镜像以便内地网络直接下载。顶栏右侧更新控件布局不变（版本号 → 状态 → 检查更新）。自动检查失败时会明确提示「无法连接更新服务器」而非静默无响应。"
 }

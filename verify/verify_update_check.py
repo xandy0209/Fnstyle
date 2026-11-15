@@ -56,7 +56,6 @@ def run_cgi(version_url, api_url):
         "SCRIPT_NAME": "/cgi/ThirdParty/fnstyle/index.cgi",
         "TRIM_DATA_SHARE_PATHS": "/tmp/fnstyle_vercheck_share",
         "FNSTYLE_VERSION_URL": version_url,
-        "FNSTYLE_VERSION_API": api_url,
     })
     # 保证 curl/python3 在 PATH 里
     env.setdefault("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
@@ -147,6 +146,7 @@ def main():
     r = run_cgi("http://127.0.0.1:9/version.json", "http://127.0.0.1:9/")
     rec("未崩溃且返回合法 JSON", isinstance(r, dict), str(r)[:120] if r is not None else "解析失败")
     rec("updateAvailable == false（静默降级）", bool(r and r.get("updateAvailable") is False))
+    rec("checkError == true（全部源不可达）", bool(r and r.get("checkError") is True))
     rec("current 仍回显本地版本 %s" % cur, bool(r and r.get("current") == cur))
 
     # ---------- 场景 ④：GitHub Releases API 形状兜底 ----------
@@ -165,8 +165,8 @@ def main():
     httpd = HTTPServer(("127.0.0.1", port), Srv)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     try:
-        r = run_cgi("http://127.0.0.1:9/never",
-                    "http://127.0.0.1:%d/releases/latest" % port)
+        r = run_cgi("http://127.0.0.1:%d/releases/latest" % port,
+                    "http://127.0.0.1:9/never")
     finally:
         httpd.shutdown()
     rec("updateAvailable == true", bool(r and r.get("updateAvailable")))

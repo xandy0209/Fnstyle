@@ -23,7 +23,7 @@ set -uo pipefail
 # ------------------------- 版本与更新检查 -------------------------
 # ⚠️ 必须与 manifest 的 version 保持一致（自动更新靠它判断「是否比线上新」）。
 # GitHub 发布新版本时，两处都要改：manifest 的 version + 本常量。
-APP_VERSION="1.1.1"
+APP_VERSION="1.1.2"
 
 # ----------------------------- 路径配置 -----------------------------
 # APP_ROOT 是 fnOS 安装后创建的标准软链：
@@ -1760,8 +1760,9 @@ url_decode() {
 # 返回 updateAvailable，由前端弹出更新提醒横幅。
 #
 # 远程清单可由环境变量覆盖（便于自托管 / 本地测试）：
-#   FNSTYLE_VERSION_URL → 首选清单地址（默认 GitHub raw 的 version.json）
-#   FNSTYLE_VERSION_API → 兜底地址（默认 GitHub Releases API，自动解析最新 release）
+#   FNSTYLE_VERSION_URL → 单一清单地址（默认走下方多镜像候选列表，不再用单一 GitHub raw）
+#   默认候选（按国内可达性优先）：jsDelivr 镜像 → ghproxy 代理 → GitHub raw → GitHub Releases API
+#   任一条成功即返回；全部失败则 CHECK_ERR=1（后端仍返回 200 JSON，前端据 checkError 提示网络不可达）。
 # 清单 JSON 两种形状都认：
 #   ① version.json：      {version, releaseDate, downloadUrl, changelog}
 #   ② GitHub API：        {tag_name, published_at, body, assets[].browser_download_url}
@@ -1775,8 +1776,8 @@ ver_compare() {
   local aa=($a) bb=($b)
   local i an bn
   for i in 0 1 2; do
-    an=$(( ${aa[i]:-0} + 0 ))
-    bn=$(( ${bb[i]:-0} + 0 ))
+    an="${aa[i]:-0}"; an="${an//[^0-9]/}"; an=$(( ${an:-0} + 0 ))
+    bn="${bb[i]:-0}"; bn="${bn//[^0-9]/}"; bn=$(( ${bn:-0} + 0 ))
     if [ "$an" -gt "$bn" ]; then return 0; fi
     if [ "$an" -lt "$bn" ]; then return 1; fi
   done
@@ -1820,7 +1821,7 @@ get_remote_version() {
   local url="$1"
   [ -z "$url" ] && return 1
   local tmp="${DATA_DIR}/.vercheck.$$"
-  if ! curl -fsSL --max-time 15 -H 'User-Agent: Mozilla/5.0' -o "$tmp" "$url" 2>/dev/null; then
+  if ! curl -fsSL --max-time 8 -H 'User-Agent: Mozilla/5.0' -o "$tmp" "$url" 2>/dev/null; then
     rm -f "$tmp"; return 1
   fi
   [ -s "$tmp" ] || { rm -f "$tmp"; return 1; }
@@ -1838,6 +1839,12 @@ get_remote_version() {
   # 统一去掉版本号前导的 v（GitHub tag 多为 v1.2.0，version.json 多为 1.2.0），
   # 前端展示时统一用 'v' + latest，避免重复前缀。
   R_VERSION="${R_VERSION#v}"
+  # 仅接受形如 x.y.z 的版本号；远程若返回错误页/非 JSON（如代理拦截页），
+  # 此处直接否决，避免把垃圾值带进 ver_compare 触发算术错误。
+  case "$R_VERSION" in
+    [0-9]*.[0-9]*.[0-9]*) ;;
+    *) rm -f "$tmp"; return 1 ;;
+  esac
   [ -n "$R_VERSION" ] && return 0 || return 1
 }
 
@@ -1860,31 +1867,47 @@ case "$REL" in
     /api/version)
         # 检查远程最新版本，与本地安装版本比较，返回是否可更新
         CUR="$APP_VERSION"
-        R_VERSION=""; R_URL=""; R_DATE=""; R_NOTE=""
-        URL_SRC="${FNSTYLE_VERSION_URL:-https://raw.githubusercontent.com/xandy0209/Fnstyle/main/version.json}"
-        URL_API="${FNSTYLE_VERSION_API:-https://api.github.com/repos/xandy0209/Fnstyle/releases/latest}"
-        # 首选 version.json；失败（网络/被墙）再试 GitHub Releases API；
-        # 都失败则静默返回 updateAvailable:false，不让前端报错。
-        get_remote_version "$URL_SRC" || get_remote_version "$URL_API"
+        R_VERSION=""; R_URL=""; R_DATE=""; R_NOTE=""; CHECK_ERR=1
+        if [ -n "$FNSTYLE_VERSION_URL" ]; then
+            # 自托管 / 测试：仅用单一清单地址
+            CANDIDATES="$FNSTYLE_VERSION_URL"
+        else
+            # 默认按「国内可达性」优先排序依次尝试，首个成功即返回：
+            #   ① jsDelivr 镜像   —— 内地多数网络可直连，且能顺带提供下载地址
+            #   ② ghproxy 代理    —— GitHub raw 的常用反代
+            #   ③ GitHub raw      —— 直连（内地常超时/被墙，作为兜底）
+            #   ④ GitHub Releases API —— 同上
+            CANDIDATES="
+https://cdn.jsdelivr.net/gh/xandy0209/Fnstyle@main/version.json
+https://ghproxy.net/https://raw.githubusercontent.com/xandy0209/Fnstyle/main/version.json
+https://raw.githubusercontent.com/xandy0209/Fnstyle/main/version.json
+https://api.github.com/repos/xandy0209/Fnstyle/releases/latest"
+        fi
+        # 依次尝试候选地址，任一条成功即停止；全部失败则 CHECK_ERR=1（网络不可达）。
+        for u in $CANDIDATES; do
+            if get_remote_version "$u"; then CHECK_ERR=0; break; fi
+        done
         AVAIL=0
-        if [ -n "$R_VERSION" ] && ver_compare "$R_VERSION" "$CUR"; then
+        if [ "$CHECK_ERR" = "0" ] && [ -n "$R_VERSION" ] && ver_compare "$R_VERSION" "$CUR"; then
             AVAIL=1
         fi
         BODY="$(FN_V_CURRENT="$CUR" FN_V_LATEST="$R_VERSION" FN_V_URL="$R_URL" \
             FN_V_DATE="$R_DATE" FN_V_NOTE="$R_NOTE" FN_V_AVAIL="$AVAIL" \
+            FN_V_ERR="$CHECK_ERR" \
             python3 - <<'PY'
 import json, os
 print(json.dumps({
     "current": os.environ.get("FN_V_CURRENT", ""),
     "latest": os.environ.get("FN_V_LATEST", ""),
     "updateAvailable": os.environ.get("FN_V_AVAIL", "0") == "1",
+    "checkError": os.environ.get("FN_V_ERR", "1") == "1",
     "downloadUrl": os.environ.get("FN_V_URL", ""),
     "releaseDate": os.environ.get("FN_V_DATE", ""),
     "changelog": os.environ.get("FN_V_NOTE", ""),
 }, ensure_ascii=False))
 PY
         )"
-        [ -z "$BODY" ] && BODY="{\"current\":\"$CUR\",\"latest\":\"$R_VERSION\",\"updateAvailable\":$AVAIL}"
+        [ -z "$BODY" ] && BODY="{\"current\":\"$CUR\",\"latest\":\"$R_VERSION\",\"updateAvailable\":$AVAIL,\"checkError\":$CHECK_ERR}"
         http_json "200 OK" "$BODY"
         exit 0
         ;;
