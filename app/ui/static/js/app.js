@@ -1513,6 +1513,49 @@
    * 不写 fnstyle.json（属于客户端偏好，不是系统个性化配置）。 */
   var UPDATE_IGNORE_KEY = 'fnstyle_ignored_version_v1';
   var AUTOCHECK_KEY = 'fnstyle_autocheck_update_v1';
+  /* 当前版本号：与 manifest 的 version 保持一致，发版时同步修改。
+     顶栏版本胶囊与「发现新版本」提示都基于它展示。 */
+  var APP_VERSION = '1.1.0';
+
+  /* 顶栏右侧更新控件：版本胶囊 + 检查/下载按钮 + 状态文字 */
+  function setTopbarUpdate(state, r) {
+    var pill = $('#verPill');
+    if (pill) pill.textContent = 'v' + APP_VERSION;
+    var btn = $('#tbCheckUpdate');
+    var status = $('#tbUpdateStatus');
+    if (!btn) return;
+    if (state === 'checking') {
+      btn.className = 'btn sm';
+      btn.textContent = '检查更新';
+      btn.dataset.available = '0';
+      if (status) status.textContent = '检查中…';
+    } else if (state === 'available') {
+      btn.className = 'btn sm primary';
+      btn.textContent = '发现新版本 v' + (r && r.latest || '');
+      btn.dataset.available = '1';
+      btn.dataset.url = (r && r.downloadUrl) || '';
+      if (status) status.textContent = (r && r.releaseDate) ? r.releaseDate : '';
+      if (pill) pill.classList.add('has-update');
+    } else if (state === 'uptodate') {
+      btn.className = 'btn sm';
+      btn.textContent = '检查更新';
+      btn.dataset.available = '0';
+      if (status) status.textContent = '已是最新';
+      if (pill) pill.classList.remove('has-update');
+    } else if (state === 'ignored') {
+      btn.className = 'btn sm';
+      btn.textContent = '检查更新';
+      btn.dataset.available = '0';
+      if (status) status.textContent = '已忽略 v' + (r && r.latest || '');
+      if (pill) pill.classList.remove('has-update');
+    } else if (state === 'error') {
+      btn.className = 'btn sm';
+      btn.textContent = '检查更新';
+      btn.dataset.available = '0';
+      if (status) status.textContent = '检查失败';
+      if (pill) pill.classList.remove('has-update');
+    }
+  }
 
   function getAutoCheck() {
     try { return localStorage.getItem(AUTOCHECK_KEY) !== '0'; } catch (e) { return true; }
@@ -1544,14 +1587,17 @@
     opts = opts || {};
     var statusEl = $('#updateCheckStatus');
     if (statusEl && !opts.silent) statusEl.textContent = '检查中…';
+    setTopbarUpdate('checking');
     return api('version').then(function (r) {
       if (!r || r.success === false || !r.latest) {
         if (statusEl && !opts.silent) statusEl.textContent = '检查更新失败';
+        setTopbarUpdate('error');
         return null;
       }
       if (!r.updateAvailable) {
         if (statusEl && !opts.silent) statusEl.textContent = '已是最新版本（v' + r.latest + '）';
         hideUpdateBanner();
+        setTopbarUpdate('uptodate', r);
         return r;
       }
       /* 用户曾点过「忽略此版本」→ 不再弹横幅 */
@@ -1559,18 +1605,36 @@
       try { ig = localStorage.getItem(UPDATE_IGNORE_KEY); } catch (e) {}
       if (ig && ig === String(r.latest)) {
         if (statusEl && !opts.silent) statusEl.textContent = '已是最新（已忽略 v' + r.latest + '）';
+        hideUpdateBanner();
+        setTopbarUpdate('ignored', r);
         return r;
       }
       showUpdateBanner(r);
+      setTopbarUpdate('available', r);
       if (statusEl && !opts.silent) statusEl.textContent = '';
       return r;
     }).catch(function () {
       if (statusEl && !opts.silent) statusEl.textContent = '检查更新失败';
+      setTopbarUpdate('error');
       return null;
     });
   }
 
   function setupUpdateUI() {
+    /* 顶栏右侧：版本胶囊 + 检查/下载按钮 */
+    var pill = $('#verPill');
+    if (pill) pill.textContent = 'v' + APP_VERSION;
+    var tbbtn = $('#tbCheckUpdate');
+    if (tbbtn) {
+      tbbtn.addEventListener('click', function () {
+        if (tbbtn.dataset.available === '1' && tbbtn.dataset.url) {
+          window.open(tbbtn.dataset.url, '_blank', 'noopener');
+        } else {
+          checkForUpdate({ silent: false });
+        }
+      });
+    }
+    /* 设置卡片：自动检查开关 */
     var cb = $('#autoCheckUpdate');
     if (cb) {
       cb.checked = getAutoCheck();
@@ -1587,6 +1651,7 @@
       var latest = ($('#ubLatest').textContent || '').replace(/^v/, '');
       try { if (latest) localStorage.setItem(UPDATE_IGNORE_KEY, latest); } catch (e) {}
       hideUpdateBanner();
+      setTopbarUpdate('ignored', { latest: latest });
     });
     var later = $('#ubLater');
     if (later) later.addEventListener('click', hideUpdateBanner);

@@ -271,6 +271,27 @@ class Handler(BaseHTTPRequestHandler):
             write_json(CONFIG_FILE, cfg)
             return self.send_json(ok("配置已保存"))
 
+        # ---- 版本信息（本地预览：无远程可比，latest 与 current 一致）----
+        if name == "version":
+            cur = "0.0.0"
+            try:
+                with open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                       "manifest"), "r", encoding="utf-8") as mf:
+                    for line in mf:
+                        if line.strip().startswith("version"):
+                            cur = line.split("=", 1)[1].strip()
+                            break
+            except OSError:
+                pass
+            return self.send_json({
+                "current": cur,
+                "latest": cur,
+                "updateAvailable": False,
+                "downloadUrl": "",
+                "releaseDate": "",
+                "changelog": "",
+            })
+
         if name == "fndesk-config":
             return self.send_json({})
 

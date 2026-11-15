@@ -105,6 +105,32 @@ body {
   margin-top: .15rem;
 }
 
+/* 顶栏右侧：当前版本号 + 更新检查入口 */
+.topbar-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: .55rem;
+  flex-shrink: 0;
+}
+.ver-pill {
+  font-size: .8rem;
+  color: var(--text-secondary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: .22rem .62rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  line-height: 1.2;
+  transition: color .15s, border-color .15s, background-color .15s;
+}
+.ver-pill.has-update {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: var(--accent-soft);
+}
+
 /* 顶栏右侧曾有一个「已连接」状态胶囊（.status / .dot），
    它只在页面加载时判定一次 GET /api/config，后端挂了也不会变红，
    且容易被误解成「外网/NAS 连接状态」—— 已按用户决定整体移除。
