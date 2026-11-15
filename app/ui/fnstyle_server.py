@@ -223,8 +223,24 @@ def _find_config_backup():
 
 
 def _launch_detached_installer(fpk, version):
-    """完全脱离本服务会话地执行安装，确保本服务被杀也不影响安装继续。"""
+    """完全脱离本服务会话地执行安装，确保本服务被杀也不影响安装继续。
+
+    ⚠️ 两个关键点（1.1.10 实测教训）：
+    1. PATH——本服务由应用中心启动，环境变量里没有 trim-cli 所在目录；
+       脱离脚本直接调 `trim-cli` 会 `command not found` 秒败，
+       且状态停在 restarting 造成「永远即将重启」的假象。
+       对策：脚本内解析 trim-cli 绝对路径（command -v → source /etc/profile
+       → 常见候选路径逐一探测），启动时再给 PATH 前置 /usr/trim/bin 兜底。
+    2. 结果回传——脚本成败要写结果标记文件，/api/update/status 读到
+       error 标记时把 restarting 改判为 error，前端才能正确显示失败并可重试。
+    """
     log_path = os.path.join(_UPDATE_DIR, "fnstyle_update.log")
+    result_path = os.path.join(_UPDATE_DIR, "fnstyle_update_result")
+    try:
+        if os.path.exists(result_path):
+            os.remove(result_path)
+    except Exception:
+        pass
     # 配置备份（仅 uninstall+install 回退路径需要）
     cfg_src, cfg_dst = _find_config_backup()
     backup = ""
@@ -235,19 +251,42 @@ def _launch_detached_installer(fpk, version):
     # 优先 install-fpk（多数情况覆盖升级），失败再 uninstall+install
     script = (
         "#!/bin/bash\n"
-        "FPK='%s'\nLOG='%s'\nVER='%s'\n"
+        "FPK='%s'\nLOG='%s'\nVER='%s'\nRESULT='%s'\n"
         "echo \"[$(date)] bootstrap update to $VER\" >> \"$LOG\"\n"
+        "TRIM_CLI=\"$(command -v trim-cli 2>/dev/null || true)\"\n"
+        "if [ -z \"$TRIM_CLI\" ]; then\n"
+        "  . /etc/profile 2>/dev/null || true\n"
+        "  TRIM_CLI=\"$(command -v trim-cli 2>/dev/null || true)\"\n"
+        "fi\n"
+        "if [ -z \"$TRIM_CLI\" ]; then\n"
+        "  for c in /usr/trim/bin/trim-cli /usr/local/bin/trim-cli /usr/bin/trim-cli /bin/trim-cli; do\n"
+        "    if [ -x \"$c\" ]; then TRIM_CLI=\"$c\"; break; fi\n"
+        "  done\n"
+        "fi\n"
+        "if [ -z \"$TRIM_CLI\" ]; then\n"
+        "  echo \"[$(date)] 致命：找不到 trim-cli（PATH=$PATH）\" >> \"$LOG\"\n"
+        "  echo \"error:找不到 trim-cli，无法执行自动安装\" > \"$RESULT\"\n"
+        "  exit 1\n"
+        "fi\n"
+        "echo \"[$(date)] trim-cli: $TRIM_CLI\" >> \"$LOG\"\n"
         "%s"  # backup
-        "if timeout 600 trim-cli app install-fpk \"$FPK\" --yes >> \"$LOG\" 2>&1; then\n"
+        "if timeout 600 \"$TRIM_CLI\" app install-fpk \"$FPK\" --yes >> \"$LOG\" 2>&1; then\n"
         "  echo \"[$(date)] install-fpk ok\" >> \"$LOG\"\n"
         "else\n"
         "  echo \"[$(date)] install-fpk 失败，回退 uninstall+install\" >> \"$LOG\"\n"
-        "  timeout 300 trim-cli app uninstall-fpk fnstyle --yes >> \"$LOG\" 2>&1 || true\n"
+        "  timeout 300 \"$TRIM_CLI\" app uninstall-fpk fnstyle --yes >> \"$LOG\" 2>&1 || true\n"
         "  %s"  # restore (在卸载后、安装前把配置放回去)
-        "  timeout 600 trim-cli app install-fpk \"$FPK\" --yes >> \"$LOG\" 2>&1\n"
+        "  timeout 600 \"$TRIM_CLI\" app install-fpk \"$FPK\" --yes >> \"$LOG\" 2>&1\n"
         "fi\n"
-        "echo \"[$(date)] updater exit\" >> \"$LOG\"\n"
-    ) % (fpk, log_path, version, backup, restore)
+        "RC=$?\n"
+        "if [ \"$RC\" -eq 0 ]; then\n"
+        "  echo \"[$(date)] updater exit ok\" >> \"$LOG\"\n"
+        "  echo ok > \"$RESULT\"\n"
+        "else\n"
+        "  echo \"[$(date)] updater exit 失败(rc=$RC)\" >> \"$LOG\"\n"
+        "  echo \"error:安装脚本执行失败（详见 $LOG）\" > \"$RESULT\"\n"
+        "fi\n"
+    ) % (fpk, log_path, version, result_path, backup, restore)
     script_path = os.path.join(_UPDATE_DIR, "fnstyle_updater.sh")
     with open(script_path, "w") as f:
         f.write(script)
@@ -255,10 +294,13 @@ def _launch_detached_installer(fpk, version):
     log("启动脱离会话安装脚本: %s" % script_path)
     # start_new_session=True 在 POSIX 上等价于 setsid：让安装脚本成为新会话首领，
     # 本服务（父进程）被应用中心重启杀掉也不影响安装继续。无需依赖 setsid 二进制。
+    env = dict(os.environ)
+    # 应用中心启动的本服务 PATH 精简，不含 trim-cli 所在目录 → 前置兜底
+    env["PATH"] = "/usr/trim/bin:/usr/local/bin:" + env.get("PATH", "")
     subprocess.Popen(
         ["bash", script_path],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        stdin=subprocess.DEVNULL, env=dict(os.environ),
+        stdin=subprocess.DEVNULL, env=env,
         start_new_session=True,
     )
 
@@ -338,6 +380,18 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/update/status":
             with _UPDATE_LOCK:
                 st = dict(UPDATE_STATE)
+            # 安装脚本的结果标记：脚本失败时状态不会自然离开 restarting
+            # （服务没被重启），必须依据标记把 phase 改判为 error。
+            if st.get("phase") == "restarting":
+                try:
+                    with open(os.path.join(_UPDATE_DIR, "fnstyle_update_result")) as f:
+                        r = f.read().strip()
+                    if r.startswith("error"):
+                        st["phase"] = "error"
+                        st["error"] = r.split("error:", 1)[1] or "安装脚本失败"
+                        st["message"] = "更新失败"
+                except Exception:
+                    pass
             self._send_json(200, st)
             return True
         if p == "/api/update/start" and self.command == "POST":
