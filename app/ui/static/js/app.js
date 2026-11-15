@@ -1533,7 +1533,7 @@
   var AUTOINSTALL_KEY = 'fnstyle_autoinstall_update_v1';
   /* 当前版本号：与 manifest 的 version 保持一致，发版时同步修改。
      顶栏版本胶囊与「发现新版本」提示都基于它展示。 */
-  var APP_VERSION = '1.1.8';
+  var APP_VERSION = '1.1.9';
 
   /* 顶栏右侧更新控件：版本胶囊 + 检查/下载按钮 + 状态文字。
      reason：error 态下展示在状态文字与悬停提示里的诊断摘要（可省略）。
@@ -1636,10 +1636,10 @@
       downloadUrl: r.downloadUrl,
       version: r.latest,
       sha256: r.sha256 || ''
-    } }).then(function (resp) {
+    }     }).then(function (resp) {
       if (!resp || resp.success === false) {
-        // 启动失败（如已有任务进行中）：回退为手动按钮
-        setTopbarUpdate('available', r);
+        // 启动失败（典型：409 已有更新任务进行中）：任务可能仍在跑，转入进度轮询
+        pollUpdate();
         return;
       }
       pollUpdate();

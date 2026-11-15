@@ -238,13 +238,13 @@ def _launch_detached_installer(fpk, version):
         "FPK='%s'\nLOG='%s'\nVER='%s'\n"
         "echo \"[$(date)] bootstrap update to $VER\" >> \"$LOG\"\n"
         "%s"  # backup
-        "if trim-cli app install-fpk \"$FPK\" --yes >> \"$LOG\" 2>&1; then\n"
+        "if timeout 600 trim-cli app install-fpk \"$FPK\" --yes >> \"$LOG\" 2>&1; then\n"
         "  echo \"[$(date)] install-fpk ok\" >> \"$LOG\"\n"
         "else\n"
         "  echo \"[$(date)] install-fpk 失败，回退 uninstall+install\" >> \"$LOG\"\n"
-        "  trim-cli app uninstall-fpk fnstyle --yes >> \"$LOG\" 2>&1 || true\n"
+        "  timeout 300 trim-cli app uninstall-fpk fnstyle --yes >> \"$LOG\" 2>&1 || true\n"
         "  %s"  # restore (在卸载后、安装前把配置放回去)
-        "  trim-cli app install-fpk \"$FPK\" --yes >> \"$LOG\" 2>&1\n"
+        "  timeout 600 trim-cli app install-fpk \"$FPK\" --yes >> \"$LOG\" 2>&1\n"
         "fi\n"
         "echo \"[$(date)] updater exit\" >> \"$LOG\"\n"
     ) % (fpk, log_path, version, backup, restore)
