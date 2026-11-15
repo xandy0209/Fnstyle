@@ -306,7 +306,7 @@
                   '" title="恢复为软件默认图片">默认</button>';
         }
 
-        html += '<button class="btn primary sm" data-save="' + f.key + '">保存</button>';
+        /* 所有字段调整后即自动保存，不再有手动「保存」按钮 */
         html += '</div></div>';
       });
 
@@ -341,11 +341,17 @@
       });
     });
 
-    /* 保存 */
-    $$('#personalizeBody [data-save]').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        var key = btn.getAttribute('data-save');
-        saveField(key);
+    /* 文本 / 媒体地址输入：值提交（失焦）即自动保存 */
+    $$('#personalizeBody input[type="text"][data-key]').forEach(function (el) {
+      el.addEventListener('change', function () {
+        saveField(el.getAttribute('data-key'));
+      });
+    });
+
+    /* 滑块：拖动结束（松手）即自动保存；input 事件仅用于实时数值显示 */
+    $$('#personalizeBody input[type="range"][data-key]').forEach(function (el) {
+      el.addEventListener('change', function () {
+        saveField(el.getAttribute('data-key'));
       });
     });
 
@@ -403,12 +409,16 @@
     });
   }
 
+  /* 最近一次自动保存的 Promise：「应用到系统」前会等待它完成，
+     避免「刚改完立即应用」时系统读到旧配置。 */
+  var lastSavePromise = null;
+
   function saveField(key, explicitVal) {
     var f = FIELDS.filter(function (x) { return x.key === key; })[0];
     var val = explicitVal;
     if (val === undefined || val === null) {
       var el = $('#f_' + key);
-      if (!el) return;
+      if (!el) return Promise.resolve(null);
       val = el.value;
     }
     // 数字语义的字段必须写成 JSON 数字（FnDesk 侧用 === / !== 严格比较）
@@ -433,15 +443,16 @@
     }
     var payload = {};
     payload[key] = val;
-    api('config', { method: 'POST', body: payload }).then(function (r) {
+    lastSavePromise = api('config', { method: 'POST', body: payload }).then(function (r) {
       if (r && r.success) {
         state.config[key] = val;
-        toast('「' + labelOf(key) + '」已保存', 'ok');
+        toast('「' + labelOf(key) + '」已自动保存', 'ok');
         renderPreviews();
       } else {
-        toast((r && r.message) || '保存失败', 'err');
+        toast((r && r.message) || '自动保存失败', 'err');
       }
     });
+    return lastSavePromise;
   }
 
   function labelOf(key) {
@@ -1497,13 +1508,19 @@
   //   这里收到 200 就说明「已受理」，实际生效需要等 2~5 秒（nginx 重建 + 校验）。
   function applyToSystem() {
     toast('正在应用到 fnOS 系统…');
-    api('apply', { method: 'POST', body: {} }).then(function (r) {
-      if (r && r.success) {
-        toast(r.message || '已应用到系统，正在生效…', 'ok');
-      } else {
-        toast((r && r.message) || '应用失败', 'err');
-      }
-    });
+    /* 先等待尚未完成的自动保存，避免系统读到旧配置 */
+    Promise.resolve(lastSavePromise)
+      .catch(function () {})
+      .then(function () {
+        return api('apply', { method: 'POST', body: {} });
+      })
+      .then(function (r) {
+        if (r && r.success) {
+          toast(r.message || '已应用到系统，正在生效…', 'ok');
+        } else {
+          toast((r && r.message) || '应用失败', 'err');
+        }
+      });
   }
 
   /* ---------------------------- 更新检查 ----------------------------
@@ -1516,7 +1533,7 @@
   var AUTOINSTALL_KEY = 'fnstyle_autoinstall_update_v1';
   /* 当前版本号：与 manifest 的 version 保持一致，发版时同步修改。
      顶栏版本胶囊与「发现新版本」提示都基于它展示。 */
-  var APP_VERSION = '1.1.6';
+  var APP_VERSION = '1.1.7';
 
   /* 顶栏右侧更新控件：版本胶囊 + 检查/下载按钮 + 状态文字。
      reason：error 态下展示在状态文字与悬停提示里的诊断摘要（可省略）。

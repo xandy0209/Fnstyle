@@ -1,7 +1,7 @@
 {
-  "version": "1.1.6",
+  "version": "1.1.7",
   "releaseDate": "2026-11-15",
-  "downloadUrl": "https://fastly.jsdelivr.net/gh/xandy0209/Fnstyle@v1.1.6/dist/fnstyle_1.1.6_all.fpk",
-  "sha256": "e623ddcfbcd90bbaf3184bc53033028dfdb7393d2ee9a34a6dc217d8e8a7af53",
-  "changelog": "顶栏「检查更新」由文字按钮改为图标按钮：刷新图标、悬停提示保留，检查中图标旋转，发现新版本时仍显示文字按钮「发现新版本 vx.y.z」。"
+  "downloadUrl": "https://fastly.jsdelivr.net/gh/xandy0209/Fnstyle@v1.1.7/dist/fnstyle_1.1.7_all.fpk",
+  "sha256": "c423518b4bfac77d471e3fe93d18e3f5a66d45a1cd36e42bcdcce1c782c84696",
+  "changelog": "个性化设置全部配置项改为「调整后即自动保存」：文本/媒体地址失焦即保存、滑块拖动结束即保存（开关原本即时保存），并移除每个配置项旁的手动「保存」按钮；「应用到系统」会先等待尚未完成的自动保存再执行。"
 }
