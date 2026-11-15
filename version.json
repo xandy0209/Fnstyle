@@ -1,7 +1,9 @@
 {
-  "version": "1.1.10",
-  "releaseDate": "2026-11-15",
-  "downloadUrl": "https://github.com/xandy0209/Fnstyle/releases/download/v1.1.10/fnstyle_1.1.10_all.fpk",
-  "sha256": "02244bd7fac98a606359d5e5e86a2aa83e30950e5e27c60751b51c9564e50e1f",
-  "changelog": "修复自动更新安装环节必失败的根因：脱离安装脚本继承的 PATH 不含 trim-cli（command not found 秒败），现自动解析绝对路径并前置 /usr/trim/bin；安装失败时状态正确转为「更新失败、可重试」，不再假卡在「即将重启」。"
+  "version": "1.1.11",
+  "url": "https://github.com/xandy0209/Fnstyle/releases/download/v1.1.11/fnstyle_1.1.11_all.fpk",
+  "downloadUrl": "https://github.com/xandy0209/Fnstyle/releases/download/v1.1.11/fnstyle_1.1.11_all.fpk",
+  "changelog": "1.1.11：顶栏版本号标签改为绿色渲染",
+  "sha256": "b677d6618fae442d37919dacbee0300ac6cb325730d13d2c0cab9332a6ff803f",
+  "size": 1278664,
+  "publishedAt": "2026-11-15T21:24:00+08:00"
 }
