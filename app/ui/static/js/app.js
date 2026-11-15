@@ -1516,10 +1516,11 @@
   var AUTOINSTALL_KEY = 'fnstyle_autoinstall_update_v1';
   /* 当前版本号：与 manifest 的 version 保持一致，发版时同步修改。
      顶栏版本胶囊与「发现新版本」提示都基于它展示。 */
-  var APP_VERSION = '1.1.4';
+  var APP_VERSION = '1.1.5';
 
-  /* 顶栏右侧更新控件：版本胶囊 + 检查/下载按钮 + 状态文字 */
-  function setTopbarUpdate(state, r) {
+  /* 顶栏右侧更新控件：版本胶囊 + 检查/下载按钮 + 状态文字。
+     reason：error 态下展示在状态文字与悬停提示里的诊断摘要（可省略）。 */
+  function setTopbarUpdate(state, r, reason) {
     var pill = $('#verPill');
     if (pill) pill.textContent = 'v' + APP_VERSION;
     var btn = $('#tbCheckUpdate');
@@ -1553,7 +1554,10 @@
       btn.className = 'btn sm';
       btn.textContent = '检查更新';
       btn.dataset.available = '0';
-      if (status) status.textContent = '无法连接更新源';
+      if (status) {
+        status.textContent = reason ? reason.split('\n')[0] : '无法连接更新源';
+        if (reason) { status.title = reason; } else { status.removeAttribute('title'); }
+      }
       if (pill) pill.classList.remove('has-update');
     }
   }
@@ -1680,9 +1684,19 @@
       }
       if (r.checkError) {
         /* 后端连通，但所有更新源（jsDelivr 各镜像 / gh 代理 / GitHub）都拉取失败。
-           提示用户，不再弹横幅。via 字段可辅助排查（空=无一命中）。 */
-        if (statusEl && !opts.silent) statusEl.textContent = '无法连接更新源';
-        setTopbarUpdate('error');
+           展示可达比例 + 悬停明细（host + curl 退出码/HTTP 码），
+           并把完整 attempts 打到控制台，便于精确定位网络层问题。 */
+        var attempts = Array.isArray(r.attempts) ? r.attempts : [];
+        var okCount = attempts.filter(function (a) { return a.exit === 0; }).length;
+        var tip = attempts.map(function (a) {
+          var host = a.url;
+          try { host = new URL(a.url).host; } catch (e) {}
+          return host + ' → exit=' + a.exit + ' http=' + a.http;
+        }).join('\n');
+        var msg = '无法连接更新源（可达 ' + okCount + '/' + attempts.length + '）';
+        if (statusEl && !opts.silent) statusEl.textContent = msg;
+        setTopbarUpdate('error', null, msg + (tip ? '\n' + tip : ''));
+        try { console.warn('[FnStyle] 更新源探测明细:', attempts); } catch (e) {}
         return null;
       }
       if (!r.latest || !r.updateAvailable) {

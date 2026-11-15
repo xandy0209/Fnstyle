@@ -23,7 +23,7 @@ set -uo pipefail
 # ------------------------- 版本与更新检查 -------------------------
 # ⚠️ 必须与 manifest 的 version 保持一致（自动更新靠它判断「是否比线上新」）。
 # GitHub 发布新版本时，两处都要改：manifest 的 version + 本常量。
-APP_VERSION="1.1.4"
+APP_VERSION="1.1.5"
 
 # ----------------------------- 路径配置 -----------------------------
 # APP_ROOT 是 fnOS 安装后创建的标准软链：
@@ -1816,22 +1816,16 @@ print('\t'.join([str(ver), str(url), str(date), str(note), str(sha)]))
 PY
 }
 
-# 拉取并解析远程版本清单；成功则填充 R_VERSION/R_URL/R_DATE/R_NOTE，返回 0
-get_remote_version() {
-  R_VERSION=""; R_URL=""; R_DATE=""; R_NOTE=""
-  local url="$1"
-  [ -z "$url" ] && return 1
-  local tmp="${DATA_DIR}/.vercheck.$$"
-  if ! curl -fsSL --max-time 5 -H 'User-Agent: Mozilla/5.0' -o "$tmp" "$url" 2>/dev/null; then
-    rm -f "$tmp"; return 1
-  fi
-  [ -s "$tmp" ] || { rm -f "$tmp"; return 1; }
+# 解析已下载到本地的清单文件；成功则填充 R_VERSION/R_URL/R_DATE/R_NOTE/R_SHA，返回 0
+parse_manifest() {
+  R_VERSION=""; R_URL=""; R_DATE=""; R_NOTE=""; R_SHA=""
+  local tmp="$1"
+  [ -s "$tmp" ] || return 1
   # 首字节必须是 JSON（5b='[' / 7b='{' / ef=BOM），否则视为无效响应
   local first="$(head -c 1 "$tmp" 2>/dev/null | od -An -tx1 2>/dev/null | tr -d ' \n')"
-  case "$first" in 5b|7b|ef) ;; *) rm -f "$tmp"; return 1 ;; esac
+  case "$first" in 5b|7b|ef) ;; *) return 1 ;; esac
   local out
   out="$(parse_remote "$tmp" 2>/dev/null)"
-  rm -f "$tmp"
   [ -z "$out" ] && return 1
   R_VERSION="$(printf '%s' "$out" | cut -f1)"
   R_URL="$(printf '%s' "$out" | cut -f2)"
@@ -1844,10 +1838,24 @@ get_remote_version() {
   # 仅接受形如 x.y.z 的版本号；远程若返回错误页/非 JSON（如代理拦截页），
   # 此处直接否决，避免把垃圾值带进 ver_compare 触发算术错误。
   case "$R_VERSION" in
-    [0-9]*.[0-9]*.[0-9]*) ;;
-    *) rm -f "$tmp"; return 1 ;;
+    [0-9]*.[0-9]*.[0-9]*) return 0 ;;
+    *) return 1 ;;
   esac
-  [ -n "$R_VERSION" ] && return 0 || return 1
+}
+
+# 拉取并解析单个远程清单（串行模式 / 自托管单源用）；成功返回 0
+get_remote_version() {
+  R_VERSION=""; R_URL=""; R_DATE=""; R_NOTE=""; R_SHA=""
+  local url="$1"
+  [ -z "$url" ] && return 1
+  local tmp="${DATA_DIR}/.vercheck.$$"
+  curl -fsSL --connect-timeout 3 --max-time 6 \
+      -H 'User-Agent: Mozilla/5.0' -o "$tmp" "$url" 2>/dev/null \
+      || { rm -f "$tmp"; return 1; }
+  parse_manifest "$tmp"
+  local rc=$?
+  rm -f "$tmp"
+  return $rc
 }
 
 # --------------------------- 路由分发 ---------------------------
@@ -1867,17 +1875,29 @@ REL="${REL%%\?*}"
 
 case "$REL" in
     /api/version)
-        # 检查远程最新版本，与本地安装版本比较，返回是否可更新
+        # 检查远程最新版本，与本地安装版本比较，返回是否可更新。
+        # 附带逐源诊断（attempts：每个候选的 curl 退出码 / HTTP 状态码），
+        # 用于在网络受限环境（内地 NAS）精确定位"哪个源、以何种方式失败"。
         CUR="$APP_VERSION"
         R_VERSION=""; R_URL=""; R_DATE=""; R_NOTE=""; R_SHA=""; CHECK_ERR=1
+        VIA=""
+        ATTEMPTS=""
+        # ⚠️ set -u 下必须先给默认值：NAS 生产环境不会设置该变量，
+        #    直接引用会导致 unbound variable 使 CGI 整体崩溃（前端表现为"检查失败"）
+        FNSTYLE_VERSION_URL="${FNSTYLE_VERSION_URL:-}"
         if [ -n "$FNSTYLE_VERSION_URL" ]; then
-            # 自托管 / 测试：仅用单一清单地址
-            CANDIDATES="$FNSTYLE_VERSION_URL"
+            # 自托管 / 测试：仅用单一清单地址（串行）
+            for u in $FNSTYLE_VERSION_URL; do
+                if get_remote_version "$u"; then CHECK_ERR=0; VIA="$u"; break; fi
+                ATTEMPTS="${ATTEMPTS}${u}	exit=99	http=0
+"
+            done
         else
-            # 默认按「国内可达性」优先排序依次尝试，首个成功即返回。
+            # 默认按「国内可达性」优先排序，**并行**探测所有候选（总耗时≈单源
+            # 超时，而非源数×超时），然后按优先级取第一个成功者。
             # ⚠️ cdn.jsdelivr.net 主域名自 2022 年起在内地多数网络被 DNS 污染/阻断，
             #    fastly / gcore / testingcf 三个子域目前内地可达性更好，放前面。
-            # gh 系代理域名经常更换，多备几个。
+            #    gh 系代理域名经常更换，多备几个。
             CANDIDATES="
 https://fastly.jsdelivr.net/gh/xandy0209/Fnstyle@main/version.json
 https://gcore.jsdelivr.net/gh/xandy0209/Fnstyle@main/version.json
@@ -1886,14 +1906,44 @@ https://cdn.jsdelivr.net/gh/xandy0209/Fnstyle@main/version.json
 https://ghfast.top/https://raw.githubusercontent.com/xandy0209/Fnstyle/main/version.json
 https://gh-proxy.com/https://raw.githubusercontent.com/xandy0209/Fnstyle/main/version.json
 https://ghproxy.net/https://raw.githubusercontent.com/xandy0209/Fnstyle/main/version.json
+https://github.moeyy.xyz/https://raw.githubusercontent.com/xandy0209/Fnstyle/main/version.json
+https://ghproxy.cc/https://raw.githubusercontent.com/xandy0209/Fnstyle/main/version.json
 https://raw.githubusercontent.com/xandy0209/Fnstyle/main/version.json
 https://api.github.com/repos/xandy0209/Fnstyle/releases/latest"
+            VBASE="${DATA_DIR}/.verprobe.$$"
+            mkdir -p "$VBASE" 2>/dev/null || VBASE="/tmp/.verprobe.$$"
+            N=0
+            for u in $CANDIDATES; do
+                N=$((N+1))
+                (
+                    code="$(curl -fsSL --connect-timeout 3 --max-time 6 \
+                        -H 'User-Agent: Mozilla/5.0' -o "$VBASE/$N.out" \
+                        -w '%{http_code}' "$u" 2>/dev/null)"
+                    echo "$?" > "$VBASE/$N.exit"
+                    echo "${code:-0}" > "$VBASE/$N.http"
+                ) &
+            done
+            wait
+            N=0
+            for u in $CANDIDATES; do
+                N=$((N+1))
+                ex="$(cat "$VBASE/$N.exit" 2>/dev/null)"
+                hc="$(cat "$VBASE/$N.http" 2>/dev/null)"
+                ex="${ex:-99}"; hc="${hc:-0}"
+                ATTEMPTS="${ATTEMPTS}${u}	exit=${ex}	http=${hc}
+"
+                if [ "$ex" = "0" ] && parse_manifest "$VBASE/$N.out"; then
+                    CHECK_ERR=0; VIA="$u"
+                    break
+                fi
+            done
+            rm -rf "$VBASE"
         fi
-        # 依次尝试候选地址，任一条成功即停止；全部失败则 CHECK_ERR=1（网络不可达）。
-        VIA=""
-        for u in $CANDIDATES; do
-            if get_remote_version "$u"; then CHECK_ERR=0; VIA="$u"; break; fi
-        done
+        # 诊断日志：NAS 上可直接 cat /tmp/fnstyle_version_check.log 查看每次探测结果
+        {
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] check: err=$CHECK_ERR via=$VIA"
+            printf '%s' "$ATTEMPTS" | sed 's/^/    /'
+        } >> /tmp/fnstyle_version_check.log 2>/dev/null
         AVAIL=0
         if [ "$CHECK_ERR" = "0" ] && [ -n "$R_VERSION" ] && ver_compare "$R_VERSION" "$CUR"; then
             AVAIL=1
@@ -1901,14 +1951,30 @@ https://api.github.com/repos/xandy0209/Fnstyle/releases/latest"
         BODY="$(FN_V_CURRENT="$CUR" FN_V_LATEST="$R_VERSION" FN_V_URL="$R_URL" \
             FN_V_DATE="$R_DATE" FN_V_NOTE="$R_NOTE" FN_V_AVAIL="$AVAIL" \
             FN_V_ERR="$CHECK_ERR" FN_V_SHA="$R_SHA" FN_V_VIA="$VIA" \
+            FN_V_ATTEMPTS="$ATTEMPTS" \
             python3 - <<'PY'
 import json, os
+attempts = []
+for line in os.environ.get("FN_V_ATTEMPTS", "").splitlines():
+    parts = line.split("\t")
+    if not parts or not parts[0].strip():
+        continue
+    d = {"url": parts[0].strip()}
+    for kv in parts[1:]:
+        if "=" in kv:
+            k, v = kv.split("=", 1)
+            try:
+                d[k.strip()] = int(v.strip())
+            except ValueError:
+                d[k.strip()] = v.strip()
+    attempts.append(d)
 print(json.dumps({
     "current": os.environ.get("FN_V_CURRENT", ""),
     "latest": os.environ.get("FN_V_LATEST", ""),
     "updateAvailable": os.environ.get("FN_V_AVAIL", "0") == "1",
     "checkError": os.environ.get("FN_V_ERR", "1") == "1",
     "via": os.environ.get("FN_V_VIA", ""),
+    "attempts": attempts,
     "downloadUrl": os.environ.get("FN_V_URL", ""),
     "sha256": os.environ.get("FN_V_SHA", ""),
     "releaseDate": os.environ.get("FN_V_DATE", ""),

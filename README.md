@@ -34,15 +34,15 @@
 
 | 安装包 | 直链 |
 |---|---|
-| `fnstyle_1.1.4_all.fpk` | `https://github.com/xandy0209/Fnstyle/releases/download/v1.1.4/fnstyle_1.1.4_all.fpk` |
+| `fnstyle_1.1.5_all.fpk` | `https://github.com/xandy0209/Fnstyle/releases/download/v1.1.5/fnstyle_1.1.5_all.fpk` |
 
-或从 [Releases 页面](https://github.com/xandy0209/Fnstyle/releases/tag/v1.1.4) 下载。
+或从 [Releases 页面](https://github.com/xandy0209/Fnstyle/releases/tag/v1.1.5) 下载。
 
 校验值：
 
 | 文件 | 大小（字节） | MD5 | SHA256 |
 |---|---:|---|---|
-| `fnstyle_1.1.4_all.fpk` | 1,276,013 | `189e884e2a3a6b6b0ce60d34ef89b21a` | `247a69e02f66f464a8165eafb68d0141d24ff9f4262e1842c987033d3f9e9942` |
+| `fnstyle_1.1.5_all.fpk` | 1,277,951 | `2e7b9fc8b7e792bc2c66ad104a6ed529` | `ba6276a714a7ecb8f9c422b3666087e076370eac76a21fb63a6c0cb8054b381b` |
 
 ### 安装步骤
 
@@ -51,8 +51,8 @@
 **方式 B · 命令行**（宿主上以 root 执行）：
 
 ```bash
-trim-cli app install-fpk fnstyle_1.1.4_all.fpk --dry-run --yes
-trim-cli app install-fpk fnstyle_1.1.4_all.fpk --yes
+trim-cli app install-fpk fnstyle_1.1.5_all.fpk --dry-run --yes
+trim-cli app install-fpk fnstyle_1.1.5_all.fpk --yes
 ```
 
 > ⚠️ **不支持覆盖安装**，升级需先卸载再装。卸载不会删除数据目录里的配置、主题与上传图片。
@@ -80,12 +80,12 @@ FnStyle 内置**「有更新自动提醒」**能力，无需接入任何第三�
 **工作原理**（避开 fnOS 浏览器跨域限制）：
 
 1. 打开软件时，前端请求本地后端 `GET /api/version`（自动检查默认开启，无需任何设置）。
-2. 后端（NAS 侧）依次尝试 **9 个远程版本清单源**做语义化版本比较（**任一可达即返回**，按内地可达性优先排序）：
+2. 后端（NAS 侧）**并行探测 11 个远程版本清单源**做语义化版本比较（一次并发完成，总耗时≈单源超时，按内地可达性优先取首个成功者）：
    - `fastly.jsdelivr.net` / `gcore.jsdelivr.net` / `testingcf.jsdelivr.net` / `cdn.jsdelivr.net` 的 `gh/xandy0209/Fnstyle@main/version.json`；
-   - `ghfast.top` / `gh-proxy.com` / `ghproxy.net` 反代 GitHub raw；
+   - `ghfast.top` / `gh-proxy.com` / `ghproxy.net` / `github.moeyy.xyz` / `ghproxy.cc` 反代 GitHub raw；
    - GitHub raw 直连；GitHub Releases API 兜底。
-   - 响应中的 `via` 字段记录实际命中的源，便于排查网络问题。
-   - 全部不可达时后端仍返回 200 响应并带 `checkError:true`，前端提示「无法连接更新源」，不再静默无响应。
+   - 响应中的 `via` 字段记录实际命中的源；`attempts` 数组记录**每个源的 curl 退出码与 HTTP 状态码**。
+   - 全部不可达时后端仍返回 200 响应并带 `checkError:true`，前端显示「无法连接更新源（可达 x/n）」，悬停状态文字或查看浏览器控制台可得逐源明细；NAS 上每次探测同时写入 `/tmp/fnstyle_version_check.log`。
    - 清单地址可由环境变量 `FNSTYLE_VERSION_URL` 覆盖为单一自托管地址（便于内网/私有部署）。
 3. 发现更高版本时，本地后端直接完成安装编排（**零人工介入**）：
    - 后端 `POST /api/update/start` 在 NAS 侧**后台静默**下载 fpk（jsDelivr 多镜像互换 + gh 代理兜底）→ 校验 SHA256 → 调用 `trim-cli app install-fpk` 安装 → 应用中心自动重启服务；
@@ -105,7 +105,7 @@ FnStyle 内置**「有更新自动提醒」**能力，无需接入任何第三�
 ```bash
 git clone https://github.com/xandy0209/Fnstyle.git
 cd Fnstyle
-bash build.sh              # 产出 ./fnstyle_1.1.4_all.fpk（仓库根目录）
+bash build.sh              # 产出 ./fnstyle_1.1.5_all.fpk（仓库根目录）
 ```
 
 `build.sh` 输出到仓库根目录，发布前需自行 `cp` 到 `dist/`。脚本会重算 `manifest` 的 `checksum`（即 `app.tgz` 的 MD5）。

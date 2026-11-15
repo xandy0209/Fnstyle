@@ -278,7 +278,11 @@ def _update_worker(url, version, sha256):
                               "https://" + h, url, count=1)
                 if alt not in cands:
                     cands.append(alt)
+        cands.append("https://ghfast.top/" + url)
+        cands.append("https://gh-proxy.com/" + url)
         cands.append("https://ghproxy.net/" + url)
+        cands.append("https://github.moeyy.xyz/" + url)
+        cands.append("https://ghproxy.cc/" + url)
         _download_any(cands, fpk, lambda p: _update_set(progress=p))
         _update_set(phase="verifying", message="正在校验安装包…")
         if sha256:

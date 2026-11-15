@@ -1,7 +1,7 @@
 {
-  "version": "1.1.4",
+  "version": "1.1.5",
   "releaseDate": "2026-11-15",
-  "downloadUrl": "https://fastly.jsdelivr.net/gh/xandy0209/Fnstyle@v1.1.4/dist/fnstyle_1.1.4_all.fpk",
-  "sha256": "247a69e02f66f464a8165eafb68d0141d24ff9f4262e1842c987033d3f9e9942",
-  "changelog": "核查并修复「检查失败」：cdn.jsdelivr.net 主域名在内地多数网络已被 DNS 污染/阻断，更新源扩充为 9 个（新增 fastly/gcore/testingcf jsDelivr 镜像与 ghfast.top、gh-proxy.com 代理），响应新增 via 字段便于排查。同时移除设置页「更新」卡片，自动检查与自动安装默认开启、无需开关界面。"
+  "downloadUrl": "https://fastly.jsdelivr.net/gh/xandy0209/Fnstyle@v1.1.5/dist/fnstyle_1.1.5_all.fpk",
+  "sha256": "ba6276a714a7ecb8f9c422b3666087e076370eac76a21fb63a6c0cb8054b381b",
+  "changelog": "修复「无法连接更新源」的真正根因：CGI 在 set -u 下引用未设置的 FNSTYLE_VERSION_URL 触发 unbound variable，使 /api/version 整体崩溃（1.1.2～1.1.4 的检查失败均为此所致，与网络无关）。同时更新检查改为并行探测并自带逐源诊断（attempts：每个源的 curl 退出码与 HTTP 状态码），前端显示可达比例与明细，NAS 上留存 /tmp/fnstyle_version_check.log；候选源新增 github.moeyy.xyz、ghproxy.cc。"
 }
