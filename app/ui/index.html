@@ -33,6 +33,12 @@
       <h1>FnStyle</h1>
       <div class="sub">飞牛个性化设置 &amp; 丰富主题库 — 集中管理，一键应用</div>
     </div>
+    <!-- 顶栏右侧：当前版本号 + 更新检查入口 -->
+    <div class="topbar-right" id="topbarUpdate">
+      <span class="ver-pill" id="verPill" title="当前版本">v1.1.0</span>
+      <span class="ub-status" id="tbUpdateStatus"></span>
+      <button class="btn sm" id="tbCheckUpdate" type="button">检查更新</button>
+    </div>
   </div>
 
   <!-- ============================ 标签页 ============================ -->
@@ -54,14 +60,15 @@
     </div>
 
     <!-- 更新设置：独立于上面的配置表单（不写入 fnstyle.json，
-         状态仅存浏览器 localStorage），由 JS 单独渲染与绑定 -->
+         状态仅存浏览器 localStorage），由 JS 单独渲染与绑定。
+         检查更新入口已上移到顶栏右侧（版本号旁）。 -->
     <div class="card" id="updateCard">
       <header><h2><span>🔄</span> 更新</h2></header>
       <div class="body" id="updateBody">
         <div class="fitem fitem-wide">
           <div class="fitem-head">
             <label for="autoCheckUpdate">自动检查更新</label>
-            <span class="hint">打开软件时自动检查 GitHub 上的最新版本，发现新版本后在此提醒</span>
+            <span class="hint">打开软件时自动检查 GitHub 上的最新版本，发现新版本后在右上角标题栏提醒并提供下载</span>
           </div>
           <div class="fitem-body">
             <label class="switch" for="autoCheckUpdate">
@@ -69,9 +76,6 @@
               <span class="slider"></span>
             </label>
             <span class="switch-text" id="autoCheckText">开启</span>
-            <div class="spacer"></div>
-            <button class="btn sm" id="btnCheckUpdate">立即检查更新</button>
-            <span class="ub-status" id="updateCheckStatus"></span>
           </div>
         </div>
       </div>
