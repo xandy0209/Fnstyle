@@ -5,6 +5,8 @@
    "desc": "飞牛个性化设置 & 主题库",
    "icon": "images/icon_{0}.png",
    "type": "iframe",
+   "width": 1280,
+   "height": 860,
    "url": "/app/fnstyle/",
    "allUsers": false,
    "noDisplay": false,

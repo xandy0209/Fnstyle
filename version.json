@@ -1,7 +1,7 @@
 {
-  "version": "1.1.7",
+  "version": "1.1.8",
   "releaseDate": "2026-11-15",
-  "downloadUrl": "https://fastly.jsdelivr.net/gh/xandy0209/Fnstyle@v1.1.7/dist/fnstyle_1.1.7_all.fpk",
-  "sha256": "04a825ee555ed69ea7416b0a29a32f099eea82befc4442f5c6cb73776269d0ee",
-  "changelog": "个性化设置全部配置项改为「调整后即自动保存」：文本/媒体地址失焦即保存、滑块拖动结束即保存（开关原本即时保存），并移除每个配置项旁的手动「保存」按钮；「应用到系统」会先等待尚未完成的自动保存再执行。"
+  "downloadUrl": "https://fastly.jsdelivr.net/gh/xandy0209/Fnstyle@v1.1.8/dist/fnstyle_1.1.8_all.fpk",
+  "sha256": "7f0636c66b95898f91d06f5d5df5b71461557d8fa0e4a9980728d8922a905fe8",
+  "changelog": "修正桌面窗口默认尺寸过高的问题：应用入口 config 显式声明 iframe 窗口尺寸 1280×860，不再依赖系统默认值（默认尺寸在部分屏幕上窗口底部会被任务栏遮挡）。"
 }
