@@ -1899,10 +1899,10 @@ case "$REL" in
             #    fastly / gcore / testingcf 三个子域目前内地可达性更好，放前面。
             #    gh 系代理域名经常更换，多备几个。
             CANDIDATES="
-https://fastly.jsdelivr.net/gh/xandy0209/Fnstyle@main/version.json
-https://gcore.jsdelivr.net/gh/xandy0209/Fnstyle@main/version.json
-https://testingcf.jsdelivr.net/gh/xandy0209/Fnstyle@main/version.json
-https://cdn.jsdelivr.net/gh/xandy0209/Fnstyle@main/version.json
+https://fastly.jsdelivr.net/gh/xandy0209/Fnstyle@v1/version.json
+https://gcore.jsdelivr.net/gh/xandy0209/Fnstyle@v1/version.json
+https://testingcf.jsdelivr.net/gh/xandy0209/Fnstyle@v1/version.json
+https://cdn.jsdelivr.net/gh/xandy0209/Fnstyle@v1/version.json
 https://ghfast.top/https://raw.githubusercontent.com/xandy0209/Fnstyle/main/version.json
 https://gh-proxy.com/https://raw.githubusercontent.com/xandy0209/Fnstyle/main/version.json
 https://ghproxy.net/https://raw.githubusercontent.com/xandy0209/Fnstyle/main/version.json
