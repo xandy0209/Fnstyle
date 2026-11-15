@@ -15,5 +15,5 @@ desktop_applaunchname = fnstyle.main
 service_port          = 9910
 checkport             = false
 ctl_stop              = true
-changelog             = 1.1.11：顶栏版本号标签改为绿色渲染
-checksum              = ed15f641c87a7a7caad1b3c6e9924764
+changelog             = 1.1.11：版本号标签绿色渲染；修复自动更新安装环节——改用本机 appcenter-cli 执行卸载+重装（原 trim-cli 在 NAS 上不存在）
+checksum              = 93f8f81498edbdc8cb3dcf4700daa222
