@@ -1,5 +1,5 @@
 appname               = fnstyle
-version               = 1.1.12
+version               = 1.1.13
 display_name          = FnStyle
 desc                  = 集中管理飞牛个性化设置与丰富主题库：网站标题、登录框、LOGO、壁纸、毛玻璃、任务栏等独立配置，内置多源主题库，支持一键应用到 fnOS 系统。
 platform              = all
@@ -15,5 +15,5 @@ desktop_applaunchname = fnstyle.main
 service_port          = 9910
 checkport             = false
 ctl_stop              = true
-changelog             = 1.1.12：桌面窗口高度调整为 900px
-checksum              = 6b2c7810e51aae709a7fa1417e27d7bf
+changelog             = 1.1.13：修复自动更新装回失败——install-fpk 需指定存储卷，卸载前检测原卷并在各卷自动重试；安装成败按实际目录校验
+checksum              = 417dbcc968c5f2080f3322d09f4012ed

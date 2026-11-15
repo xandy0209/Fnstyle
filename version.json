@@ -1,9 +1,9 @@
 {
-  "version": "1.1.12",
-  "url": "https://github.com/xandy0209/Fnstyle/releases/download/v1.1.12/fnstyle_1.1.12_all.fpk",
-  "downloadUrl": "https://github.com/xandy0209/Fnstyle/releases/download/v1.1.12/fnstyle_1.1.12_all.fpk",
-  "changelog": "1.1.12：桌面窗口高度调整为 900px",
-  "sha256": "aec25d51c486afebf00d7422a2c4463f6f2c837a73a25702b021783f1bd9cd28",
-  "size": 1278592,
-  "publishedAt": "2026-11-15T21:59:00+08:00"
+  "version": "1.1.13",
+  "url": "https://github.com/xandy0209/Fnstyle/releases/download/v1.1.13/fnstyle_1.1.13_all.fpk",
+  "downloadUrl": "https://github.com/xandy0209/Fnstyle/releases/download/v1.1.13/fnstyle_1.1.13_all.fpk",
+  "changelog": "1.1.13：修复自动更新装回失败——install-fpk 需指定存储卷，卸载前检测原卷并在各卷自动重试；安装成败按实际目录校验",
+  "sha256": "a7b9fe56297c6152efabd0793fd0990908e78e10acf29c173fa549ff83a4ed69",
+  "size": 1279026,
+  "publishedAt": "2026-11-15T23:12:00+08:00"
 }

@@ -249,7 +249,10 @@ def _launch_detached_installer(fpk, version):
     if cfg_src:
         backup = "cp -f '%s' '%s' 2>/dev/null || true; " % (cfg_src, cfg_dst)
         restore = "cp -f '%s' '%s' 2>/dev/null || true; " % (cfg_dst, cfg_src)
-    # 优先 install-fpk（多数情况覆盖升级），失败再 uninstall+install
+    # 1.1.13 实测教训：install-fpk 在卸载后的全新安装必须 --volume 指定存储卷
+    #（否则报 Use --volume ...，且 CLI 退出码仍为 0 → 假成功）。
+    # 对策：卸载前从 target 软链解析原安装卷；装回时优先原卷，
+    # 成败以「安装目录真实存在」为准，不信任 RC；失败则逐卷重试。
     script = (
         "#!/bin/bash\n"
         "FPK='%s'\nLOG='%s'\nVER='%s'\nRESULT='%s'\n"
@@ -262,20 +265,33 @@ def _launch_detached_installer(fpk, version):
         "  exit 1\n"
         "fi\n"
         "echo \"[$(date)] cli: $CLI\" >> \"$LOG\"\n"
+        "VOL=''\n"
+        "TGT=\"$(readlink -f /var/apps/fnstyle/target 2>/dev/null || true)\"\n"
+        "case \"$TGT\" in /vol[0-9]*) VOL=\"${TGT#/vol}\"; VOL=\"${VOL%%%%/*}\";; esac\n"
+        "echo \"[$(date)] 原安装卷: ${VOL:-未知}（$TGT）\" >> \"$LOG\"\n"
         "%s"  # backup（卸载前把配置备份出来）
-        # install-fpk 对已安装应用是空操作（只输出 installed 不换包），升级必须先卸载再装
         "echo \"[$(date)] uninstall fnstyle\" >> \"$LOG\"\n"
         "yes 2>/dev/null | timeout 300 \"$CLI\" uninstall fnstyle >> \"$LOG\" 2>&1 || true\n"
         "echo \"[$(date)] install-fpk\" >> \"$LOG\"\n"
-        "%s"  # restore（卸载后、安装前把配置放回去）
-        "timeout 600 \"$CLI\" install-fpk \"$FPK\" >> \"$LOG\" 2>&1\n"
-        "RC=$?\n"
-        "if [ \"$RC\" -eq 0 ]; then\n"
+        "if [ -n \"$VOL\" ]; then\n"
+        "  timeout 600 \"$CLI\" install-fpk \"$FPK\" --volume \"$VOL\" >> \"$LOG\" 2>&1\n"
+        "else\n"
+        "  timeout 600 \"$CLI\" install-fpk \"$FPK\" >> \"$LOG\" 2>&1\n"
+        "fi\n"
+        "ok=0\n"
+        "for v in \"$VOL\" 1 2 3 4; do\n"
+        "  [ -z \"$v\" ] && continue\n"
+        "  if [ -d /var/apps/fnstyle ] || [ -d /usr/local/apps/@appcenter/fnstyle ]; then ok=1; break; fi\n"
+        "  echo \"[$(date)] 未检出安装目录，重试 --volume $v\" >> \"$LOG\"\n"
+        "  timeout 600 \"$CLI\" install-fpk \"$FPK\" --volume \"$v\" >> \"$LOG\" 2>&1\n"
+        "done\n"
+        "%s"  # restore（装好后把配置放回去）
+        "if [ \"$ok\" -eq 1 ]; then\n"
         "  echo \"[$(date)] updater exit ok\" >> \"$LOG\"\n"
         "  echo ok > \"$RESULT\"\n"
         "else\n"
-        "  echo \"[$(date)] updater exit 失败(rc=$RC)\" >> \"$LOG\"\n"
-        "  echo \"error:安装脚本执行失败（详见 $LOG）\" > \"$RESULT\"\n"
+        "  echo \"[$(date)] updater exit 失败：重试各卷后仍未安装成功\" >> \"$LOG\"\n"
+        "  echo \"error:自动安装失败（已尝试各存储卷，详见 $LOG）\" > \"$RESULT\"\n"
         "fi\n"
     ) % (fpk, log_path, version, result_path, backup, restore)
     script_path = os.path.join(_UPDATE_DIR, "fnstyle_updater.sh")
