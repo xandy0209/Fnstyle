@@ -2,6 +2,6 @@
   "version": "1.1.7",
   "releaseDate": "2026-11-15",
   "downloadUrl": "https://fastly.jsdelivr.net/gh/xandy0209/Fnstyle@v1.1.7/dist/fnstyle_1.1.7_all.fpk",
-  "sha256": "c423518b4bfac77d471e3fe93d18e3f5a66d45a1cd36e42bcdcce1c782c84696",
+  "sha256": "04a825ee555ed69ea7416b0a29a32f099eea82befc4442f5c6cb73776269d0ee",
   "changelog": "个性化设置全部配置项改为「调整后即自动保存」：文本/媒体地址失焦即保存、滑块拖动结束即保存（开关原本即时保存），并移除每个配置项旁的手动「保存」按钮；「应用到系统」会先等待尚未完成的自动保存再执行。"
 }
