@@ -21,6 +21,8 @@
 #   4. 不用第三方依赖，NAS 上只有 python3 标准库。
 # ---------------------------------------------------------------------------
 import io
+import hashlib
+import json
 import os
 import posixpath
 import signal
@@ -31,6 +33,7 @@ import sys
 import threading
 import time
 import urllib.parse
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # ----------------------------- 路径配置 -----------------------------
@@ -136,6 +139,152 @@ def safe_join(root, url_path):
     return full
 
 
+# ------------------------- 自动更新（零人工介入） -------------------------
+# 设计：前端检测到新版本后，后端在 NAS 侧后台完成
+#   「下载 fpk → 校验 → 调用 trim-cli 静默安装 → 应用中心重启服务」。
+# 浏览器/ CGI 都无法执行系统安装命令，所以这一步必须在本 Python 服务里做。
+#
+# ⚠️ 已知约束（需在设备上确认）：
+#   1. 本服务需有足够权限运行 `trim-cli app install-fpk`（通常随应用以 root/特权用户运行）。
+#   2. fnOS 的 fpk 多为「装新版覆盖旧版」；若 install-fpk 拒绝已安装的同名包，
+#      则回退到 uninstall + install，并先备份 share 里的 fnstyle.json（配置在 share 目录，
+#      不在应用包内，正常不会被清，这里再做一层保险）。
+#   3. 安装会触发应用中心重启本服务，UPDATE_STATE（内存态）随之消失属正常，
+#      前端靠轮询 /api/update/status 感知进度，重启后自动重新检查即显示「已是最新」。
+UPDATE_STATE = {
+    "phase": "idle",        # idle | downloading | verifying | installing | restarting | done | error
+    "progress": 0,          # 下载进度 0-100
+    "version": "",
+    "message": "",
+    "error": "",
+}
+_UPDATE_LOCK = threading.Lock()
+_UPDATE_DIR = os.environ.get("TMPDIR") or "/tmp"
+
+
+def _update_set(**kw):
+    with _UPDATE_LOCK:
+        for k, v in kw.items():
+            if k in UPDATE_STATE:
+                UPDATE_STATE[k] = v
+
+
+def _download_any(urls, dest, progress_cb):
+    """依次尝试候选下载地址（任一成功即返回字节数）；失败时抛异常。"""
+    last_err = None
+    for url in urls:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                total = int(resp.headers.get("Content-Length", "0") or "0")
+                got = 0
+                with open(dest, "wb") as f:
+                    while True:
+                        chunk = resp.read(65536)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        got += len(chunk)
+                        if total:
+                            progress_cb(min(100, got * 100 // total))
+                return got
+        except Exception as e:
+            last_err = e
+            log("下载失败 %s : %s" % (url, e))
+    raise last_err or RuntimeError("所有下载地址均失败")
+
+
+def _sha256_of(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for blk in iter(lambda: f.read(65536), b""):
+            h.update(blk)
+    return h.hexdigest()
+
+
+def _find_config_backup():
+    """定位 share 目录下的 fnstyle.json，返回 (src, dst) 用于备份/恢复。"""
+    candidates = []
+    paths = os.environ.get("TRIM_DATA_SHARE_PATHS", "")
+    if paths:
+        for p in paths.split(":"):
+            if p and os.path.isdir(p):
+                candidates.append(p)
+    for c in ("/var/apps/fnstyle/shares/fnstyle",
+             "/var/apps/fnstyle/share/fnstyle"):
+        if os.path.isdir(c):
+            candidates.append(c)
+    for base in candidates:
+        src = os.path.join(base, "deskdata", "fnstyle.json")
+        if os.path.isfile(src):
+            dst = os.path.join(_UPDATE_DIR, "fnstyle_config_backup.json")
+            return src, dst
+    return None, None
+
+
+def _launch_detached_installer(fpk, version):
+    """完全脱离本服务会话地执行安装，确保本服务被杀也不影响安装继续。"""
+    log_path = os.path.join(_UPDATE_DIR, "fnstyle_update.log")
+    # 配置备份（仅 uninstall+install 回退路径需要）
+    cfg_src, cfg_dst = _find_config_backup()
+    backup = ""
+    restore = ""
+    if cfg_src:
+        backup = "cp -f '%s' '%s' 2>/dev/null || true; " % (cfg_src, cfg_dst)
+        restore = "cp -f '%s' '%s' 2>/dev/null || true; " % (cfg_dst, cfg_src)
+    # 优先 install-fpk（多数情况覆盖升级），失败再 uninstall+install
+    script = (
+        "#!/bin/bash\n"
+        "FPK='%s'\nLOG='%s'\nVER='%s'\n"
+        "echo \"[$(date)] bootstrap update to $VER\" >> \"$LOG\"\n"
+        "%s"  # backup
+        "if trim-cli app install-fpk \"$FPK\" --yes >> \"$LOG\" 2>&1; then\n"
+        "  echo \"[$(date)] install-fpk ok\" >> \"$LOG\"\n"
+        "else\n"
+        "  echo \"[$(date)] install-fpk 失败，回退 uninstall+install\" >> \"$LOG\"\n"
+        "  trim-cli app uninstall-fpk fnstyle --yes >> \"$LOG\" 2>&1 || true\n"
+        "  %s"  # restore (在卸载后、安装前把配置放回去)
+        "  trim-cli app install-fpk \"$FPK\" --yes >> \"$LOG\" 2>&1\n"
+        "fi\n"
+        "echo \"[$(date)] updater exit\" >> \"$LOG\"\n"
+    ) % (fpk, log_path, version, backup, restore)
+    script_path = os.path.join(_UPDATE_DIR, "fnstyle_updater.sh")
+    with open(script_path, "w") as f:
+        f.write(script)
+    os.chmod(script_path, 0o755)
+    log("启动脱离会话安装脚本: %s" % script_path)
+    # start_new_session=True 在 POSIX 上等价于 setsid：让安装脚本成为新会话首领，
+    # 本服务（父进程）被应用中心重启杀掉也不影响安装继续。无需依赖 setsid 二进制。
+    subprocess.Popen(
+        ["bash", script_path],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL, env=dict(os.environ),
+        start_new_session=True,
+    )
+
+
+def _update_worker(url, version, sha256):
+    try:
+        fpk = os.path.join(_UPDATE_DIR, "fnstyle_update_%s.fpk" % version)
+        _update_set(phase="downloading", progress=0, version=version,
+                    message="正在下载更新包…", error="")
+        _download_any([url, "https://ghproxy.net/" + url], fpk,
+                      lambda p: _update_set(progress=p))
+        _update_set(phase="verifying", message="正在校验安装包…")
+        if sha256:
+            actual = _sha256_of(fpk)
+            if actual.lower() != sha256.lower():
+                raise RuntimeError("校验失败：期望 %s 实际 %s" % (sha256[:12], actual[:12]))
+        _update_set(phase="installing", progress=100, message="正在静默安装更新（无需操作）…")
+        _launch_detached_installer(fpk, version)
+        # 给安装脚本一点时间启动，随后标记即将重启
+        time.sleep(3)
+        _update_set(phase="restarting", message="更新已应用，服务即将重启…")
+    except Exception as e:
+        _update_set(phase="error", error=str(e), message="更新失败：%s" % e)
+        log("自动更新失败: %s" % e)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "fnstyle/1.0"
     protocol_version = "HTTP/1.1"
@@ -158,6 +307,54 @@ class Handler(BaseHTTPRequestHandler):
             if not p.startswith("/"):
                 p = "/" + p
             self.path = p
+
+    def _send_json(self, code, obj):
+        try:
+            body = json.dumps(obj, ensure_ascii=False).encode("utf-8", "replace")
+        except Exception:
+            body = b"{}"
+        self._send(code, body, "application/json; charset=utf-8")
+
+    def _maybe_api_local(self):
+        """拦截由本 Python 服务直接处理的 /api/update/* 端点（不走 CGI）。
+
+        返回 True 表示已处理。这样「下载/安装/重启」这类需要本地系统权限的动作
+        就能在本服务里完成，浏览器与 CGI 都无法执行系统安装命令。"""
+        p = self.path.split("?", 1)[0].rstrip("/")
+        if p == "/api/update/status":
+            with _UPDATE_LOCK:
+                st = dict(UPDATE_STATE)
+            self._send_json(200, st)
+            return True
+        if p == "/api/update/start" and self.command == "POST":
+            return self._handle_update_start()
+        return False
+
+    def _handle_update_start(self):
+        body = self._read_body()
+        payload = {}
+        try:
+            if body:
+                payload = json.loads(body.decode("utf-8", "replace"))
+        except Exception:
+            payload = {}
+        url = (payload.get("downloadUrl") or "").strip()
+        version = (payload.get("version") or "").strip()
+        sha256 = (payload.get("sha256") or "").strip()
+        if not url or not version:
+            self._send_json(400, {"success": False, "error": "缺少 downloadUrl 或 version"})
+            return True
+        with _UPDATE_LOCK:
+            if UPDATE_STATE["phase"] not in ("idle", "done", "error"):
+                self._send_json(409, {"success": False, "error": "已有更新任务进行中"})
+                return True
+            UPDATE_STATE["phase"] = "queued"
+            UPDATE_STATE["message"] = "已接收更新请求"
+            UPDATE_STATE["version"] = version
+        threading.Thread(target=_update_worker, args=(url, version, sha256),
+                         daemon=True).start()
+        self._send_json(200, {"success": True, "phase": "queued"})
+        return True
 
     def _redirect_bare_prefix(self):
         """把不带尾斜杠的 /app/fnstyle 跳到 /app/fnstyle/。
@@ -388,6 +585,8 @@ class Handler(BaseHTTPRequestHandler):
         if self._redirect_bare_prefix():
             return
         self._strip_gateway_prefix()
+        if self._maybe_api_local():
+            return
         if self._serve_static():
             return
         self._run_cgi()
@@ -402,6 +601,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         self._strip_gateway_prefix()
+        if self._maybe_api_local():
+            return
         self._run_cgi()
 
     def do_PUT(self):

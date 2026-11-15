@@ -23,7 +23,7 @@ set -uo pipefail
 # ------------------------- 版本与更新检查 -------------------------
 # ⚠️ 必须与 manifest 的 version 保持一致（自动更新靠它判断「是否比线上新」）。
 # GitHub 发布新版本时，两处都要改：manifest 的 version + 本常量。
-APP_VERSION="1.1.2"
+APP_VERSION="1.1.3"
 
 # ----------------------------- 路径配置 -----------------------------
 # APP_ROOT 是 fnOS 安装后创建的标准软链：
@@ -1806,12 +1806,13 @@ ver = d.get('version') or d.get('tag_name') or ''
 url = d.get('downloadUrl') or ''
 date = d.get('releaseDate') or d.get('published_at') or ''
 note = d.get('changelog') or d.get('body') or ''
+sha = d.get('sha256') or ''
 if not url and isinstance(d.get('assets'), list):
     for a in d['assets']:
         if str(a.get('name', '')).endswith('.fpk'):
             url = a.get('browser_download_url', '')
             break
-print('\t'.join([str(ver), str(url), str(date), str(note)]))
+print('\t'.join([str(ver), str(url), str(date), str(note), str(sha)]))
 PY
 }
 
@@ -1836,6 +1837,7 @@ get_remote_version() {
   R_URL="$(printf '%s' "$out" | cut -f2)"
   R_DATE="$(printf '%s' "$out" | cut -f3)"
   R_NOTE="$(printf '%s' "$out" | cut -f4)"
+  R_SHA="$(printf '%s' "$out" | cut -f5)"
   # 统一去掉版本号前导的 v（GitHub tag 多为 v1.2.0，version.json 多为 1.2.0），
   # 前端展示时统一用 'v' + latest，避免重复前缀。
   R_VERSION="${R_VERSION#v}"
@@ -1867,7 +1869,7 @@ case "$REL" in
     /api/version)
         # 检查远程最新版本，与本地安装版本比较，返回是否可更新
         CUR="$APP_VERSION"
-        R_VERSION=""; R_URL=""; R_DATE=""; R_NOTE=""; CHECK_ERR=1
+        R_VERSION=""; R_URL=""; R_DATE=""; R_NOTE=""; R_SHA=""; CHECK_ERR=1
         if [ -n "$FNSTYLE_VERSION_URL" ]; then
             # 自托管 / 测试：仅用单一清单地址
             CANDIDATES="$FNSTYLE_VERSION_URL"
@@ -1893,7 +1895,7 @@ https://api.github.com/repos/xandy0209/Fnstyle/releases/latest"
         fi
         BODY="$(FN_V_CURRENT="$CUR" FN_V_LATEST="$R_VERSION" FN_V_URL="$R_URL" \
             FN_V_DATE="$R_DATE" FN_V_NOTE="$R_NOTE" FN_V_AVAIL="$AVAIL" \
-            FN_V_ERR="$CHECK_ERR" \
+            FN_V_ERR="$CHECK_ERR" FN_V_SHA="$R_SHA" \
             python3 - <<'PY'
 import json, os
 print(json.dumps({
@@ -1902,6 +1904,7 @@ print(json.dumps({
     "updateAvailable": os.environ.get("FN_V_AVAIL", "0") == "1",
     "checkError": os.environ.get("FN_V_ERR", "1") == "1",
     "downloadUrl": os.environ.get("FN_V_URL", ""),
+    "sha256": os.environ.get("FN_V_SHA", ""),
     "releaseDate": os.environ.get("FN_V_DATE", ""),
     "changelog": os.environ.get("FN_V_NOTE", ""),
 }, ensure_ascii=False))

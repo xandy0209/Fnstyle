@@ -1513,9 +1513,10 @@
    * 不写 fnstyle.json（属于客户端偏好，不是系统个性化配置）。 */
   var UPDATE_IGNORE_KEY = 'fnstyle_ignored_version_v1';
   var AUTOCHECK_KEY = 'fnstyle_autocheck_update_v1';
+  var AUTOINSTALL_KEY = 'fnstyle_autoinstall_update_v1';
   /* 当前版本号：与 manifest 的 version 保持一致，发版时同步修改。
      顶栏版本胶囊与「发现新版本」提示都基于它展示。 */
-  var APP_VERSION = '1.1.2';
+  var APP_VERSION = '1.1.3';
 
   /* 顶栏右侧更新控件：版本胶囊 + 检查/下载按钮 + 状态文字 */
   function setTopbarUpdate(state, r) {
@@ -1562,6 +1563,88 @@
   }
   function setAutoCheck(v) {
     try { localStorage.setItem(AUTOCHECK_KEY, v ? '1' : '0'); } catch (e) {}
+  }
+  function getAutoInstall() {
+    /* 默认开启：检测到新版本后后端静默下载并安装，无需人工介入 */
+    try { return localStorage.getItem(AUTOINSTALL_KEY) !== '0'; } catch (e) { return true; }
+  }
+  function setAutoInstall(v) {
+    try { localStorage.setItem(AUTOINSTALL_KEY, v ? '1' : '0'); } catch (e) {}
+  }
+
+  /* 最近一次检测到的更新信息，供「立即更新」按钮 / 进度轮询复用 */
+  var pendingUpdate = null;
+  var updatePollTimer = null;
+  /* 已为哪个版本自动发起过更新，避免检测/重试时重复触发 */
+  var autoUpdateStartedFor = null;
+
+  /* 顶栏右侧在「更新进行中」时的展示：版本胶囊 + 进度/状态 + 禁用按钮 */
+  function setTopbarUpdating(st) {
+    var pill = $('#verPill');
+    var btn = $('#tbCheckUpdate');
+    var status = $('#tbUpdateStatus');
+    if (pill) { pill.textContent = 'v' + APP_VERSION; pill.classList.add('has-update'); }
+    if (btn) { btn.className = 'btn sm'; btn.textContent = '更新中…'; btn.dataset.available = '0'; }
+    if (status) {
+      var msg = st.message || '';
+      if (st.phase === 'downloading' && st.progress) msg = '下载中 ' + st.progress + '%';
+      status.textContent = msg;
+    }
+  }
+
+  /* 启动一次自动更新：把后端拉到的版本信息交给后端去下载+安装。
+     之后前端轮询 /api/update/status 显示进度。 */
+  function startUpdate(r) {
+    r = r || pendingUpdate;
+    if (!r || !r.downloadUrl || !r.latest) return;
+    pendingUpdate = r;
+    if (updatePollTimer) clearInterval(updatePollTimer);
+    // 先把顶栏切到「更新中」状态，避免空窗
+    setTopbarUpdating({ phase: 'downloading', progress: 0, message: '正在准备更新…' });
+    api('update/start', { method: 'POST', body: {
+      downloadUrl: r.downloadUrl,
+      version: r.latest,
+      sha256: r.sha256 || ''
+    } }).then(function (resp) {
+      if (!resp || resp.success === false) {
+        // 启动失败（如已有任务进行中）：回退为手动按钮
+        setTopbarUpdate('available', r);
+        return;
+      }
+      pollUpdate();
+    }).catch(function () {
+      setTopbarUpdate('available', r);
+    });
+  }
+
+  /* 轮询后端更新进度；phase 进入终态（done/error/idle）或连接断开时停止 */
+  function pollUpdate() {
+    if (updatePollTimer) clearInterval(updatePollTimer);
+    updatePollTimer = setInterval(function () {
+      api('update/status').then(function (st) {
+        if (!st || typeof st !== 'object') return;
+        var phase = st.phase;
+        if (phase === 'downloading' || phase === 'verifying' ||
+            phase === 'installing' || phase === 'restarting') {
+          setTopbarUpdating(st);
+          return;
+        }
+        // 终态：停止轮询
+        if (updatePollTimer) { clearInterval(updatePollTimer); updatePollTimer = null; }
+        if (phase === 'error') {
+          var btn = $('#tbCheckUpdate');
+          var status = $('#tbUpdateStatus');
+          if (btn) { btn.className = 'btn sm'; btn.textContent = '更新失败，点此重试'; btn.dataset.available = '1'; }
+          if (status) status.textContent = (st.error || '更新失败') + '（详见 /tmp/fnstyle_update.log）';
+        }
+        // done/idle：服务可能正在重启，稍后自动重新检查版本
+        setTimeout(function () { checkForUpdate({ silent: true }); }, 4000);
+      }).catch(function () {
+        // 连接断开多半是服务正在重启，停止轮询，稍后重新检查
+        if (updatePollTimer) { clearInterval(updatePollTimer); updatePollTimer = null; }
+        setTimeout(function () { checkForUpdate({ silent: true }); }, 5000);
+      });
+    }, 1500);
   }
 
   function showUpdateBanner(r) {
@@ -1620,6 +1703,11 @@
       showUpdateBanner(r);
       setTopbarUpdate('available', r);
       if (statusEl && !opts.silent) statusEl.textContent = '';
+      // 自动安装开启且本版本尚未自动启动过 → 后端静默下载并安装，无需人工点击
+      if (getAutoInstall() && autoUpdateStartedFor !== r.latest) {
+        autoUpdateStartedFor = r.latest;
+        startUpdate(r);
+      }
       return r;
     }).catch(function () {
       if (statusEl && !opts.silent) statusEl.textContent = '检查更新失败';
@@ -1629,14 +1717,15 @@
   }
 
   function setupUpdateUI() {
-    /* 顶栏右侧：版本胶囊 + 检查/下载按钮 */
+    /* 顶栏右侧：版本胶囊 + 检查/更新按钮 */
     var pill = $('#verPill');
     if (pill) pill.textContent = 'v' + APP_VERSION;
     var tbbtn = $('#tbCheckUpdate');
     if (tbbtn) {
       tbbtn.addEventListener('click', function () {
-        if (tbbtn.dataset.available === '1' && tbbtn.dataset.url) {
-          window.open(tbbtn.dataset.url, '_blank', 'noopener');
+        // 发现新版本且有待更新信息 → 直接后台安装（不再跳转下载页）
+        if (tbbtn.dataset.available === '1' && pendingUpdate) {
+          startUpdate(pendingUpdate);
         } else {
           checkForUpdate({ silent: false });
         }
@@ -1654,6 +1743,22 @@
         if (cb.checked) checkForUpdate({ silent: true });
       });
     }
+    /* 设置卡片：自动安装开关（默认开，零人工介入） */
+    var ai = $('#autoInstallUpdate');
+    if (ai) {
+      ai.checked = getAutoInstall();
+      var aitxt = $('#autoInstallText');
+      if (aitxt) aitxt.textContent = ai.checked ? '开启' : '关闭';
+      ai.addEventListener('change', function () {
+        setAutoInstall(ai.checked);
+        if (aitxt) aitxt.textContent = ai.checked ? '开启' : '关闭';
+        // 切到开启且当前已有可更新版本 → 立即开始安装
+        if (ai.checked && pendingUpdate && pendingUpdate.updateAvailable) {
+          autoUpdateStartedFor = null; // 解除防重触发
+          startUpdate(pendingUpdate);
+        }
+      });
+    }
     var ignore = $('#ubIgnore');
     if (ignore) ignore.addEventListener('click', function () {
       var latest = ($('#ubLatest').textContent || '').replace(/^v/, '');
@@ -1665,6 +1770,11 @@
     if (later) later.addEventListener('click', hideUpdateBanner);
     var check = $('#btnCheckUpdate');
     if (check) check.addEventListener('click', function () { checkForUpdate({ silent: false }); });
+    /* 横幅里的「立即更新」按钮：直接后台安装 */
+    var ubUpdate = $('#ubUpdate');
+    if (ubUpdate) ubUpdate.addEventListener('click', function () {
+      startUpdate(pendingUpdate);
+    });
   }
 
   /* ---------------------------- 初始化 ---------------------------- */
