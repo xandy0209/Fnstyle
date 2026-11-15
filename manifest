@@ -1,5 +1,5 @@
 appname               = fnstyle
-version               = 1.1.0
+version               = 1.1.1
 display_name          = FnStyle
 desc                  = 集中管理飞牛个性化设置与丰富主题库：网站标题、登录框、LOGO、壁纸、毛玻璃、任务栏等独立配置，内置多源主题库，支持一键应用到 fnOS 系统。
 platform              = all
@@ -15,5 +15,5 @@ desktop_applaunchname = fnstyle.main
 service_port          = 9910
 checkport             = false
 ctl_stop              = true
-changelog             = 1.1.0：在 1.0.0 基础上新增「自动更新提醒」。后端新增 GET /api/version：由服务端（NAS 侧）拉取 GitHub 上的版本清单（首选仓库根目录 version.json，兜底 GitHub Releases API，可由 FNSTYLE_VERSION_URL/FNSTYLE_VERSION_API 环境变量覆盖以自托管），与本地安装版本做语义化比较，返回 updateAvailable / latest / downloadUrl / changelog。前端在「Fnstyle个性化设置 → 更新」分组提供「自动检查更新」开关（默认开启）与「立即检查更新」按钮；打开软件且开关开启时自动检查，发现新版本后在页面顶部弹出更新横幅，展示版本号、更新日期与变更说明，并提供「前往下载」（跳转到 GitHub Release 附件）与「忽略此版本 / 稍后」操作；已忽略的版本不再打扰。该能力无需第三方应用商店，纯靠公开的 GitHub 仓库即可实现「有更新自动提醒」。卸载还原（卸载后自动还原系统默认样式）、主题库默认加载、两段式卸载卸载不报 Failed to fetch 等既有能力保持不变。
-checksum              = 664f2aa6d65135a616114f53f978b239
+changelog             = 1.1.1：顶栏右侧更新控件布局微调——「检查更新」按钮由原来的状态文本之前，移至版本号胶囊与「已是最新」状态文本之后，顺序更直观（版本号 → 状态 → 检查更新）。自动更新提醒、卸载还原、主题库默认加载、两段式卸载等既有能力保持不变。 1.1.0：在 1.0.0 基础上新增「自动更新提醒」。后端新增 GET /api/version：由服务端（NAS 侧）拉取 GitHub 上的版本清单（首选仓库根目录 version.json，兜底 GitHub Releases API，可由 FNSTYLE_VERSION_URL/FNSTYLE_VERSION_API 环境变量覆盖以自托管），与本地安装版本做语义化比较，返回 updateAvailable / latest / downloadUrl / changelog。前端在「Fnstyle个性化设置 → 更新」分组提供「自动检查更新」开关（默认开启）与「立即检查更新」按钮；打开软件且开关开启时自动检查，发现新版本后在页面顶部弹出更新横幅，展示版本号、更新日期与变更说明，并提供「前往下载」（跳转到 GitHub Release 附件）与「忽略此版本 / 稍后」操作；已忽略的版本不再打扰。该能力无需第三方应用商店，纯靠公开的 GitHub 仓库即可实现「有更新自动提醒」。卸载还原（卸载后自动还原系统默认样式）、主题库默认加载、两段式卸载卸载不报 Failed to fetch 等既有能力保持不变。
+checksum              = 314e9f9ab5d3c76556020e02cb11aabb

@@ -1515,7 +1515,7 @@
   var AUTOCHECK_KEY = 'fnstyle_autocheck_update_v1';
   /* 当前版本号：与 manifest 的 version 保持一致，发版时同步修改。
      顶栏版本胶囊与「发现新版本」提示都基于它展示。 */
-  var APP_VERSION = '1.1.0';
+  var APP_VERSION = '1.1.1';
 
   /* 顶栏右侧更新控件：版本胶囊 + 检查/下载按钮 + 状态文字 */
   function setTopbarUpdate(state, r) {
