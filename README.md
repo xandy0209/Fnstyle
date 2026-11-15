@@ -42,7 +42,7 @@
 
 | 文件 | 大小（字节） | MD5 | SHA256 |
 |---|---:|---|---|
-| `fnstyle_1.1.7_all.fpk` | 1,278,714 | `117374646bf54192c7ce1b8fff75ac39` | `e623ddcfbcd90bbaf3184bc53033028dfdb7393d2ee9a34a6dc217d8e8a7af53` |
+| `fnstyle_1.1.7_all.fpk` | 1,279,115 | `594ba1273ff861276e66f19003b8e5dd` | `04a825ee555ed69ea7416b0a29a32f099eea82befc4442f5c6cb73776269d0ee` |
 
 ### 安装步骤
 
