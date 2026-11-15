@@ -1,7 +1,7 @@
 {
-  "version": "1.1.5",
+  "version": "1.1.6",
   "releaseDate": "2026-11-15",
-  "downloadUrl": "https://fastly.jsdelivr.net/gh/xandy0209/Fnstyle@v1.1.5/dist/fnstyle_1.1.5_all.fpk",
-  "sha256": "ba6276a714a7ecb8f9c422b3666087e076370eac76a21fb63a6c0cb8054b381b",
-  "changelog": "修复「无法连接更新源」的真正根因：CGI 在 set -u 下引用未设置的 FNSTYLE_VERSION_URL 触发 unbound variable，使 /api/version 整体崩溃（1.1.2～1.1.4 的检查失败均为此所致，与网络无关）。同时更新检查改为并行探测并自带逐源诊断（attempts：每个源的 curl 退出码与 HTTP 状态码），前端显示可达比例与明细，NAS 上留存 /tmp/fnstyle_version_check.log；候选源新增 github.moeyy.xyz、ghproxy.cc。"
+  "downloadUrl": "https://fastly.jsdelivr.net/gh/xandy0209/Fnstyle@v1.1.6/dist/fnstyle_1.1.6_all.fpk",
+  "sha256": "f47e0f06af5776bfc8ff703da7f9f2bf193dc03a063ee1690b6b1ad0ab92403a",
+  "changelog": "顶栏「检查更新」由文字按钮改为图标按钮：刷新图标、悬停提示保留，检查中图标旋转，发现新版本时仍显示文字按钮「发现新版本 vx.y.z」。"
 }

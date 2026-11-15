@@ -131,6 +131,28 @@ body {
   background: var(--accent-soft);
 }
 
+/* 顶栏「检查更新」图标按钮（原为文字按钮） */
+.btn.icon-btn {
+  padding: .3rem .45rem;
+  line-height: 0;
+}
+.btn.icon-btn .upd-ico {
+  width: 15px;
+  height: 15px;
+  display: block;
+  fill: currentColor;
+}
+.btn.icon-btn.spinning .upd-ico {
+  animation: upd-spin 1s linear infinite;
+}
+@keyframes upd-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn.icon-btn.spinning .upd-ico { animation: none; }
+}
+
 /* 顶栏右侧曾有一个「已连接」状态胶囊（.status / .dot），
    它只在页面加载时判定一次 GET /api/config，后端挂了也不会变红，
    且容易被误解成「外网/NAS 连接状态」—— 已按用户决定整体移除。

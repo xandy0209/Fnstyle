@@ -1516,10 +1516,23 @@
   var AUTOINSTALL_KEY = 'fnstyle_autoinstall_update_v1';
   /* 当前版本号：与 manifest 的 version 保持一致，发版时同步修改。
      顶栏版本胶囊与「发现新版本」提示都基于它展示。 */
-  var APP_VERSION = '1.1.5';
+  var APP_VERSION = '1.1.6';
 
   /* 顶栏右侧更新控件：版本胶囊 + 检查/下载按钮 + 状态文字。
-     reason：error 态下展示在状态文字与悬停提示里的诊断摘要（可省略）。 */
+     reason：error 态下展示在状态文字与悬停提示里的诊断摘要（可省略）。
+     「检查更新」为图标按钮（UPD_ICON_SVG）；仅「发现新版本」态切换为文字按钮。 */
+  var UPD_ICON_SVG =
+    '<svg class="upd-ico" viewBox="0 0 24 24" aria-hidden="true">' +
+    '<path d="M17.65 6.35A7.95 7.95 0 0 0 12 4a8 8 0 1 0 8 8h-2a6 6 0 1 1-1.76-4.24L13 11h7V4l-2.35 2.35z"/>' +
+    '</svg>';
+
+  function setUpdIconBtn(el, spinning) {
+    el.className = 'btn sm icon-btn' + (spinning ? ' spinning' : '');
+    el.innerHTML = UPD_ICON_SVG;
+    el.title = '检查更新';
+    el.setAttribute('aria-label', '检查更新');
+  }
+
   function setTopbarUpdate(state, r, reason) {
     var pill = $('#verPill');
     if (pill) pill.textContent = 'v' + APP_VERSION;
@@ -1527,32 +1540,29 @@
     var status = $('#tbUpdateStatus');
     if (!btn) return;
     if (state === 'checking') {
-      btn.className = 'btn sm';
-      btn.textContent = '检查更新';
+      setUpdIconBtn(btn, true);
       btn.dataset.available = '0';
       if (status) status.textContent = '检查中…';
     } else if (state === 'available') {
       btn.className = 'btn sm primary';
+      btn.removeAttribute('title');
       btn.textContent = '发现新版本 v' + (r && r.latest || '');
       btn.dataset.available = '1';
       btn.dataset.url = (r && r.downloadUrl) || '';
       if (status) status.textContent = (r && r.releaseDate) ? r.releaseDate : '';
       if (pill) pill.classList.add('has-update');
     } else if (state === 'uptodate') {
-      btn.className = 'btn sm';
-      btn.textContent = '检查更新';
+      setUpdIconBtn(btn, false);
       btn.dataset.available = '0';
       if (status) status.textContent = '已是最新';
       if (pill) pill.classList.remove('has-update');
     } else if (state === 'ignored') {
-      btn.className = 'btn sm';
-      btn.textContent = '检查更新';
+      setUpdIconBtn(btn, false);
       btn.dataset.available = '0';
       if (status) status.textContent = '已忽略 v' + (r && r.latest || '');
       if (pill) pill.classList.remove('has-update');
     } else if (state === 'error') {
-      btn.className = 'btn sm';
-      btn.textContent = '检查更新';
+      setUpdIconBtn(btn, false);
       btn.dataset.available = '0';
       if (status) {
         status.textContent = reason ? reason.split('\n')[0] : '无法连接更新源';
