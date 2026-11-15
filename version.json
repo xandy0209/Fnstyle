@@ -1,9 +1,9 @@
 {
-  "version": "1.1.11",
-  "url": "https://github.com/xandy0209/Fnstyle/releases/download/v1.1.11/fnstyle_1.1.11_all.fpk",
-  "downloadUrl": "https://github.com/xandy0209/Fnstyle/releases/download/v1.1.11/fnstyle_1.1.11_all.fpk",
-  "changelog": "1.1.11：版本号标签绿色渲染；修复自动更新安装环节——改用本机 appcenter-cli 执行卸载+重装（原 trim-cli 在 NAS 上不存在）",
-  "sha256": "3b004081362c951f44014ca03aaff5c981a379e9a660616122c36efe07d6325e",
-  "size": 1278655,
-  "publishedAt": "2026-11-15T21:36:00+08:00"
+  "version": "1.1.12",
+  "url": "https://github.com/xandy0209/Fnstyle/releases/download/v1.1.12/fnstyle_1.1.12_all.fpk",
+  "downloadUrl": "https://github.com/xandy0209/Fnstyle/releases/download/v1.1.12/fnstyle_1.1.12_all.fpk",
+  "changelog": "1.1.12：桌面窗口高度调整为 900px",
+  "sha256": "aec25d51c486afebf00d7422a2c4463f6f2c837a73a25702b021783f1bd9cd28",
+  "size": 1278592,
+  "publishedAt": "2026-11-15T21:59:00+08:00"
 }

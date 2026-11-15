@@ -6,7 +6,7 @@
    "icon": "images/icon_{0}.png",
    "type": "iframe",
    "width": 1280,
-   "height": 800,
+   "height": 900,
    "url": "/app/fnstyle/",
    "allUsers": false,
    "noDisplay": false,

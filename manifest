@@ -1,5 +1,5 @@
 appname               = fnstyle
-version               = 1.1.11
+version               = 1.1.12
 display_name          = FnStyle
 desc                  = 集中管理飞牛个性化设置与丰富主题库：网站标题、登录框、LOGO、壁纸、毛玻璃、任务栏等独立配置，内置多源主题库，支持一键应用到 fnOS 系统。
 platform              = all
@@ -15,5 +15,5 @@ desktop_applaunchname = fnstyle.main
 service_port          = 9910
 checkport             = false
 ctl_stop              = true
-changelog             = 1.1.11：版本号标签绿色渲染；修复自动更新安装环节——改用本机 appcenter-cli 执行卸载+重装（原 trim-cli 在 NAS 上不存在）
-checksum              = 93f8f81498edbdc8cb3dcf4700daa222
+changelog             = 1.1.12：桌面窗口高度调整为 900px
+checksum              = 6b2c7810e51aae709a7fa1417e27d7bf
