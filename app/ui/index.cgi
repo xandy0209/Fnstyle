@@ -1893,22 +1893,21 @@ case "$REL" in
 "
             done
         else
-            # 默认按「国内可达性」优先排序，**并行**探测所有候选（总耗时≈单源
-            # 超时，而非源数×超时），然后按优先级取第一个成功者。
-            # ⚠️ cdn.jsdelivr.net 主域名自 2022 年起在内地多数网络被 DNS 污染/阻断，
-            #    fastly / gcore / testingcf 三个子域目前内地可达性更好，放前面。
-            #    gh 系代理域名经常更换，多备几个。
+            # 默认**并行**探测所有候选（总耗时≈单源超时），按以下优先级取首个成功者。
+            # 排序原则：实时性优先 —— raw 与 gh 反代直读 GitHub，无 CDN 滞后，
+            # 排前面；jsDelivr 的 @v1 虽随 tag 解析、但版本索引有分钟级滞后，
+            # 仅作兜底（内地网络若上述源全被墙时仍可达）。
             CANDIDATES="
-https://fastly.jsdelivr.net/gh/xandy0209/Fnstyle@v1/version.json
-https://gcore.jsdelivr.net/gh/xandy0209/Fnstyle@v1/version.json
-https://testingcf.jsdelivr.net/gh/xandy0209/Fnstyle@v1/version.json
-https://cdn.jsdelivr.net/gh/xandy0209/Fnstyle@v1/version.json
+https://raw.githubusercontent.com/xandy0209/Fnstyle/main/version.json
 https://ghfast.top/https://raw.githubusercontent.com/xandy0209/Fnstyle/main/version.json
 https://gh-proxy.com/https://raw.githubusercontent.com/xandy0209/Fnstyle/main/version.json
 https://ghproxy.net/https://raw.githubusercontent.com/xandy0209/Fnstyle/main/version.json
 https://github.moeyy.xyz/https://raw.githubusercontent.com/xandy0209/Fnstyle/main/version.json
 https://ghproxy.cc/https://raw.githubusercontent.com/xandy0209/Fnstyle/main/version.json
-https://raw.githubusercontent.com/xandy0209/Fnstyle/main/version.json
+https://fastly.jsdelivr.net/gh/xandy0209/Fnstyle@v1/version.json
+https://gcore.jsdelivr.net/gh/xandy0209/Fnstyle@v1/version.json
+https://testingcf.jsdelivr.net/gh/xandy0209/Fnstyle@v1/version.json
+https://cdn.jsdelivr.net/gh/xandy0209/Fnstyle@v1/version.json
 https://api.github.com/repos/xandy0209/Fnstyle/releases/latest"
             VBASE="${DATA_DIR}/.verprobe.$$"
             mkdir -p "$VBASE" 2>/dev/null || VBASE="/tmp/.verprobe.$$"
