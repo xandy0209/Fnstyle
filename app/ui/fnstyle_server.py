@@ -268,8 +268,18 @@ def _update_worker(url, version, sha256):
         fpk = os.path.join(_UPDATE_DIR, "fnstyle_update_%s.fpk" % version)
         _update_set(phase="downloading", progress=0, version=version,
                     message="正在下载更新包…", error="")
-        _download_any([url, "https://ghproxy.net/" + url], fpk,
-                      lambda p: _update_set(progress=p))
+        # 下载候选：原地址 + jsDelivr 多镜像互换 + gh 代理兜底
+        import re as _re
+        cands = [url]
+        if "jsdelivr.net" in url:
+            for h in ("fastly.jsdelivr.net", "gcore.jsdelivr.net",
+                      "testingcf.jsdelivr.net", "cdn.jsdelivr.net"):
+                alt = _re.sub(r"https://[a-z0-9.]*jsdelivr\.net",
+                              "https://" + h, url, count=1)
+                if alt not in cands:
+                    cands.append(alt)
+        cands.append("https://ghproxy.net/" + url)
+        _download_any(cands, fpk, lambda p: _update_set(progress=p))
         _update_set(phase="verifying", message="正在校验安装包…")
         if sha256:
             actual = _sha256_of(fpk)

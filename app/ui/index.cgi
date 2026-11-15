@@ -23,7 +23,7 @@ set -uo pipefail
 # ------------------------- 版本与更新检查 -------------------------
 # ⚠️ 必须与 manifest 的 version 保持一致（自动更新靠它判断「是否比线上新」）。
 # GitHub 发布新版本时，两处都要改：manifest 的 version + 本常量。
-APP_VERSION="1.1.3"
+APP_VERSION="1.1.4"
 
 # ----------------------------- 路径配置 -----------------------------
 # APP_ROOT 是 fnOS 安装后创建的标准软链：
@@ -1822,7 +1822,7 @@ get_remote_version() {
   local url="$1"
   [ -z "$url" ] && return 1
   local tmp="${DATA_DIR}/.vercheck.$$"
-  if ! curl -fsSL --max-time 8 -H 'User-Agent: Mozilla/5.0' -o "$tmp" "$url" 2>/dev/null; then
+  if ! curl -fsSL --max-time 5 -H 'User-Agent: Mozilla/5.0' -o "$tmp" "$url" 2>/dev/null; then
     rm -f "$tmp"; return 1
   fi
   [ -s "$tmp" ] || { rm -f "$tmp"; return 1; }
@@ -1874,20 +1874,25 @@ case "$REL" in
             # 自托管 / 测试：仅用单一清单地址
             CANDIDATES="$FNSTYLE_VERSION_URL"
         else
-            # 默认按「国内可达性」优先排序依次尝试，首个成功即返回：
-            #   ① jsDelivr 镜像   —— 内地多数网络可直连，且能顺带提供下载地址
-            #   ② ghproxy 代理    —— GitHub raw 的常用反代
-            #   ③ GitHub raw      —— 直连（内地常超时/被墙，作为兜底）
-            #   ④ GitHub Releases API —— 同上
+            # 默认按「国内可达性」优先排序依次尝试，首个成功即返回。
+            # ⚠️ cdn.jsdelivr.net 主域名自 2022 年起在内地多数网络被 DNS 污染/阻断，
+            #    fastly / gcore / testingcf 三个子域目前内地可达性更好，放前面。
+            # gh 系代理域名经常更换，多备几个。
             CANDIDATES="
+https://fastly.jsdelivr.net/gh/xandy0209/Fnstyle@main/version.json
+https://gcore.jsdelivr.net/gh/xandy0209/Fnstyle@main/version.json
+https://testingcf.jsdelivr.net/gh/xandy0209/Fnstyle@main/version.json
 https://cdn.jsdelivr.net/gh/xandy0209/Fnstyle@main/version.json
+https://ghfast.top/https://raw.githubusercontent.com/xandy0209/Fnstyle/main/version.json
+https://gh-proxy.com/https://raw.githubusercontent.com/xandy0209/Fnstyle/main/version.json
 https://ghproxy.net/https://raw.githubusercontent.com/xandy0209/Fnstyle/main/version.json
 https://raw.githubusercontent.com/xandy0209/Fnstyle/main/version.json
 https://api.github.com/repos/xandy0209/Fnstyle/releases/latest"
         fi
         # 依次尝试候选地址，任一条成功即停止；全部失败则 CHECK_ERR=1（网络不可达）。
+        VIA=""
         for u in $CANDIDATES; do
-            if get_remote_version "$u"; then CHECK_ERR=0; break; fi
+            if get_remote_version "$u"; then CHECK_ERR=0; VIA="$u"; break; fi
         done
         AVAIL=0
         if [ "$CHECK_ERR" = "0" ] && [ -n "$R_VERSION" ] && ver_compare "$R_VERSION" "$CUR"; then
@@ -1895,7 +1900,7 @@ https://api.github.com/repos/xandy0209/Fnstyle/releases/latest"
         fi
         BODY="$(FN_V_CURRENT="$CUR" FN_V_LATEST="$R_VERSION" FN_V_URL="$R_URL" \
             FN_V_DATE="$R_DATE" FN_V_NOTE="$R_NOTE" FN_V_AVAIL="$AVAIL" \
-            FN_V_ERR="$CHECK_ERR" FN_V_SHA="$R_SHA" \
+            FN_V_ERR="$CHECK_ERR" FN_V_SHA="$R_SHA" FN_V_VIA="$VIA" \
             python3 - <<'PY'
 import json, os
 print(json.dumps({
@@ -1903,6 +1908,7 @@ print(json.dumps({
     "latest": os.environ.get("FN_V_LATEST", ""),
     "updateAvailable": os.environ.get("FN_V_AVAIL", "0") == "1",
     "checkError": os.environ.get("FN_V_ERR", "1") == "1",
+    "via": os.environ.get("FN_V_VIA", ""),
     "downloadUrl": os.environ.get("FN_V_URL", ""),
     "sha256": os.environ.get("FN_V_SHA", ""),
     "releaseDate": os.environ.get("FN_V_DATE", ""),
@@ -1910,7 +1916,7 @@ print(json.dumps({
 }, ensure_ascii=False))
 PY
         )"
-        [ -z "$BODY" ] && BODY="{\"current\":\"$CUR\",\"latest\":\"$R_VERSION\",\"updateAvailable\":$AVAIL,\"checkError\":$CHECK_ERR}"
+        [ -z "$BODY" ] && BODY="{\"current\":\"$CUR\",\"latest\":\"$R_VERSION\",\"updateAvailable\":$AVAIL,\"checkError\":$CHECK_ERR,\"via\":\"$VIA\"}"
         http_json "200 OK" "$BODY"
         exit 0
         ;;

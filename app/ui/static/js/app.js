@@ -1516,7 +1516,7 @@
   var AUTOINSTALL_KEY = 'fnstyle_autoinstall_update_v1';
   /* 当前版本号：与 manifest 的 version 保持一致，发版时同步修改。
      顶栏版本胶囊与「发现新版本」提示都基于它展示。 */
-  var APP_VERSION = '1.1.3';
+  var APP_VERSION = '1.1.4';
 
   /* 顶栏右侧更新控件：版本胶囊 + 检查/下载按钮 + 状态文字 */
   function setTopbarUpdate(state, r) {
@@ -1553,7 +1553,7 @@
       btn.className = 'btn sm';
       btn.textContent = '检查更新';
       btn.dataset.available = '0';
-      if (status) status.textContent = '检查失败';
+      if (status) status.textContent = '无法连接更新源';
       if (pill) pill.classList.remove('has-update');
     }
   }
@@ -1679,9 +1679,9 @@
         return null;
       }
       if (r.checkError) {
-        /* 后端连通，但所有更新源（jsDelivr / ghproxy / GitHub）都拉取失败，
-           典型为内地网络无法直连 GitHub。提示用户，不再弹横幅。 */
-        if (statusEl && !opts.silent) statusEl.textContent = '检查失败：无法连接更新服务器';
+        /* 后端连通，但所有更新源（jsDelivr 各镜像 / gh 代理 / GitHub）都拉取失败。
+           提示用户，不再弹横幅。via 字段可辅助排查（空=无一命中）。 */
+        if (statusEl && !opts.silent) statusEl.textContent = '无法连接更新源';
         setTopbarUpdate('error');
         return null;
       }
