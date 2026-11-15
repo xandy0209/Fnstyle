@@ -102,6 +102,7 @@ body {
 .topbar .sub {
   color: var(--text-secondary);
   font-size: .84rem;
+  font-weight: 600;
   margin-top: .15rem;
 }
 
