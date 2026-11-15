@@ -115,9 +115,9 @@ body {
 }
 .ver-pill {
   font-size: .8rem;
-  color: var(--text-secondary);
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
+  color: var(--success);
+  background: var(--success-soft);
+  border: 1px solid color-mix(in srgb, var(--success) 45%, transparent);
   border-radius: 999px;
   padding: .22rem .62rem;
   font-variant-numeric: tabular-nums;
