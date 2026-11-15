@@ -1,7 +1,7 @@
 {
-  "version": "1.1.9",
+  "version": "1.1.10",
   "releaseDate": "2026-11-15",
-  "downloadUrl": "https://github.com/xandy0209/Fnstyle/releases/download/v1.1.9/fnstyle_1.1.9_all.fpk",
-  "sha256": "11e8984229039e459bd77bcd3e2926a5ed874d14fc84bbb3ceda653f86ceaca6",
-  "changelog": "桌面窗口默认高度由 860 降为 800，任务栏沉底后不再遮挡窗口底部；修复自动更新：点击「立即更新」遇已有任务进行中时改为显示实时进度，安装命令增加超时上限防卡死。"
+  "downloadUrl": "https://github.com/xandy0209/Fnstyle/releases/download/v1.1.10/fnstyle_1.1.10_all.fpk",
+  "sha256": "02244bd7fac98a606359d5e5e86a2aa83e30950e5e27c60751b51c9564e50e1f",
+  "changelog": "修复自动更新安装环节必失败的根因：脱离安装脚本继承的 PATH 不含 trim-cli（command not found 秒败），现自动解析绝对路径并前置 /usr/trim/bin；安装失败时状态正确转为「更新失败、可重试」，不再假卡在「即将重启」。"
 }
