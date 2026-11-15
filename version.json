@@ -1,9 +1,9 @@
 {
-  "version": "1.1.13",
-  "url": "https://github.com/xandy0209/Fnstyle/releases/download/v1.1.13/fnstyle_1.1.13_all.fpk",
-  "downloadUrl": "https://github.com/xandy0209/Fnstyle/releases/download/v1.1.13/fnstyle_1.1.13_all.fpk",
-  "changelog": "1.1.13：修复自动更新装回失败——install-fpk 需指定存储卷，卸载前检测原卷并在各卷自动重试；安装成败按实际目录校验",
-  "sha256": "a7b9fe56297c6152efabd0793fd0990908e78e10acf29c173fa549ff83a4ed69",
-  "size": 1279026,
-  "publishedAt": "2026-11-15T23:12:00+08:00"
+  "version": "1.1.14",
+  "url": "https://github.com/xandy0209/Fnstyle/releases/download/v1.1.14/fnstyle_1.1.14_all.fpk",
+  "downloadUrl": "https://github.com/xandy0209/Fnstyle/releases/download/v1.1.14/fnstyle_1.1.14_all.fpk",
+  "changelog": "1.1.14：顶栏副标题文字加粗显示",
+  "sha256": "cbd686212c8fe4e16d3f153f26cff620f92c96c264fbd0f0f09b2b0e23fa9e99",
+  "size": 1278956,
+  "publishedAt": "2026-11-15T23:17:00+08:00"
 }
