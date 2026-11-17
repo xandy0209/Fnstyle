@@ -28,6 +28,7 @@ import os
 import re
 import shutil
 import sys
+import time
 import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -187,6 +188,141 @@ def lib_meta_for(url):
 
 
 # --------------------------------------------------------------------------
+# 系统监控 mock（仅本地预览用）
+# --------------------------------------------------------------------------
+def mock_monitor():
+    """构造一份结构与真机 monitor_collect.py 完全一致的监控数据。
+
+    字段名必须与后端一致，否则前端渲染会走「不可用」分支，
+    本地预览就失去了验证价值。
+    """
+    import random
+    now = int(time.time())
+    rnd = random.Random(now // 3)
+
+    cpu_pct = rnd.randint(6, 58)
+    mem_pct = rnd.randint(38, 79)
+    temp_pct = rnd.randint(35, 62)
+
+    return {
+        "success": True,
+        "available": True,
+        "ts": now,
+        "interval": 3,
+        "uptime": "12 天 7 小时",
+        "cpu": {
+            "available": True,
+            "percent": cpu_pct,
+            "model": "Intel(R) Core(TM) i5-12400F 6-Core 12-Thread Processor",
+            "cores": 12,
+            "freqText": "4.40 GHz",
+            "loadavg": ["1.24", "0.98", "0.87"],
+            "coresPercent": [rnd.randint(0, 95) for _ in range(12)],
+        },
+        "mem": {
+            "available": True,
+            "total": 34359738368,
+            "used": int(34359738368 * mem_pct / 100),
+            "availableBytes": int(34359738368 * (100 - mem_pct) / 100),
+            "percent": mem_pct,
+            "totalText": "32.0 GB",
+            "usedText": "%.1f GB" % (32.0 * mem_pct / 100),
+            "availText": "%.1f GB" % (32.0 * (100 - mem_pct) / 100),
+            "swapTotal": 2147483648,
+            "swapUsed": 268435456,
+        },
+        "gpu": {
+            "available": True,
+            "gpus": [{
+                "vendor": "NVIDIA",
+                "name": "NVIDIA GeForce RTX 3060",
+                "temp": 48,
+                "util": rnd.randint(0, 35),
+                "memUsed": 1073741824,
+                "memTotal": 12884901888,
+                "power": 42.5,
+                "utilAvailable": True,
+            }],
+        },
+        "temp": {
+            "available": True,
+            "source": "thermal+hwmon",
+            "cpuTemp": 47.0,
+            "temps": [
+                {"name": "x86_pkg_temp", "chip": "thermal", "value": 47.0, "max": None, "crit": 100.0},
+                {"name": "acpitz", "chip": "thermal", "value": 39.0, "max": None, "crit": None},
+                {"name": "coretemp Package id 0", "chip": "coretemp", "value": 47.0, "max": 80.0, "crit": 100.0},
+                {"name": "nvme composite", "chip": "nvme", "value": 38.0, "max": 70.0, "crit": 80.0},
+                {"name": "motherboard", "chip": "nct6798", "value": 33.0, "max": None, "crit": None},
+            ],
+            "fans": [
+                {"name": "nct6798 fan1", "rpm": 1180},
+                {"name": "nct6798 fan2", "rpm": 962},
+                {"name": "cpu fan", "rpm": 1420},
+            ],
+            "disks": [
+                {"name": "sda", "model": "WDC WD40EFZX-68AWUN0", "temp": 36.0,
+                 "size": 4000787030016, "sizeText": "3.6 TB", "type": "HDD"},
+                {"name": "sdb", "model": "Samsung SSD 980 PRO 1TB", "temp": 41.0,
+                 "size": 1000204886016, "sizeText": "931.5 GB", "type": "SSD"},
+                {"name": "nvme0n1", "model": "Samsung SSD 980 PRO 1TB", "temp": 40.0,
+                 "size": 1000204886016, "sizeText": "931.5 GB", "type": "SSD"},
+            ],
+        },
+        "storage": {
+            "available": True,
+            "volumes": [{
+                "name": "vol1", "path": "/vol1",
+                "total": 5121101905920, "used": 3651694682112, "free": 1316031559680,
+                "percent": temp_pct,
+                "totalText": "4.7 TB", "usedText": "3.3 TB", "freeText": "1.2 TB",
+                "children": [
+                    {"name": "@appshare", "total": 214748364800, "used": 161061273600,
+                     "free": 53687091200, "percent": 75},
+                    {"name": "@docker", "total": 107374182400, "used": 53687091200,
+                     "free": 53687091200, "percent": 50},
+                    {"name": "homes", "total": 858993459200, "used": 300647710720,
+                     "free": 558345748480, "percent": 35},
+                ],
+            }],
+            "raid": [],
+            "disks": [
+                {"name": "sda", "model": "WDC WD40EFZX-68AWUN0", "temp": 36.0,
+                 "size": 4000787030016, "sizeText": "3.6 TB", "type": "HDD"},
+                {"name": "sdb", "model": "Samsung SSD 980 PRO 1TB", "temp": 41.0,
+                 "size": 1000204886016, "sizeText": "931.5 GB", "type": "SSD"},
+            ],
+        },
+        "power": {
+            "ok": True,
+            "source": "rapl",
+            "total": 68.4,
+            "package": 42.1,
+            "core": 28.6,
+            "uncore": 6.2,
+            "dram": 7.3,
+            "base": 8.0,
+            "disksW": 13.0,
+            "disksActive": 3,
+        },
+    }
+
+def mock_monitor_empty():
+    """全部不可用的降级场景（验证前端空状态显示）。"""
+    return {
+        "success": True, "available": True, "ts": int(time.time()),
+        "interval": 3, "uptime": "—",
+        "cpu": {"available": False},
+        "mem": {"available": False},
+        "gpu": {"gpus": [], "available": False},
+        "temp": {"available": False, "source": "none", "cpuTemp": None,
+                 "temps": [], "fans": [], "disks": []},
+        "storage": {"available": False, "volumes": [], "raid": [], "disks": []},
+        "power": {"ok": False, "source": "unknown"},
+    }
+
+
+# --------------------------------------------------------------------------
 # HTTP
 # --------------------------------------------------------------------------
 class Handler(BaseHTTPRequestHandler):
@@ -294,6 +430,14 @@ class Handler(BaseHTTPRequestHandler):
 
         if name == "fndesk-config":
             return self.send_json({})
+
+        # ---- 系统监控（本地预览用假数据）----
+        # 真机上由 monitor_collect.py 采集；本机（Mac）没有 /proc、/vol*、
+        # RAPL 等，采不到真数据，所以给一份结构完全一致的假数据，
+        # 用于本地验证前端渲染与排版。
+        if name == "monitor":
+            return self.send_json(mock_monitor()) if os.environ.get("MON_FULL") else self.send_json(mock_monitor_empty())
+
 
         if name == "apply":
             # 真机上这一步会改写 /usr/trim/www/；预览模式只如实说明，

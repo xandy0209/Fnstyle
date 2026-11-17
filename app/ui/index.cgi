@@ -15,6 +15,7 @@
 #   GET  /api/proxy?url=...       跨域代理（拉远程 theme.json / bg_list）
 #   GET  /api/proxy-json?url=...  带 _meta 元信息的跨域代理（新增主题库时用）
 #   POST /api/upload              上传图片/视频（multipart）
+#   GET  /api/monitor            系统监控数据（转发到本机 9910 监控服务）
 #   GET  /api/file?name=...       读取已上传文件
 #   DELETE /api/file?name=...     删除已上传文件
 # ---------------------------------------------------------------------------
@@ -23,7 +24,7 @@ set -uo pipefail
 # ------------------------- 版本与更新检查 -------------------------
 # ⚠️ 必须与 manifest 的 version 保持一致（自动更新靠它判断「是否比线上新」）。
 # GitHub 发布新版本时，两处都要改：manifest 的 version + 本常量。
-APP_VERSION="1.1.15"
+APP_VERSION="1.1.16"
 
 # ----------------------------- 路径配置 -----------------------------
 # APP_ROOT 是 fnOS 安装后创建的标准软链：
@@ -2272,6 +2273,28 @@ PY
         # 同 /api/proxy：剥掉 UTF-8 BOM，否则前端 JSON.parse 会失败
         http_json_file_nobom "200 OK" "$RESP_FILE"
         rm -f "$RESP_FILE"
+        exit 0
+        ;;
+
+    /api/monitor)
+        # 系统监控数据（存储 / 处理器内存显卡 / 温度散热 / 能耗）
+        #
+        # ⚠️ 为什么这里要转发到 9910 而不是自己采集：
+        #   采集逻辑在 monitor_collect.py（Python 标准库实现），需要后台线程做
+        #   CPU / RAPL 功耗的差分采样。fnOS 直连 CGI 这条路径（/cgi/ThirdParty/...）
+        #   不经过 Python 服务，采集能力拿不到 —— 所以统一转发给本机 9910。
+        #   9910 就是本应用自己起的 HTTP 服务，同机直连不受影响。
+        #
+        # 临时文件放 TMPDIR（不用 DATA_DIR）：CGI 可能在应用未完全初始化时
+        # 被调用，那时 share 目录未必可写。
+        MON_URL="http://127.0.0.1:9910/api/monitor"
+        MON_FILE="${TMPDIR:-/tmp}/fnstyle_monitor.$$"
+        if curl -s --max-time 8 -o "$MON_FILE" "$MON_URL" 2>/dev/null && [ -s "$MON_FILE" ]; then
+            http_json_file_nobom "200 OK" "$MON_FILE"
+        else
+            http_json "503 Service Unavailable" '{"success":false,"available":false,"error":"监控服务未就绪，请确认应用服务已启动"}'
+        fi
+        rm -f "$MON_FILE"
         exit 0
         ;;
 

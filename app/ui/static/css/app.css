@@ -1623,3 +1623,270 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
   .tp-stage { border-right: none; border-bottom: 1px solid var(--border); }
   .tp-assets { max-height: 30vh; }
 }
+
+/* ==========================================================================
+   系统监控（fnmonitor 能力对齐）
+   四大板块：存储 / 处理器内存显卡 / 温度散热 / 能耗
+   ========================================================================== */
+
+/* ---- 顶部工具条 ---- */
+.mon-toolbar .body { padding: .7rem 1.15rem; }
+.mon-toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  flex-wrap: wrap;
+}
+.mon-status {
+  display: inline-flex;
+  align-items: center;
+  gap: .45rem;
+  font-size: .85rem;
+  color: var(--text-secondary);
+}
+.mon-status.ok { color: var(--success); }
+.mon-status.err { color: var(--danger); }
+.mon-updated {
+  font-size: .8rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.mon-auto {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  font-size: .82rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+.mon-auto input { accent-color: var(--accent); cursor: pointer; }
+
+/* ---- 板块内网格 ---- */
+.mon-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: .85rem;
+}
+.mon-grid-3 { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+.mon-grid-2 { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+.mon-grid > .loading { grid-column: 1 / -1; }
+
+/* ---- 单个指标块 ---- */
+.mon-item {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: .85rem .95rem;
+  min-width: 0;
+}
+.mon-item-head {
+  display: flex;
+  align-items: baseline;
+  gap: .5rem;
+  margin-bottom: .5rem;
+}
+.mon-item-title {
+  font-size: .84rem;
+  color: var(--text-secondary);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mon-item-value {
+  margin-left: auto;
+  font-size: 1.12rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.mon-item-sub {
+  font-size: .78rem;
+  color: var(--text-muted);
+  margin-top: .45rem;
+  line-height: 1.5;
+  word-break: break-word;
+}
+.mon-item-sub span { color: var(--text-secondary); }
+
+/* ---- 进度条 / 容量条 ---- */
+.mon-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-hover);
+  overflow: hidden;
+  margin-top: .5rem;
+}
+.mon-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width .35s ease;
+}
+.mon-bar-fill.lv-ok   { background: var(--success); }
+.mon-bar-fill.lv-warn { background: var(--warning); }
+.mon-bar-fill.lv-high { background: var(--danger); }
+
+/* ---- 温度色阶 ---- */
+.mon-temp {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  font-variant-numeric: tabular-nums;
+}
+.mon-temp-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+.mon-temp-dot.lv-ok   { background: var(--success); }
+.mon-temp-dot.lv-warn { background: var(--warning); }
+.mon-temp-dot.lv-high { background: var(--danger); }
+
+/* ---- 温度 / 风扇列表 ---- */
+.mon-list { display: flex; flex-direction: column; gap: .45rem; }
+.mon-row {
+  display: flex;
+  align-items: center;
+  gap: .55rem;
+  font-size: .83rem;
+  padding: .3rem 0;
+  border-bottom: 1px dashed var(--border);
+}
+.mon-row:last-child { border-bottom: none; }
+.mon-row-name {
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.mon-row-val {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ---- 磁盘表格 ---- */
+.mon-table-wrap {
+  overflow-x: auto;
+  margin: 0 -.35rem;
+  padding: 0 .35rem;
+}
+.mon-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .82rem;
+}
+.mon-table th,
+.mon-table td {
+  padding: .45rem .5rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.mon-table th {
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: .76rem;
+}
+.mon-table td { color: var(--text-secondary); }
+.mon-table td.num { font-variant-numeric: tabular-nums; }
+.mon-table tbody tr:last-child td { border-bottom: none; }
+
+/* 宽表（物理磁盘）独占整行，避免挤在窄列里 */
+.mon-item-wide { grid-column: 1 / -1; }
+
+/* ---- 子目录容量条（存储下钻） ----
+   ⚠️ 三列布局（名称 | 条 | 数值）在窄卡片里会横向溢出：
+   数值文本 "150.0 GB / 200.0 GB" 撑破 88px 的固定列，探针实测
+   scrollWidth > clientWidth。
+   改成两行布局：上行 名称 + 数值，下行 进度条独占整行 —— 任何宽度都不溢出。 */
+.mon-children { margin-top: .6rem; display: flex; flex-direction: column; gap: .5rem; }
+.mon-child {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "name val"
+    "bar  bar";
+  align-items: center;
+  gap: .15rem .5rem;
+  font-size: .78rem;
+}
+.mon-child-name {
+  grid-area: name;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.mon-child .mon-bar {
+  grid-area: bar;
+  margin-top: .1rem;
+}
+.mon-child-val {
+  grid-area: val;
+  text-align: right;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ---- 每核负载 ---- */
+.mon-cores {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .3rem;
+  margin-top: .55rem;
+}
+.mon-core {
+  width: 26px;
+  height: 30px;
+  border-radius: 3px;
+  background: var(--bg-hover);
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.mon-core-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--accent);
+  transition: height .35s ease;
+}
+
+/* ---- 徽章 ---- */
+.mon-badge {
+  display: inline-block;
+  padding: .1rem .45rem;
+  border-radius: 999px;
+  font-size: .72rem;
+  font-weight: 600;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+.mon-badge.ok   { background: var(--success-soft); color: var(--success); border-color: color-mix(in srgb, var(--success) 40%, transparent); }
+.mon-badge.warn { background: var(--warning-soft); color: var(--warning); border-color: color-mix(in srgb, var(--warning) 40%, transparent); }
+.mon-badge.err  { background: var(--danger-soft);  color: var(--danger);  border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
+
+/* ---- 空状态 ---- */
+.mon-empty {
+  grid-column: 1 / -1;
+  padding: 1.6rem 1rem;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: .84rem;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+}
+
+@media (max-width: 900px) {
+  .mon-grid, .mon-grid-2, .mon-grid-3 { grid-template-columns: 1fr; }
+}

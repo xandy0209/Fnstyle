@@ -36,6 +36,23 @@ import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+# ----------------------------- 监控采集模块 -----------------------------
+# 系统监控（存储 / 处理器内存显卡 / 温度散热 / 能耗）由独立模块采集，
+# 本服务只负责把缓存快照吐给前端 —— 采集在后台线程里做，HTTP 请求不阻塞。
+#
+# ⚠️ 采集模块与本文件同级（app/ui/monitor_collect.py），import 失败时降级为
+#    「监控不可用」，绝不能因此让整个应用起不来。
+_MONITOR = None
+_MONITOR_IMPORT_ERROR = ""
+try:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import monitor_collect as _mc
+    _MONITOR = _mc.MonitorCollector(interval=3)
+except Exception as _e:  # pragma: no cover
+    _MONITOR_IMPORT_ERROR = str(_e)
+    log_line = "[monitor] 采集模块加载失败：%s" % _e
+    print(log_line, flush=True)
+
 # ----------------------------- 路径配置 -----------------------------
 UI_DIR = os.environ.get("FNSTYLE_UI_DIR", "/var/apps/fnstyle/target/ui")
 CGI_SCRIPT = os.path.join(UI_DIR, "index.cgi")
@@ -403,7 +420,36 @@ class Handler(BaseHTTPRequestHandler):
             return True
         if p == "/api/update/start" and self.command == "POST":
             return self._handle_update_start()
+        if p == "/api/monitor":
+            return self._handle_monitor()
         return False
+
+    def _handle_monitor(self):
+        """系统监控数据：直接返回后台采集线程的缓存快照。
+
+        ⚠️ 绝不在这里现场采集 —— CPU 使用率与 RAPL 功耗都需要差分，
+        单次 HTTP 请求里根本算不出来；且现场采集会阻塞页面。
+        """
+        if _MONITOR is None:
+            self._send_json(503, {
+                "success": False,
+                "available": False,
+                "error": "监控采集模块不可用：%s" % (_MONITOR_IMPORT_ERROR or "未知原因"),
+            })
+            return True
+        snap = _MONITOR.snapshot()
+        if not snap:
+            # 采集线程刚起来、还没跑完第一轮：给前端一个明确的「预热中」
+            self._send_json(200, {
+                "success": True, "available": False,
+                "warming": True,
+                "message": "监控数据采集中，请稍候…",
+            })
+            return True
+        snap["success"] = True
+        snap["available"] = True
+        self._send_json(200, snap)
+        return True
 
     def _handle_update_start(self):
         body = self._read_body()
@@ -724,6 +770,18 @@ def main():
     log("FnStyle HTTP 服务已启动 http://%s:%d/" % (BIND, PORT))
     log("  静态根目录 : %s" % STATIC_ROOT)
     log("  CGI 脚本   : %s" % CGI_SCRIPT)
+
+    # ---- 系统监控采集线程 ----
+    # 后台每 3 秒刷新一次缓存，/api/monitor 只读缓存。
+    # 采集失败不影响主服务（线程内已做异常兜底）。
+    if _MONITOR is not None:
+        try:
+            _MONITOR.start()
+            log("  系统监控   : 已启动（周期 %ds）" % _MONITOR.interval)
+        except Exception as e:
+            log("  ⚠️ 监控采集线程启动失败: %s" % e)
+    else:
+        log("  ⚠️ 系统监控 : 采集模块不可用（%s）" % (_MONITOR_IMPORT_ERROR or "未知原因"))
 
     # ---- 网关 socket（可选；默认关闭，见 SOCK_FILE 说明）----
     unix_srv = None

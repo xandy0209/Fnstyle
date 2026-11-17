@@ -35,7 +35,7 @@
     </div>
     <!-- 顶栏右侧：当前版本号 + 检查更新入口 + 新页面打开 -->
     <div class="topbar-right" id="topbarUpdate">
-      <span class="ver-pill" id="verPill" title="当前版本">v1.1.15</span>
+      <span class="ver-pill" id="verPill" title="当前版本">v1.1.16</span>
       <span class="ub-status" id="tbUpdateStatus"></span>
       <button class="btn sm icon-btn" id="tbCheckUpdate" type="button" title="检查更新" aria-label="检查更新">
         <svg class="upd-ico" viewBox="0 0 24 24" aria-hidden="true">
@@ -58,6 +58,7 @@
   <div class="tabs">
     <button class="tab active" data-tab="personalize">🎚 Fnstyle个性化设置</button>
     <button class="tab" data-tab="themes">🎨 Fnstyle主题库</button>
+    <button class="tab" data-tab="monitor">📊 系统监控</button>
     <div class="spacer"></div>
     <span class="tab-action" id="tabAction"></span>
   </div>
@@ -118,6 +119,82 @@
         </div>
         <div class="load-more-wrap">
           <button class="btn" id="btnLoadMore">加载更多</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- ====================== 面板三：系统监控 ====================== -->
+  <!-- 四大板块对齐 fnmonitor：存储 / 处理器内存显卡 / 温度散热 / 能耗 -->
+  <div class="panel" id="panel-monitor">
+    <div class="card mon-toolbar">
+      <div class="body">
+        <div class="mon-toolbar-row">
+          <span class="mon-status" id="monStatus">
+            <span class="spin"></span> 正在采集监控数据…
+          </span>
+          <div class="spacer"></div>
+          <span class="mon-updated" id="monUpdated"></span>
+          <button class="btn sm" id="btnMonRefresh" type="button">🔄 立即刷新</button>
+          <label class="mon-auto">
+            <input type="checkbox" id="monAuto" checked>
+            <span>自动刷新</span>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- 1. 存储 -->
+    <div class="card">
+      <header>
+        <h2><span>💾</span> 存储</h2>
+        <div class="spacer"></div>
+        <span class="theme-count" id="monStoreCount">—</span>
+      </header>
+      <div class="body">
+        <div class="mon-grid" id="monStorage">
+          <div class="loading"><span class="spin"></span> 读取存储信息…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. 处理器 / 内存 / 显卡 -->
+    <div class="card">
+      <header>
+        <h2><span>🧠</span> 处理器 / 内存 / 显卡</h2>
+        <div class="spacer"></div>
+        <span class="theme-count" id="monCoreCount">—</span>
+      </header>
+      <div class="body">
+        <div class="mon-grid mon-grid-3" id="monCore">
+          <div class="loading"><span class="spin"></span> 读取运行状态…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3. 温度和散热 -->
+    <div class="card">
+      <header>
+        <h2><span>🌡</span> 温度和散热</h2>
+        <div class="spacer"></div>
+        <span class="theme-count" id="monTempCount">—</span>
+      </header>
+      <div class="body">
+        <div class="mon-grid mon-grid-2" id="monTemp">
+          <div class="loading"><span class="spin"></span> 读取传感器…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4. 能耗 -->
+    <div class="card">
+      <header>
+        <h2><span>⚡</span> 能耗</h2>
+        <div class="spacer"></div>
+        <span class="theme-count" id="monPowerSource">—</span>
+      </header>
+      <div class="body">
+        <div class="mon-grid mon-grid-2" id="monPower">
+          <div class="loading"><span class="spin"></span> 读取功耗…</div>
         </div>
       </div>
     </div>
@@ -243,5 +320,7 @@
 </div>
 
 <script src="static/js/app.js"></script>
+<script src="static/js/monitor.js"></script>
+
 </body>
 </html>
