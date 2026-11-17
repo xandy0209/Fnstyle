@@ -118,8 +118,16 @@ def _disk_usage(path):
     try:
         st = os.statvfs(path)
         total = st.f_blocks * st.f_frsize
+        # ⚠️ f_bfree 是「包括保留块在内的空闲空间」，f_bavail 才是
+        #    **普通用户真正可用**的空间。fnOS 的系统卷会预留一大块
+        #    ext4 保留空间（通常 5%，大卷可达几十 GB），
+        #    用 total - f_bfree 算「已用」会把保留块也算进去 →
+        #    百分比永远显示 100%（实测 vol1 62.5G 显示 100%，
+        #    但实际可用还有 48.2G）。
+        #    正确口径：used = total - f_bavail（相对用户视角），
+        #    free = f_bavail。
         free = st.f_bavail * st.f_frsize
-        used = total - st.f_bfree
+        used = max(0, total - free)
         return {"total": total, "used": used, "free": free,
                 "percent": _pct(used, total)}
     except Exception:

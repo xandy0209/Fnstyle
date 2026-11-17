@@ -53,6 +53,18 @@ mkdir -p "${DATA_DIR}/upload" "${DATA_DIR}/lib" "${DATA_DIR}/fnstyle" 2>/dev/nul
 
 # 网关 socket 残留（上一次安装/异常退出留下的冷 socket）：
 # 留着它 fnOS 网关会把 /app/fnstyle 转发到一个没人监听的 socket，页面打不开。
+#
+# ⚠️⚠️ 2026-11-18 真机实测：这里**不能只删 socket 就直接 start**。
+#    删完 socket 后，若旧服务进程还活着（pidfile 还在、/proc/<pid> 还在），
+#    cmd/main start 会判定「服务已在运行」而**直接返回**，根本不会重新 bind
+#    socket —— 结果 socket 文件不存在、也没人监听，桌面入口 502 Bad Gateway，
+#    而 9910 直连一切正常，排查时极易被带偏。
+#    正确顺序：**先停旧进程 → 再删 socket → 再启动**。
+#    （cmd/main start 本身也加了 socket 存活校验做二次保险，这里是双保险。）
+CMD_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -x "${CMD_DIR}/main" ]; then
+    bash "${CMD_DIR}/main" stop >/dev/null 2>&1 || true
+fi
 rm -f "${APP_ROOT}/fnstyle.sock" 2>/dev/null || true
 
 # ---- 先把服务拉起来，让 socket 先于「应用中心解析 ui/config」存在 ----
@@ -62,7 +74,6 @@ rm -f "${APP_ROOT}/fnstyle.sock" 2>/dev/null || true
 #    结果 /app/fnstyle 永远打不开。
 #    安装时序是 install_callback → APP_INSTALLED（此刻才写 app_service），
 #    所以必须在回调里就把 socket 建出来。
-CMD_DIR="$(cd "$(dirname "$0")" && pwd)"
 if command -v python3 >/dev/null 2>&1 && [ -f "${APP_ROOT}/ui/fnstyle_server.py" ]; then
     bash "${CMD_DIR}/main" start >/dev/null 2>&1 || \
         log "提示：服务未能自动启动，短地址可能不可用（长地址不受影响）"

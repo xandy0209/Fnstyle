@@ -66,17 +66,108 @@ is_running() {
     local pid
     pid=$(cat "${PID_FILE}" 2>/dev/null)
     [ -n "${pid}" ] || return 1
+
+    # ⚠️ 判据顺序很重要：**端口在听**是最强证据（直接说明服务活着，
+    #    且不依赖 pidfile 正确性），放在最前面。
+    #    9910 是本服务独占的端口，端口在听 ⇒ 服务进程在跑。
+    if port_listening; then
+        return 0
+    fi
+
+    # 端口没在听，但 pidfile 里的进程还活着 ⇒ 服务进程在、只是监听还没起来
+    # （或正在退出）。这种情况仍算「在运行」，避免重复拉起第二个实例。
     # ⚠️ 不能只看 kill -0：进程是 root 跑的，普通用户 kill -0 会拿到 EPERM，
-    # 于是 status 误报「未运行」，排障时白白走弯路。补一条 /proc 判据
-    # （/proc 对所有用户可读，且不受权限影响）。
-    kill -0 "${pid}" 2>/dev/null && return 0
-    [ -d "/proc/${pid}" ]
+    #    于是 status 误报「未运行」，排障时白白走弯路。补一条 /proc 判据
+    #    （/proc 对所有用户可读，且不受权限影响）。
+    if kill -0 "${pid}" 2>/dev/null; then
+        return 0
+    fi
+    if [ -d "/proc/${pid}" ]; then
+        return 0
+    fi
+    if command -v ps >/dev/null 2>&1; then
+        ps -p "${pid}" >/dev/null 2>&1 && return 0
+    fi
+    return 1
+}
+
+# 端口上是否有监听者。
+# 用 ss（Linux 标准）；没有 ss 就退回「能不能连上」来判断。
+port_listening() {
+    if command -v ss >/dev/null 2>&1; then
+        ss -tln 2>/dev/null | grep -q ":${PORT} " && return 0
+        return 1
+    fi
+    if command -v curl >/dev/null 2>&1; then
+        curl -s -o /dev/null --max-time 2 "http://127.0.0.1:${PORT}/" 2>/dev/null && return 0
+        return 1
+    fi
+    return 1
+}
+
+# 网关 socket 是否**真的有人在监听**。
+#
+# ⚠️⚠️ 只判断「文件在、类型是 socket」是不够的 —— **冷 socket**
+#    （文件在、但没有进程 listen）会 100% 骗过 -S 检查，而网关的表现
+#    与「后端崩了」完全一样（502 Bad Gateway）。这正是本次故障的真身：
+#    socket 文件一直都在，9910 也一直正常，只有 socket 没人监听。
+#    所以必须做一次**真实连接**：连得上 ⇒ 有人在 listen ⇒ socket 是活的。
+socket_ok() {
+    [ -S "${APP_ROOT}/fnstyle.sock" ] || return 1
+    # 用 python3 做一次真实连接探测（fnOS 自带 python3，
+    # 且 fnstyle_server.py 本来就依赖它）。
+    if command -v python3 >/dev/null 2>&1; then
+        python3 - "${APP_ROOT}/fnstyle.sock" <<'PYEOF' >/dev/null 2>&1
+import socket, sys
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.settimeout(3)
+try:
+    s.connect(sys.argv[1])
+except Exception:
+    sys.exit(1)
+finally:
+    try:
+        s.close()
+    except Exception:
+        pass
+sys.exit(0)
+PYEOF
+        return $?
+    fi
+    # 没有 python3 就退回「文件在就算过」（至少能挡住普通文件）
+    return 0
 }
 
 start_server() {
+    # ⚠️⚠️ 2026-11-18 真机实测踩出来的坑（表现为桌面入口 502 Bad Gateway）：
+    #
+    #   旧逻辑只要 pidfile 里的进程还活着就直接 return 0「服务已在运行」。
+    #   但 install_callback / upgrade_callback 会先 rm -f 掉 socket 文件
+    #   （为了清掉上一次异常退出留下的**冷 socket**），此时旧进程还活着、
+    #   却已经不再 bind 这个 socket 了 → 网关连上去没人应答 → 502。
+    #
+    #   即：**「进程活着」≠「socket 在监听」**。两者必须一起判断。
+    #   冷 socket 的危害正在于：文件在、但没人 listen，网关的表现和
+    #   「后端崩了」一模一样，只看 HTTP 层完全查不出原因。
     if is_running; then
-        echo "服务已在运行 (pid=$(cat "${PID_FILE}" 2>/dev/null))，端口 ${PORT}"
-        return 0
+        if socket_ok; then
+            echo "服务已在运行 (pid=$(cat "${PID_FILE}" 2>/dev/null))，端口 ${PORT}"
+            return 0
+        fi
+        # 进程活着但 socket 不在 → 强制重启，让新进程重新 bind。
+        echo "检测到服务进程存活但网关 socket 缺失，重启服务以重建 socket..." >&2
+        stop_server >/dev/null 2>&1 || true
+        rm -f "${PID_FILE}" "${APP_ROOT}/fnstyle.sock" 2>/dev/null || true
+        # ⚠️ 必须等旧进程真正退出再拉新的，否则两个实例会抢同一个 socket
+        #    （旧进程退出时还会删掉 socket 文件，把新进程的 socket 一起删了）。
+        local w=0
+        while [ "${w}" -lt 20 ]; do
+            port_listening || break
+            sleep 0.5
+            w=$((w + 1))
+        done
+        # 端口还没让出来（被别的进程占着）→ 后面会走到「端口被占用」分支报错
+        sleep 0.5
     fi
     # 端口被别的进程占用 → 直接报错，避免「启动成功但页面其实是别人的」
     if command -v ss >/dev/null 2>&1 && ss -tln 2>/dev/null | grep -q ":${PORT} "; then
@@ -121,18 +212,31 @@ start_server() {
     while [ "${i}" -lt 20 ]; do
         if command -v ss >/dev/null 2>&1 && ss -tln 2>/dev/null | grep -q ":${PORT} "; then
             echo "独立 HTTP 服务已启动，端口 ${PORT}"
-            return 0
+            break
         fi
         if command -v curl >/dev/null 2>&1 && \
            curl -s -o /dev/null --max-time 2 "http://127.0.0.1:${PORT}/" 2>/dev/null; then
             echo "独立 HTTP 服务已启动，端口 ${PORT}"
-            return 0
+            break
         fi
         sleep 0.5
         i=$((i + 1))
     done
 
-    log_err "独立 HTTP 服务启动超时，详见 ${LOG_FILE}"
+    # ⚠️ 9910 起来了 ≠ 网关短地址能用。socket 没 bind 上时，桌面入口
+    #    会直接 502，而 9910 直连一切正常 —— 只看 HTTP 层永远查不出问题。
+    #    所以这里必须单独确认 socket 真的建立了（-S 判类型，不是判存在）。
+    local j=0
+    while [ "${j}" -lt 10 ]; do
+        if socket_ok; then
+            echo "网关 socket 已就绪：${APP_ROOT}/fnstyle.sock"
+            return 0
+        fi
+        sleep 0.5
+        j=$((j + 1))
+    done
+
+    log_err "网关 socket 未建立（短地址 /app/${APP_NAME} 将不可用），详见 ${LOG_FILE}"
     return 1
 }
 
