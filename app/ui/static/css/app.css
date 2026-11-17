@@ -143,6 +143,12 @@ body {
   display: block;
   fill: currentColor;
 }
+.btn.icon-btn .ext-ico {
+  width: 15px;
+  height: 15px;
+  display: block;
+  stroke: currentColor;
+}
 .btn.icon-btn.spinning .upd-ico {
   animation: upd-spin 1s linear infinite;
 }

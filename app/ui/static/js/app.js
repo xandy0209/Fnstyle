@@ -1533,7 +1533,7 @@
   var AUTOINSTALL_KEY = 'fnstyle_autoinstall_update_v1';
   /* 当前版本号：与 manifest 的 version 保持一致，发版时同步修改。
      顶栏版本胶囊与「发现新版本」提示都基于它展示。 */
-  var APP_VERSION = '1.1.14';
+  var APP_VERSION = '1.1.15';
 
   /* 顶栏右侧更新控件：版本胶囊 + 检查/下载按钮 + 状态文字。
      reason：error 态下展示在状态文字与悬停提示里的诊断摘要（可省略）。
@@ -1770,6 +1770,14 @@
         } else {
           checkForUpdate({ silent: false });
         }
+      });
+    }
+    /* 顶栏右侧：箭头按钮 —— 以新浏览器页面打开本应用（绕开 fnOS 桌面 iframe） */
+    var extBtn = $('#tbOpenExternal');
+    if (extBtn) {
+      extBtn.addEventListener('click', function () {
+        var w = window.open(location.href, '_blank', 'noopener');
+        if (!w) toast('浏览器拦截了新页面，请允许本站弹出窗口后重试', 'err');
       });
     }
     /* 设置卡片：自动检查开关 */
