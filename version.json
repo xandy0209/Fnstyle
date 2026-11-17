@@ -1,9 +1,9 @@
 {
-  "version": "1.1.14",
-  "url": "https://github.com/xandy0209/Fnstyle/releases/download/v1.1.14/fnstyle_1.1.14_all.fpk",
-  "downloadUrl": "https://github.com/xandy0209/Fnstyle/releases/download/v1.1.14/fnstyle_1.1.14_all.fpk",
-  "changelog": "1.1.14：顶栏副标题文字加粗显示",
-  "sha256": "cbd686212c8fe4e16d3f153f26cff620f92c96c264fbd0f0f09b2b0e23fa9e99",
-  "size": 1278956,
-  "publishedAt": "2026-11-15T23:17:00+08:00"
+  "version": "1.1.15",
+  "url": "https://github.com/xandy0209/Fnstyle/releases/download/v1.1.15/fnstyle_1.1.15_all.fpk",
+  "downloadUrl": "https://github.com/xandy0209/Fnstyle/releases/download/v1.1.15/fnstyle_1.1.15_all.fpk",
+  "changelog": "1.1.15：顶栏新增箭头按钮，一键以新浏览器页面打开应用",
+  "sha256": "683ea0207d73bdd870e3a838c77c01eba5bb6c1456b4f646384151e9818e8b10",
+  "size": 1279289,
+  "publishedAt": "2026-11-17T12:36:00+08:00"
 }
