@@ -46,6 +46,15 @@
   --grip:           #2b3440;
   --chassis-shadow: inset 0 1px 0 rgba(150, 180, 220, .06), inset 0 -1px 0 rgba(0, 0, 0, .55);
   --tray-shadow:    inset 0 0 0 1px rgba(150, 180, 220, .06);
+
+  /* ---- 负载色阶（参照 fnmonitor「负载色阶」规范）----
+     容量类控件按数值着色：绿 → 黄 → 橙 → 红，越满越"热"。
+     --r-g / --r-y 是填充色阶（进度条、点阵）；
+     --rt-g / --rt-l 是数字用的文字色阶（浅色模式压暗，不经过易发棕的黄橙段）。 */
+  --r-g:  oklch(0.72 0.13 158);
+  --r-y:  oklch(0.85 0.15 115);
+  --rt-g: var(--r-g);
+  --rt-l: var(--r-y);
 }
 
 @media (prefers-color-scheme: light) {
@@ -79,6 +88,12 @@
     --grip:           #d3d7dc;
     --chassis-shadow: inset 0 1px 0 rgba(255, 255, 255, .85), inset 0 -1px 0 rgba(0, 0, 0, .06);
     --tray-shadow:    0 1px 2px rgba(31, 35, 40, .06), inset 0 0 0 1px rgba(31, 35, 40, .04);
+
+    /* 浅色模式：填充色阶不变，文字色阶压暗以保证对比度 */
+    --r-g:  oklch(0.67 0.13 158);
+    --r-y:  oklch(0.82 0.16 115);
+    --rt-g: oklch(0.52 0.12 158);
+    --rt-l: oklch(0.55 0.13 122);
   }
 }
 
@@ -1990,15 +2005,18 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
   background: var(--bg-hover);
   overflow: hidden;
 }
+/* 存储池使用率进度条：填充段按色阶从绿渐变到当前值位置（越满越"热"）。
+   实现同 fnmonitor 的 rampBar —— 渐变铺满整条轨道，再用 background-size
+   把「已填充的那一段」露出来，于是填充段自身就是一条从绿到当前位置的渐变。 */
 .mon-pool-bar > i {
   display: block;
   height: 100%;
   border-radius: 5px;
-  background: var(--accent);
-  transition: width .35s ease, background-color .35s ease;
+  background: var(--r-g);
+  background-repeat: no-repeat;
+  background-position: left center;
+  transition: width .35s ease, background-size .35s ease;
 }
-.mon-pool-bar > i.lv-warn { background: var(--warning); }
-.mon-pool-bar > i.lv-high { background: var(--danger); }
 .mon-pool-legend {
   display: flex;
   flex-wrap: wrap;
@@ -2158,9 +2176,14 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
 /* NVMe 用 4 列点阵，比例随之变化 */
 .mon-bay[data-kind="nvme"] .mon-bay-gauge { width: 28px; aspect-ratio: 4 / 16; }
 .mon-bay-gauge circle { fill: var(--tray-dot); transition: fill .4s ease; }
-.mon-bay-gauge circle.on { fill: var(--accent); }
-.mon-bay-gauge[data-l="warn"] circle.on { fill: var(--warning); }
+/* 点亮的点按各自在柱中的高度位置取色阶色（底部绿 → 顶部红），
+   色值由 JS 按 fnmonitor 的 rampAt 计算后写成内联 style.fill。
+   这里的 .on 只是兜底（无内联色时的绿色默认）。 */
+.mon-bay-gauge circle.on { fill: var(--r-g); }
+/* 健康分级（故障 / 留意）优先于容量色阶 —— 盘坏了就该一眼看到红点，
+   而不是让容量渐变把健康告警稀释掉。 */
 .mon-bay-gauge[data-l="crit"] circle.on { fill: var(--danger); }
+.mon-bay-gauge[data-l="warn"] circle.on { fill: var(--warning); }
 
 .mon-bay-info {
   flex: 1;

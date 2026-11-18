@@ -247,6 +247,14 @@ if (html) {
     ['休眠标记', '休眠'],
     ['故障盘分级', '故障'],
     ['成员盘故障 (F)', '(F)'],
+    // 负载色阶（参照 fnmonitor「负载色阶」）：进度条与点阵都从绿渐变到红
+    ['进度条铺色阶渐变', 'background-image:linear-gradient(90deg, var(--r-g)'],
+    ['进度条色标-黄绿', 'var(--r-y)'],
+    ['进度条色标-橙', 'var(--warning)'],
+    ['进度条色标-红', 'var(--danger)'],
+    ['进度条露出填充段', 'background-size:'],
+    ['点阵按位置取色阶', 'style="fill:color-mix(in oklch'],
+    ['存储池数字走文字色阶', 'style="color:'],
   ];
   let bad = 0;
   checks.forEach(([label, needle]) => {

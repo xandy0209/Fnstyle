@@ -1,5 +1,5 @@
 appname               = fnstyle
-version               = 1.1.20
+version               = 1.1.21
 display_name          = FnStyle
 desc                  = 集中管理飞牛个性化设置与丰富主题库：网站标题、登录框、LOGO、壁纸、毛玻璃、任务栏等独立配置，内置多源主题库，支持一键应用到 fnOS 系统。
 platform              = all
@@ -15,5 +15,5 @@ desktop_applaunchname = fnstyle.main
 service_port          = 9910
 checkport             = false
 ctl_stop              = true
-changelog             = 1.1.20：存储总览与硬盘状态改用 NAS 前面板式盘位卡片呈现（参照 fnmonitor）—— 存储池使用率大数字 + 进度条 + 图例 + 可用空间；每块物理盘一个托盘卡片，集成存储空间标签、健康 LED、容量点阵仪表、温度、型号、占用率与实时读写；补齐 LED 图例与巡检时间；原「物理磁盘」表格信息已并入盘位卡片
-checksum              = 487d329f0c73eb72ae7cc359c6323bd3
+changelog             = 1.1.21：存储池使用率进度条与盘位容量点阵改用 fnmonitor「负载色阶」渲染 —— 填充段从绿色起步，随使用率升高逐步渐变为黄绿、橙、红，标识空间使用越多越需要注意；存储池使用率数字与盘位容量行同步走同一条色阶；深浅两套主题各自配色
+checksum              = c5a6c9761af6db438fb9b189b5533a6e

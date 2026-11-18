@@ -156,6 +156,54 @@
     return '';
   }
 
+  /* ---- 负载色阶（移植 fnmonitor「负载色阶」规范）----
+     容量类控件按数值着色：绿 → 黄 → 橙 → 红，越满越"热"。
+     色标 [数值, 颜色]，容量档用 fnmonitor 的 capWarn=85 / capCrit=95。 */
+  var RAMP_G = 'var(--r-g)';     /* 绿 */
+  var RAMP_Y = 'var(--r-y)';     /* 黄绿 */
+  var RAMP_A = 'var(--warning)'; /* 橙 */
+  var RAMP_C = 'var(--danger)';  /* 红 */
+
+  /* 容量色阶色标：0 绿 → 85%×0.8 绿 → 85%×0.5 绿 → 85% 黄绿 → 85% 橙 → 95% 红
+     与 fnmonitor 的 RAMP.pct(capWarn, capCrit) 完全一致。 */
+  function capRampStops() {
+    var w = 85, c = 95;
+    return [[0, RAMP_G], [w * .5, RAMP_G], [w * .8, RAMP_Y], [w, RAMP_A], [Math.max(c, w), RAMP_C]];
+  }
+
+  function clampN(v, lo, hi) {
+    v = Number(v);
+    if (!isFinite(v)) return lo;
+    return v < lo ? lo : (v > hi ? hi : v);
+  }
+
+  /* 数值 v 在色阶上的颜色（fnmonitor rampAt 的等价实现）。
+     两色之间用 color-mix(in oklch, ...) 做连续插值。 */
+  function rampAt(v, stops) {
+    var st = stops || capRampStops();
+    v = Number(v);
+    if (!isFinite(v)) return st[0][1];
+    if (v <= st[0][0]) return st[0][1];
+    for (var i = 1; i < st.length; i++) {
+      if (v <= st[i][0]) {
+        var span = (st[i][0] - st[i - 1][0]) || 1;
+        var t = clampN((v - st[i - 1][0]) / span, 0, 1);
+        if (t < .02) return st[i - 1][1];
+        if (t > .98) return st[i][1];
+        return 'color-mix(in oklch, ' + st[i][1] + ' ' + Math.round(t * 100) + '%, ' + st[i - 1][1] + ')';
+      }
+    }
+    return st[st.length - 1][1];
+  }
+
+  /* 整条轨道的色阶渐变（fnmonitor rampGrad 的等价实现）。 */
+  function rampGrad(stops, dir) {
+    var st = stops || capRampStops();
+    return 'linear-gradient(' + (dir || '90deg') + ', ' + st.map(function (s) {
+      return s[1] + ' ' + clampN(s[0], 0, 100).toFixed(1) + '%';
+    }).join(', ') + ')';
+  }
+
   /* 巡检时间描述：「刚刚 / X 分钟前 / X 小时前 / X 天前」 */
   function scanAgo(ts) {
     if (!ts) return '';
@@ -168,18 +216,48 @@
 
   /* 容量点阵仪表：cols 列 × rows 行的 SVG 圆点，自下而上按占用比例点亮。
      点亮顺序与 fnmonitor 一致：从最底下一行开始，左→右逐行往上。
-     level ∈ '' | 'warn' | 'crit'，决定点亮点的颜色。 */
-  function gaugeSvg(cols, rows, frac, lv) {
+     颜色：每个点按「自身在柱中的高度位置」取容量色阶色 → 底部绿、顶部红，
+     标识空间使用越多越需要注意（fnmonitor dotGauge 的 ramp='cap' 语义）。
+
+     ⚠️ fnmonitor 里内联 fill 恒由 ramp 决定 —— 内联样式优先级高于 CSS 的
+     [data-l="warn"]/[data-l="crit"] 规则，所以它的点阵**始终**是容量色阶渐变，
+     健康分级另外走 LED 与 title。这里保持同样语义。 */
+  function gaugeSvg(cols, rows, frac) {
     var total = cols * rows;
     var k = Math.round(Math.max(0, Math.min(1, frac || 0)) * total);
+    var stops = capRampStops();
     var out = '';
     for (var i = 0; i < total; i++) {
       var on = i < k;
-      out += '<circle class="' + (on ? 'on' : '') + '" cx="' + ((i % cols) + 0.5) +
+      var fill = '';
+      if (on) {
+        /* 点在柱中的高度位置（0=底部, 100=顶部）→ 色阶取值 */
+        var row = Math.floor(i / cols);
+        fill = rampAt((row + 1) / rows * 100, stops);
+      }
+      out += '<circle class="' + (on ? 'on' : '') + '"' +
+        (fill ? ' style="fill:' + fill + '"' : '') +
+        ' cx="' + ((i % cols) + 0.5) +
         '" cy="' + (rows - Math.floor(i / cols) - 0.5) + '" r="0.34"></circle>';
     }
     return '<svg viewBox="0 0 ' + cols + ' ' + rows + '" preserveAspectRatio="xMidYMid meet"' +
       ' aria-hidden="true">' + out + '</svg>';
+  }
+
+  /* 与控件联动的数字：同一色阶的文字版（浅色模式压暗以保证对比度）。
+     移植 fnmonitor rampInk：>=95 纯红、>=85 橙、>=76.5 橙，其余绿→黄绿插值。 */
+  function rampInk(v, stops) {
+    var st = stops || capRampStops();
+    v = Number(v);
+    if (!isFinite(v)) return '';
+    if (v >= st[4][0]) return 'var(--danger)';
+    if (v >= st[3][0]) return 'var(--warning)';
+    /* 黄绿 → 橙 这一段：填充色过了中点就已明显偏橙，数字在同一点切换为橙 */
+    if (v >= (st[2][0] + st[3][0]) / 2) return 'var(--warning)';
+    var t = clampN((v - st[1][0]) / ((st[2][0] - st[1][0]) || 1), 0, 1);
+    if (t < .02) return 'var(--rt-g)';
+    if (t > .98) return 'var(--rt-l)';
+    return 'color-mix(in oklch, var(--rt-l) ' + Math.round(t * 100) + '%, var(--rt-g))';
   }
 
   function smartFlagsHtml(d) {
@@ -241,15 +319,24 @@
       ? Number(sum.percent) : (totBytes ? Math.round(usedBytes / totBytes * 100) : 0);
     var poolLv = capLevel(poolPct);
 
+    /* 进度条：填充段按容量色阶从绿渐变到当前值位置（越满越"热"）。
+       实现同 fnmonitor 的 rampBar —— 渐变铺满整条轨道（色标位置 = 数值百分比），
+       再用 background-size 把「已填充的那一段」露出来。
+       关键：big = 100/len×100%，使渐变宽度恒等于整条轨道宽度，
+       于是填充段自身就是「从绿到当前使用率对应色」的连续渐变。 */
+    var poolLen = Math.max(0, Math.min(100, poolPct));
+    var poolBig = (100 / Math.max(poolLen, .5) * 100).toFixed(1) + '%';
+    var poolBarStyle = 'width:' + poolLen + '%;background-image:' + rampGrad() +
+      ';background-size:' + poolBig + ' 100%;background-position:left center';
+
     html += '<div class="mon-pool">' +
       '<div>' +
         '<div class="mon-pool-eyebrow">存储池使用率</div>' +
-        '<div class="mon-pool-num' + (poolLv ? ' mon-lv-' + poolLv : '') + '">' +
+        '<div class="mon-pool-num" style="color:' + rampInk(poolPct) + '">' +
           esc(poolPct) + '<span class="unit">%</span></div>' +
       '</div>' +
       '<div>' +
-        '<div class="mon-pool-bar"><i class="' + (poolLv ? 'lv-' + poolLv : '') +
-          '" style="width:' + Math.max(0, Math.min(100, poolPct)) + '%"></i></div>' +
+        '<div class="mon-pool-bar"><i style="' + poolBarStyle + '"></i></div>' +
         '<div class="mon-pool-legend">' +
           '<span>已用 <b>' + esc(usedText || '—') + '</b></span>' +
           '<span>总容量 <b>' + esc(totText || '—') + '</b></span>' +
@@ -278,7 +365,9 @@
         var hasCap = Number(d.total) > 0;
         var pct = Number(d.percent) || 0;
         var gv = hasCap ? pct / 100 : 0;
-        var glv = lv === 'crit' ? 'crit' : (lv === 'warn' ? 'warn' : capLevel(pct));
+        /* 容量等级与健康分级是两件事：容量满（要留意容量）≠ 盘坏了（健康故障）。
+           角标与容量行只看容量等级；LED 与 title 看健康分级。 */
+        var capLv = capLevel(pct);
         var cols = (kind === 'nvme') ? 4 : 5;
 
         var t = d.temp;
@@ -299,10 +388,10 @@
 
         // 容量告警：仪表会变色，但 LED 仍反映健康状态（两者独立，fnmonitor 同语义）。
         // 这里额外挂一个容量告警角标，避免「盘满」被误读成「盘坏了」。
-        var capWarn = (glv === 'warn' || glv === 'crit')
-          ? '<span class="mon-bay-alert' + (glv === 'crit' ? ' lv-crit' : '') +
+        var capWarn = capLv
+          ? '<span class="mon-bay-alert' + (capLv === 'crit' ? ' lv-crit' : '') +
             '" title="容量占用 ' + Math.round(pct) +
-            '%（超过 ' + (glv === 'crit' ? 95 : 85) + '% 阈值）">!</span>'
+            '%（超过 ' + (capLv === 'crit' ? 95 : 85) + '% 阈值）">!</span>'
           : '';
 
         var title = d.name + '（' + volLabel(d) + '） · ' +
@@ -319,8 +408,8 @@
             '<i class="mon-bay-led"></i>' +
           '</div>' +
           '<div class="mon-bay-body">' +
-            '<span class="mon-bay-gauge" data-l="' + (glv || '') + '">' +
-              gaugeSvg(cols, 16, gv, glv) +
+            '<span class="mon-bay-gauge">' +
+              gaugeSvg(cols, 16, gv) +
             '</span>' +
             '<span class="mon-bay-zz" aria-hidden="true">Zz</span>' +
             '<span class="mon-bay-info">' +
@@ -328,7 +417,8 @@
                 esc(tTxt) + '<small>℃</small></span>' +
               '<span class="mon-bay-name">' + esc(d.name) + '</span>' +
               '<span class="mon-bay-model">' + esc(vendorModel(d) || '未知型号') + '</span>' +
-              '<span class="mon-bay-cap' + (glv ? ' lv-' + glv : '') + '">' + esc(capTxt) + '</span>' +
+              '<span class="mon-bay-cap' + (capLv ? ' lv-' + capLv : '') + '"' +
+                (capLv ? ' style="color:' + rampInk(pct) + '"' : '') + '>' + esc(capTxt) + '</span>' +
               (ioTxt ? '<span class="mon-bay-io">' + esc(ioTxt) + '</span>' : '') +
             '</span>' +
           '</div>' +
