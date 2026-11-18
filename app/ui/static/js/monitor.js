@@ -391,8 +391,41 @@
      巡检历史抽屉
      巡检记录原先是一张独立的「硬盘巡检」卡片，占掉监控面板一整块位置，
      但它的信息密度低（时间 + 一句话结论），又和盘位卡片的「巡检于 …」重复。
-     现在改由存储标题栏的「🗂 巡检历史」按钮打开右抽屉查看。
+     现在改由存储标题栏的「巡检历史」按钮打开右抽屉查看。
      ========================================================================== */
+
+  /* --------------------------------------------------------------------------
+     页面滚动锁
+     抽屉是 position:fixed 的全屏遮罩，但**挡不住页面本身的滚动条** ——
+     抽屉内容长的时候抽屉自己有滚动条，页面也还有一个，
+     屏幕上就并排出现两条滚动条（用户实机反馈）。
+
+     做法：抽屉打开时给 <html> 加 .mon-scroll-lock，
+     CSS 里把它设为 overflow:hidden —— 页面不再滚动，
+     滚动条随之消失，只剩抽屉自己那一条。
+     ⚠️ 用 overflow:hidden 而不是 body{position:fixed}：
+        后者会让页面在关闭抽屉后跳回顶部，体验更差。
+     ⚠️ overflow:hidden 会让滚动条消失后内容横向挪动几像素，
+        所以用 scrollbar-gutter:stable 预留滚动条宽度，
+        避免抽屉弹出/收起时页面左右抖动。
+     -------------------------------------------------------------------------- */
+  var scrollLockCount = 0;
+
+  function lockPageScroll() {
+    scrollLockCount++;
+    if (scrollLockCount === 1) {
+      var de = document.documentElement;
+      if (de) de.classList.add('mon-scroll-lock');
+    }
+  }
+
+  function unlockPageScroll() {
+    scrollLockCount = Math.max(0, scrollLockCount - 1);
+    if (scrollLockCount === 0) {
+      var de = document.documentElement;
+      if (de) de.classList.remove('mon-scroll-lock');
+    }
+  }
 
   var scanLogOpen = false;
 
@@ -426,14 +459,23 @@
       '<b>' + (scan.running ? '巡检中…' : (lastTs ? (ago || '刚刚') : '未巡检')) + '</b>' +
       '</div></div>';
 
-    /* 本轮分级统计（后端 summary.counts） */
+    /* 本轮分级统计（后端 summary.counts）
+       ⚠️ 口径说明必须写在这里 —— 这套统计只反映**盘体健康**
+       （重映射扇区 / 待映射扇区 / 不可纠正错误 / 缺陷增长），
+       不含 UDMA CRC 错误等**链路类**告警。
+       所以「留意 0」不代表盘位 LED 全绿：
+       盘位 LED 是「巡检分级 + SMART 告警取更严重者」，
+       CRC 这类线缆/供电问题的告警只在 LED 上体现。
+       不写清楚就会出现「LED 橙着、巡检说留意 0」的自相矛盾。 */
     var cntHtml = '';
     if (counts.ok || counts.warn || counts.crit || counts.unknown) {
       cntHtml = '<span class="mon-badge ok">正常 ' + (counts.ok || 0) + '</span>' +
         '<span class="mon-badge warn">留意 ' + (counts.warn || 0) + '</span>' +
         '<span class="mon-badge crit">故障 ' + (counts.crit || 0) + '</span>' +
         '<span class="mon-badge unknown">未知 ' + (counts.unknown || 0) + '</span>';
-      html += '<div class="mon-dw-card"><div class="mon-chips">' + cntHtml + '</div></div>';
+      html += '<div class="mon-dw-card"><div class="mon-chips">' + cntHtml + '</div>' +
+        '<div class="mon-slog-text empty mon-slog-scope">统计口径：盘体健康（坏道、待映射扇区、不可纠正错误、缺陷增长）。' +
+        '线缆与供电类告警（如 UDMA CRC 错误）不计入本表，以盘位 LED 为准。</div></div>';
     }
 
     /* 巡检异常：置顶红色提示 */
@@ -483,6 +525,11 @@
       sub.textContent = n ? ('最近 ' + n + ' 条记录') : '暂无巡检记录';
     }
     ov.hidden = false;
+    /* 同样用「从关到开才加锁」的守卫 ——
+       抽屉开着时再点一次「巡检历史」按钮会重走这里，
+       不加守卫的话锁计数会只增不减，关闭时解不干净，
+       页面就一直处于锁滚动状态。 */
+    if (!scanLogOpen) lockPageScroll();
     scanLogOpen = true;
     requestAnimationFrame(function () {
       requestAnimationFrame(function () { ov.classList.add('on'); });
@@ -493,6 +540,7 @@
     var ov = monScanLogOverlay();
     if (!ov) return;
     ov.classList.remove('on');
+    if (scanLogOpen) unlockPageScroll();
     scanLogOpen = false;
     setTimeout(function () {
       if (!scanLogOpen) ov.hidden = true;
@@ -975,6 +1023,9 @@
     var ov = monDrawerOverlay();
     if (!ov) return;
     ov.hidden = false;
+    /* 只在「从关到开」时加锁 —— 下拉切换硬盘会重走 openDiskDrawer，
+       那里也会调 showDrawer，不能重复加锁。 */
+    if (!drawerOpen) lockPageScroll();
     drawerOpen = true;
     // 下一帧再加 .on，确保过渡动画能触发
     requestAnimationFrame(function () {
@@ -986,6 +1037,7 @@
     var ov = monDrawerOverlay();
     if (!ov) return;
     ov.classList.remove('on');
+    if (drawerOpen) unlockPageScroll();
     drawerOpen = false;
     drawerDev = null;
     // 等滑出动画结束再隐藏
@@ -1205,9 +1257,6 @@
           '<span><i class="led-key warn"></i>留意</span>' +
           '<span><i class="led-key crit"></i>故障</span>' +
           '<span><i class="led-key off"></i>休眠 / 未巡检</span>' +
-          '<span class="hint">盘位 LED = 硬盘健康与 SMART 告警状态</span>' +
-          /* 点阵色阶图例：绿 → 黄绿 → 橙 → 红，与容量占用率一一对应 */
-          '<span class="ramp-key"><i class="ramp-bar"></i>点阵与容量行颜色 = 空间占用（绿 → 红）</span>' +
           '<span class="scan-ago">' +
             (lastScanTs ? (ago ? '巡检于 ' + esc(ago) : '巡检中') : '尚未巡检') +
           '</span>' +

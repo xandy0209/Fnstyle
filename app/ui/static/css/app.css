@@ -132,6 +132,10 @@ html, body {
   font-size: 16px;
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
+  /* 始终为滚动条预留位置 —— 抽屉弹出时页面会临时锁滚动，
+     若不预留，锁的一瞬间页面内容会横向跳几像素（滚动条消失导致）。
+     stable = 无论是否出现滚动条都占着同样的宽度。 */
+  scrollbar-gutter: stable;
 }
 
 body {
@@ -226,6 +230,22 @@ body {
 }
 @media (prefers-reduced-motion: reduce) {
   .btn.icon-btn.spinning .upd-ico { animation: none; }
+}
+
+/* 文字按钮里的行内图标（v1.1.32：巡检历史按钮的向右箭头）
+   —— 用描边 SVG 而不是 emoji：emoji 的箭头在不同系统下字形不一，
+   且在深浅主题里颜色不受控。 */
+.btn .btn-ico {
+  width: 14px;
+  height: 14px;
+  display: inline-block;
+  vertical-align: -2px;
+  margin-right: .28rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 /* 顶栏右侧曾有一个「已连接」状态胶囊（.status / .dot），
@@ -1887,6 +1907,17 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
 }
 .mon-slog-text.empty { color: var(--text-muted); }
 
+/* 巡检统计的口径说明（v1.1.33）
+   —— 说明「留意 0」统计的是盘体健康，不含 UDMA CRC 这类链路告警，
+      避免与盘位 LED 的橙灯自相矛盾。 */
+.mon-slog-scope {
+  margin-top: .55rem;
+  padding-top: .55rem;
+  border-top: 1px dashed var(--border);
+  font-size: .75rem;
+  line-height: 1.55;
+}
+
 .mon-row {
   display: flex;
   align-items: center;
@@ -2420,18 +2451,8 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
   .mon-nas-foot .led-key.warn { animation: mon-led-breathe 1.9s ease-in-out infinite; }
   .mon-nas-foot .led-key.crit { animation: mon-led-breathe 1.05s ease-in-out infinite; }
 }
-/* 点阵色阶图例：一条绿→黄绿→橙→红的渐变条，
-   说明「点阵与容量行的颜色 = 空间占用率，越红越需要注意」。 */
-.mon-nas-foot .ramp-key { color: var(--text-muted); }
-.mon-nas-foot .ramp-bar {
-  width: 44px;
-  height: 7px;
-  border-radius: 4px;
-  background: linear-gradient(90deg,
-    var(--r-g) 0%, var(--r-g) 42.5%,
-    var(--r-y) 68%, var(--warning) 85%, var(--danger) 95%);
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .12);
-}
+/* 点阵色阶图例已移除（v1.1.32）—— 机箱脚注只留 LED 状态图例、
+   巡检时间与排序说明，冗长的口径说明文字不再占位。 */
 /* 机箱电源灯图例已移除（v1.1.25）——顶栏不再显示装饰性电源灯。 */
 .mon-nas-foot .scan-ago { margin-left: auto; color: var(--text-muted); }
 .mon-nas-foot .hint { color: var(--text-muted); }
@@ -2456,6 +2477,13 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
   padding: 0;
 }
 .mon-drawer-overlay[hidden] { display: none; }
+
+/* 抽屉打开时锁住页面滚动 —— 否则页面的滚动条和抽屉的滚动条并排出现。
+   配合 html 上的 scrollbar-gutter:stable，锁/解锁时页面不会横向抖动。 */
+html.mon-scroll-lock,
+html.mon-scroll-lock body {
+  overflow: hidden;
+}
 
 .mon-drawer {
   width: min(520px, 100vw);

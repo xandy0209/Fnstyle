@@ -69,6 +69,15 @@ els.monDrawerOverlay.dispatch = function (t, ev) {
 global.document = {
   readyState: 'complete',
   hidden: false,
+  /* 滚动锁需要 documentElement.classList（抽屉打开时给 html 加锁类） */
+  documentElement: {
+    classList: {
+      _s: {},
+      add: function (c) { this._s[c] = true; },
+      remove: function (c) { delete this._s[c]; },
+      contains: function (c) { return !!this._s[c]; },
+    },
+  },
   querySelector: function (sel) {
     if (sel.charAt(0) === '#') return els[sel.slice(1)] || null;
     return null;
@@ -268,6 +277,8 @@ const patched2 = patched.replace(
   '  window.__drawDrawerTimeAxis = drawDrawerTimeAxis;\n' +
   '  window.__setLastData = function (d) { lastData = d; };\n' +
   '  window.__openScanLogDrawer = openScanLogDrawer;\n' +
+  '  window.__closeScanLogDrawer = closeScanLogDrawer;\n' +
+  '  window.__closeDiskDrawer = closeDiskDrawer;\n' +
   '  window.__renderScanLogHtml = renderScanLogHtml;\n' +
   '  window.FnStyleMonitor = {'
 );
@@ -277,6 +288,15 @@ if (patched2 === patched) {
 }
 global.document = {
   readyState: 'complete', hidden: false,
+  /* 滚动锁需要 documentElement.classList */
+  documentElement: {
+    classList: {
+      _s: {},
+      add: function (c) { this._s[c] = true; },
+      remove: function (c) { delete this._s[c]; },
+      contains: function (c) { return !!this._s[c]; },
+    },
+  },
   querySelector: function (sel) { return sel.charAt(0) === '#' ? (els[sel.slice(1)] || null) : null; },
   querySelectorAll: function () { return []; },
   addEventListener: function () {},
@@ -307,6 +327,8 @@ const fmtHM = global.__fmtHM;
 const drawDrawerTimeAxis = global.__drawDrawerTimeAxis;
 const openScanLogDrawer = global.__openScanLogDrawer;
 const renderScanLogHtml = global.__renderScanLogHtml;
+const closeScanLogDrawerFn = global.__closeScanLogDrawer;
+const closeDiskDrawerFn = global.__closeDiskDrawer;
 if (typeof bayLedState !== 'function' || typeof smartAlertsText !== 'function') {
   console.error('❌ SMART 测试钩子未就绪');
   process.exit(1);
@@ -356,10 +378,6 @@ if (html) {
     ['LED 图例', 'led-key'],
     ['LED 图例-留意', 'led-key warn'],
     ['LED 图例-故障', 'led-key crit'],
-    // 色阶图例：点阵与容量行的颜色含义
-    ['色阶图例条', 'ramp-bar'],
-    ['色阶图例说明', '点阵与容量行颜色 = 空间占用'],
-    ['LED 语义说明', '盘位 LED = 硬盘健康与 SMART 告警状态'],
     ['LED 图例-休眠未巡检', '休眠 / 未巡检'],
     ['巡检时间', '巡检于'],
     ['盘位排序提示', '盘位按存储空间排列'],
@@ -408,6 +426,10 @@ if (html) {
     // SMART 5 项计数在硬盘详情抽屉里已完整呈现
     ['SMART 告警计数卡片已移除', 'SMART 告警计数'],
     ['硬盘巡检卡片已移除', '硬盘巡检'],
+    // v1.1.33：机箱脚注里的两行冗长口径说明已移除
+    ['色阶图例条已移除', 'ramp-bar'],
+    ['色阶图例说明已移除', '点阵与容量行颜色 = 空间占用'],
+    ['LED 语义说明已移除', '盘位 LED = 硬盘健康与 SMART 告警状态'],
   ];
   noChildren.forEach(([label, needle]) => {
     const ok = html.indexOf(needle) < 0;
@@ -1285,6 +1307,153 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
   if (!errOk) bad++;
 
   if (bad) { console.error('❌ v1.1.32 断言失败 ' + bad + ' 项'); process.exitCode = 1; }
+})();
+
+/* ---------- v1.1.33：滚动锁 + 口径说明 + 箭头图标 + 精简机箱脚注 ---------- */
+(function checkScrollLockAndScope() {
+  console.log('\n--- 滚动锁与口径说明（v1.1.33）---');
+  const src = fs.readFileSync(SRC, 'utf8');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'index.html'), 'utf8');
+  const css = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'css', 'app.css'), 'utf8');
+  let bad = 0;
+
+  /* --- 滚动锁 --- */
+  const lockRules = [
+    ['存在 lockPageScroll', /function lockPageScroll\s*\(/],
+    ['存在 unlockPageScroll', /function unlockPageScroll\s*\(/],
+    ['加锁时给 html 加 .mon-scroll-lock', /classList\.add\('mon-scroll-lock'\)/],
+    ['解锁时移除 .mon-scroll-lock', /classList\.remove\('mon-scroll-lock'\)/],
+    /* 计数器保护：下拉切换硬盘会重走 showDrawer，不能重复加锁 */
+    ['用计数器防止重复加锁', /scrollLockCount\+\+/],
+    ['解锁时计数不越界', /Math\.max\(0, scrollLockCount - 1\)/],
+    /* 两个抽屉都要锁，且都用「从关到开才加锁」的守卫 */
+    ['硬盘抽屉打开时加锁', /if \(!drawerOpen\) lockPageScroll\(\)/],
+    ['硬盘抽屉关闭时解锁', /if \(drawerOpen\) unlockPageScroll\(\)/],
+    ['巡检历史抽屉打开时加锁', /if \(!scanLogOpen\) lockPageScroll\(\)/],
+    ['巡检历史抽屉关闭时解锁', /if \(scanLogOpen\) unlockPageScroll\(\)/],
+  ];
+  lockRules.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* --- CSS --- */
+  const cssRules = [
+    ['滚动锁规则存在', /html\.mon-scroll-lock,\s*\nhtml\.mon-scroll-lock body \{\s*\n\s*overflow: hidden/.test(css)],
+    ['html 预留滚动条位置（防横向抖动）', /scrollbar-gutter: stable/.test(css)],
+    ['口径说明样式存在', /\.mon-slog-scope \{/],
+    ['口径说明有分隔线', /\.mon-slog-scope \{[^}]*border-top: 1px dashed/.test(css)],
+    ['行内按钮图标样式存在', /\.btn \.btn-ico \{/],
+    ['行内图标用描边（跟随 currentColor）', /\.btn \.btn-ico \{[^}]*stroke: currentColor/.test(css)],
+    /* 已删除的色阶图例 CSS 也不该留 */
+    ['色阶图例 CSS 已清理', !/\.mon-nas-foot \.ramp-bar \{/.test(css)],
+    ['色阶图例文字样式已清理', !/\.mon-nas-foot \.ramp-key \{/.test(css)],
+  ];
+  cssRules.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* --- 巡检历史按钮图标 --- */
+  const htmlRules = [
+    ['巡检历史按钮用 SVG 箭头', /id="btnMonScanLog"[\s\S]{0,220}?class="btn-ico"/],
+    ['箭头 path 为向右', /id="btnMonScanLog"[\s\S]{0,220}?d="M3 8h9M8\.5 4\.5L12 8l-3\.5 3\.5"/],
+    ['不再是 🗂 emoji', !/🗂 巡检历史/.test(html)],
+  ];
+  htmlRules.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* --- 机箱脚注精简 --- */
+  const footRules = [
+    ['LED 语义说明已移除', !/盘位 LED = 硬盘健康与 SMART 告警状态/.test(src)],
+    ['色阶图例说明已移除', !/点阵与容量行颜色 = 空间占用/.test(src)],
+    ['ramp-key 元素已移除', !/class="ramp-key"/.test(src)],
+    ['LED 状态图例保留', /led-key warn/.test(src)],
+    ['巡检时间提示保留', /巡检于 /.test(src)],
+    ['排序提示保留', /盘位按存储空间排列/.test(src)],
+  ];
+  footRules.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* --- A 方案：巡检抽屉的统计口径说明 --- */
+  const scopeRules = [
+    ['口径说明写明统计范围', /统计口径：盘体健康/.test(src)],
+    ['口径说明点明不含 CRC', /UDMA CRC 错误/.test(src)],
+    ['口径说明指向盘位 LED', /以盘位 LED 为准/.test(src)],
+  ];
+  scopeRules.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* --- 渲染内容：口径说明真的出现在抽屉里 --- */
+  setLastData({ storage: {
+    available: true,
+    scan: { last_ts: now, summary: { counts: { ok: 3, warn: 0, crit: 0, unknown: 0 } } },
+    scanLog: [],
+  } });
+  openScanLogDrawer();
+  const scopeOk = /统计口径：盘体健康/.test(els.monScanLogBody.innerHTML)
+    && /以盘位 LED 为准/.test(els.monScanLogBody.innerHTML);
+  console.log((scopeOk ? '  ✓ ' : '  ✗ ') + '抽屉内显示统计口径说明');
+  if (!scopeOk) bad++;
+
+  /* --- 滚动锁的行为级验证（不是只看源码）---
+     打开抽屉 → html 应带 .mon-scroll-lock；关闭 → 应摘掉。
+     特别注意：硬盘抽屉用「从关到开才加锁」的判断，
+     所以下拉切换硬盘（重走 showDrawer）不会把计数搞乱。 */
+  const de = global.document.documentElement;
+  const hasLock = () => de.classList.contains('mon-scroll-lock');
+
+  /* ⚠️ 前面的测试用例开过抽屉但没关（历史上就是这么写的），
+     滚动锁的计数因此有残留。这里先统一关一遍，
+     让下面的行为断言从「干净状态」开始。 */
+  closeScanLogDrawerFn();
+  closeDiskDrawerFn();
+
+  setLastData({ storage: FULL.storage });
+  openDiskDrawer('sda');
+  const lockOnOpen = hasLock();
+  console.log((lockOnOpen ? '  ✓ ' : '  ✗ ') + '打开硬盘抽屉后 html 带滚动锁类');
+  if (!lockOnOpen) bad++;
+
+  /* 模拟下拉切换：重走 openDiskDrawer，不应重复加锁（计数保护） */
+  openDiskDrawer('sdb');
+  const stillLocked = hasLock();
+  console.log((stillLocked ? '  ✓ ' : '  ✗ ') + '切换硬盘后滚动锁仍然有效');
+  if (!stillLocked) bad++;
+
+  closeDiskDrawerFn();
+  const lockOffClose = !hasLock();
+  console.log((lockOffClose ? '  ✓ ' : '  ✗ ') + '关闭硬盘抽屉后滚动锁已解除');
+  if (!lockOffClose) bad++;
+
+  /* 巡检历史抽屉同样要锁 */
+  openScanLogDrawer();
+  const logLocked = hasLock();
+  console.log((logLocked ? '  ✓ ' : '  ✗ ') + '打开巡检历史抽屉后 html 带滚动锁类');
+  if (!logLocked) bad++;
+  closeScanLogDrawerFn();
+  const logUnlocked = !hasLock();
+  console.log((logUnlocked ? '  ✓ ' : '  ✗ ') + '关闭巡检历史抽屉后滚动锁已解除');
+  if (!logUnlocked) bad++;
+
+  /* 重复打开同一个抽屉不能重复加锁 ——
+     否则锁计数只增不减，关闭时解不干净，页面会永久锁滚动。
+     这是实测发现的真 bug（巡检历史抽屉开着时再点一次按钮）。 */
+  openScanLogDrawer();
+  openScanLogDrawer();
+  openScanLogDrawer();
+  closeScanLogDrawerFn();
+  const noLeak = !hasLock();
+  console.log((noLeak ? '  ✓ ' : '  ✗ ') + '重复打开抽屉 3 次后关闭，滚动锁已完全解除');
+  if (!noLeak) bad++;
+
+  if (bad) { console.error('❌ v1.1.33 断言失败 ' + bad + ' 项'); process.exitCode = 1; }
 })();
 
 console.log(process.exitCode ? '\n❌ 测试未全部通过' : '\n🎉 全部测试通过');
