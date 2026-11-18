@@ -1022,6 +1022,42 @@ if (html) {
   if (bad) { console.error('❌ 趋势图断言失败 ' + bad + ' 项'); process.exitCode = 1; }
 })();
 
+/* ---------- v1.1.31：字号与文字对比度（不能被改回去） ---------- */
+(function checkTypography() {
+  console.log('\n--- 字号与文字对比度（v1.1.31）---');
+  const cssTxt3 = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'css', 'app.css'), 'utf8');
+  let bad = 0;
+  const rules = [
+    // 根字号：全站 rem 都基于它，是整体字号的总闸
+    ['根字号为 16px', /html, body \{[^}]*font-size: 16px/.test(cssTxt3)],
+    // 深色主题次要文字色
+    ['深色 --text-secondary 已提亮', /--text-secondary: #b8bfc8/.test(cssTxt3)],
+    ['深色 --text-muted 已提亮', /--text-muted:     #9099a3/.test(cssTxt3)],
+    // 浅色主题次要文字色（浅底上要更深）
+    ['浅色 --text-secondary 已压深', /--text-secondary: #4b5560/.test(cssTxt3)],
+    ['浅色 --text-muted 已压深', /--text-muted:     #6b7480/.test(cssTxt3)],
+    // 机箱内文字色
+    ['深色 --chassis-ink-2 已提亮', /--chassis-ink-2:  #9aa4b0/.test(cssTxt3)],
+    ['浅色 --chassis-ink-2 已压深', /--chassis-ink-2:  #5b6570/.test(cssTxt3)],
+    // 关键信息的极小字号兜底
+    ['盘位型号抬到 .75rem', /\.mon-bay-model \{[^}]*font-size: \.75rem/.test(cssTxt3)],
+    ['盘位容量抬到 .75rem', /\.mon-bay-cap \{[^}]*font: 500 \.75rem/.test(cssTxt3)],
+    ['盘位读写速率抬到 .75rem', /\.mon-bay-io \{[^}]*font: 500 \.75rem/.test(cssTxt3)],
+    ['盘位存储空间标签抬到 .75rem', /\.mon-bay-top \{[^}]*font: 500 \.75rem/.test(cssTxt3)],
+    ['状态徽章抬到 .78rem', /\.mon-badge \{[^}]*font-size: \.78rem/.test(cssTxt3)],
+    ['SMART 告警徽章抬到 .75rem', /\.mon-smart-flag \{[^}]*font-size: \.75rem/.test(cssTxt3)],
+    ['时间锚点抬到 .75rem', /\.mon-dw-timeaxis \{[^}]*font-size: \.75rem/.test(cssTxt3)],
+    ['存储池标签抬到 .78rem', /\.mon-pool-eyebrow \{[^}]*font: 500 \.78rem/.test(cssTxt3)],
+    // 不该再有 px 硬编码的小字号（会脱离 rem 体系）
+    ['无 11px 硬编码字号', !/font-size: 11px/.test(cssTxt3)],
+  ];
+  rules.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+  if (bad) { console.error('❌ 排版断言失败 ' + bad + ' 项'); process.exitCode = 1; }
+})();
+
 /* ---------- 源码级断言：容量单位进制不能被改回去 ---------- */
 (function checkDecimalUnits() {
   console.log('\n--- 容量单位进制（源码级）---');
