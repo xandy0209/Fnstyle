@@ -640,6 +640,25 @@ def _lsblk_json():
     return data.get("blockdevices", []) or []
 
 
+def _vol_of(mount_paths):
+    """从挂载点列表推断所属存储空间编号。
+
+    fnOS 的「存储空间 N」就挂在 /volN，所以直接取挂载点里的 /volN 的 N。
+    一个盘可能挂多个点（系统盘同时挂 / 与 /vol1），取编号最小的一个，
+    保证同一块盘在盘位卡片上的标签稳定。
+    没挂到任何存储池（纯系统盘 / 未挂载）返回 0。
+    """
+    best = 0
+    for mp in (mount_paths or []):
+        m = re.match(r"^/vol(\d+)(?:/|$)", str(mp))
+        if not m:
+            continue
+        n = int(m.group(1))
+        if best == 0 or n < best:
+            best = n
+    return best
+
+
 def collect_disks_detail(prev=None, with_states=True, health_prev=None):
     """按物理硬盘返回详情。
 
@@ -712,6 +731,9 @@ def collect_disks_detail(prev=None, with_states=True, health_prev=None):
             "percent": percent,
             "usedText": _mbf(used) if used else "—",
             "mounts": mount_paths,
+            # 所属存储空间编号：挂载点形如 /volN 的取 N（fnOS「存储空间 N」= /volN）。
+            # 没挂载到存储池（纯系统盘 / 未挂载）返回 0，前端标「未挂载」。
+            "vol": _vol_of(mount_paths),
             "state": state,
             "standby": state == "standby",
             "health": old.get("health", ""),
@@ -806,6 +828,7 @@ def _collect_disks_detail_sysfs(prev_by):
             "percent": old.get("percent", 0.0),
             "usedText": old.get("usedText", "—"),
             "mounts": old.get("mounts", []),
+            "vol": _vol_of(old.get("mounts", [])),
             "state": state,
             "standby": state == "standby",
             "health": old.get("health", ""),

@@ -92,9 +92,94 @@
     ['udma_crc', 'UDMA CRC 错误']
   ];
 
+  /* 分级文案（与后端 GRADE_LABEL 一致；fnmonitor 用「未巡检」，这里保持一致） */
+  var GRADE_TXT = { ok: '正常', warn: '留意', crit: '故障', unknown: '未巡检' };
+
   function gradeBadge(g) {
     var m = GRADE_BADGE[g] || GRADE_BADGE.unknown;
     return '<span class="mon-badge ' + m.cls + '">' + m.text + '</span>';
+  }
+
+  /* ---- 盘位卡片（参照 fnmonitor 的 NAS 前面板）---- */
+
+  /* 盘位标签：优先「存储空间 N」（fnOS 存储空间 N = /volN），没挂载则显式标出 */
+  function volOf(d) {
+    if (d && d.vol) return Number(d.vol) || 0;
+    var ms = (d && d.mounts) || [];
+    for (var i = 0; i < ms.length; i++) {
+      var m = /^\/vol(\d+)(?:\/|$)/.exec(String(ms[i]));
+      if (m) return Number(m[1]);
+    }
+    return 0;
+  }
+
+  function volLabel(d) {
+    var v = volOf(d);
+    return v ? '存储空间 vol' + v : '未挂载';
+  }
+
+  /* 盘位排序：按存储空间号升序，同一空间内按设备名；未挂载排最后 */
+  function byVol(a, b) {
+    var va = volOf(a), vb = volOf(b);
+    if (va !== vb) return (va || 999) - (vb || 999);
+    return String(a.name).localeCompare(String(b.name));
+  }
+
+  /* 厂商 + 型号（fnmonitor 同口径：厂商名已含在型号里时不重复） */
+  function vendorModel(d) {
+    var v = String((d && d.vendor) || '').trim();
+    var mo = String((d && d.model) || '').trim();
+    if (!v) return mo;
+    if (/^0x/i.test(v) || /^ata$/i.test(v)) return mo;
+    if (mo.toLowerCase().indexOf(v.toLowerCase()) === 0) return mo;
+    return v + ' ' + mo;
+  }
+
+  /* 介质类型：决定容量点阵仪表的列数（NVMe 4 列，其余 5 列） */
+  function diskKind(d) {
+    var nm = String((d && d.name) || '');
+    if (/^nvme/.test(nm)) return 'nvme';
+    var rpm = String((d && d.rpm) || '');
+    if (/solid state/i.test(rpm)) return 'ssd';
+    if (/rpm/i.test(rpm)) return 'hdd';
+    if (String((d && d.type) || '').toUpperCase() === 'SSD') return 'ssd';
+    if (String((d && d.type) || '').toUpperCase() === 'HDD') return 'hdd';
+    return 'disk';
+  }
+
+  /* 容量等级：<85 正常，>=85 留意，>=95 故障（与 fnmonitor 阈值一致） */
+  function capLevel(pct) {
+    var p = Number(pct);
+    if (!isFinite(p)) return '';
+    if (p >= 95) return 'crit';
+    if (p >= 85) return 'warn';
+    return '';
+  }
+
+  /* 巡检时间描述：「刚刚 / X 分钟前 / X 小时前 / X 天前」 */
+  function scanAgo(ts) {
+    if (!ts) return '';
+    var s = Math.max(0, Math.floor(Date.now() / 1000 - ts));
+    if (s < 90) return '刚刚';
+    if (s < 3600) return Math.round(s / 60) + ' 分钟前';
+    if (s < 86400) return Math.round(s / 3600) + ' 小时前';
+    return Math.round(s / 86400) + ' 天前';
+  }
+
+  /* 容量点阵仪表：cols 列 × rows 行的 SVG 圆点，自下而上按占用比例点亮。
+     点亮顺序与 fnmonitor 一致：从最底下一行开始，左→右逐行往上。
+     level ∈ '' | 'warn' | 'crit'，决定点亮点的颜色。 */
+  function gaugeSvg(cols, rows, frac, lv) {
+    var total = cols * rows;
+    var k = Math.round(Math.max(0, Math.min(1, frac || 0)) * total);
+    var out = '';
+    for (var i = 0; i < total; i++) {
+      var on = i < k;
+      out += '<circle class="' + (on ? 'on' : '') + '" cx="' + ((i % cols) + 0.5) +
+        '" cy="' + (rows - Math.floor(i / cols) - 0.5) + '" r="0.34"></circle>';
+    }
+    return '<svg viewBox="0 0 ' + cols + ' ' + rows + '" preserveAspectRatio="xMidYMid meet"' +
+      ' aria-hidden="true">' + out + '</svg>';
   }
 
   function smartFlagsHtml(d) {
@@ -108,13 +193,6 @@
         esc(k[1]) + ' <b>' + esc(txt) + '</b></span>';
     });
     return out;
-  }
-
-  function diskIoHtml(d) {
-    var io = (d._io) || null;
-    if (!io) return '<span class="faint">—</span>';
-    return '<span class="mono">↓ ' + esc(io.readText || '—') + '</span> ' +
-      '<span class="mono">↑ ' + esc(io.writeText || '—') + '</span>';
   }
 
   function renderStorage(st) {
@@ -136,82 +214,162 @@
     var sum = st.summary || {};
     var html = '';
 
-    /* --- 存储总览 --- */
+    /* --- 存储池使用率总览（参照 fnmonitor 的 .card.pool）---
+       左：使用率大数字；中：进度条 + 图例（已用 / 总容量 / 池数）；
+       右：可用空间大数字。 */
     var gradeCounts = sum.grades || {};
     // summary 由后端聚合；缺失时直接数数组兜底，避免显示成「0 个存储池」
     var poolN = (sum.poolCount !== undefined && sum.poolCount !== null)
       ? sum.poolCount : (st.volumes || []).length;
     var diskN = (sum.diskCount !== undefined && sum.diskCount !== null)
       ? sum.diskCount : (st.disks || []).length;
-    var overviewBits = [];
-    if (poolN) overviewBits.push(poolN + ' 个存储池');
-    if (diskN) overviewBits.push(diskN + ' 块硬盘');
-    if (sum.sleepingCount) overviewBits.push(sum.sleepingCount + ' 块休眠');
-    if (gradeCounts.warn) overviewBits.push(gradeCounts.warn + ' 块需留意');
-    if (gradeCounts.crit) overviewBits.push(gradeCounts.crit + ' 块故障');
-    if (overviewBits.length) {
-      var ovCls = gradeCounts.crit ? 'crit' : (gradeCounts.warn ? 'warn' : 'ok');
-      // 容量合计：优先用后端 summary，缺失时从存储池累加
-      var totText = sum.totalText, usedText = sum.usedText, freeText = sum.freeText;
-      if (!totText) {
-        var tSum = 0, uSum = 0, fSum = 0;
-        (st.volumes || []).forEach(function (v) {
-          tSum += v.total || 0; uSum += v.used || 0; fSum += v.free || 0;
-        });
-        if (tSum) {
-          totText = fmtBytes(tSum); usedText = fmtBytes(uSum); freeText = fmtBytes(fSum);
-        }
+
+    // 容量合计：优先用后端 summary，缺失时从存储池累加
+    var totText = sum.totalText, usedText = sum.usedText, freeText = sum.freeText;
+    var totBytes = sum.total, usedBytes = sum.used, freeBytes = sum.free;
+    if (!totText) {
+      var tSum = 0, uSum = 0, fSum = 0;
+      (st.volumes || []).forEach(function (v) {
+        tSum += v.total || 0; uSum += v.used || 0; fSum += v.free || 0;
+      });
+      if (tSum) {
+        totBytes = tSum; usedBytes = uSum; freeBytes = fSum;
+        totText = fmtBytes(tSum); usedText = fmtBytes(uSum); freeText = fmtBytes(fSum);
       }
-      html += item('存储总览',
-        '<span class="mon-lv-' + ovCls + '">' + esc(overviewBits.join(' · ')) + '</span>',
-        (totText && totText !== '—')
-          ? '<div class="mon-item-sub">总容量 <span>' + esc(totText) + '</span>，已用 ' +
-            '<span>' + esc(usedText) + '</span>，剩余 <span>' + esc(freeText) + '</span></div>'
-          : '', 'mon-item-wide');
     }
+    var poolPct = (sum.percent !== undefined && sum.percent !== null)
+      ? Number(sum.percent) : (totBytes ? Math.round(usedBytes / totBytes * 100) : 0);
+    var poolLv = capLevel(poolPct);
 
-    /* --- 存储池容量 --- */
-    (st.volumes || []).forEach(function (v) {
-      html += item(
-        '存储池 ' + v.name,
-        v.percent + '%',
-        bar(v.percent) +
-        '<div class="mon-item-sub">已用 <span>' + esc(v.usedText) + '</span> / 共 ' +
-        esc(v.totalText) + '，剩余 <span>' + esc(v.freeText) + '</span></div>'
-      );
-    });
+    html += '<div class="mon-pool">' +
+      '<div>' +
+        '<div class="mon-pool-eyebrow">存储池使用率</div>' +
+        '<div class="mon-pool-num' + (poolLv ? ' mon-lv-' + poolLv : '') + '">' +
+          esc(poolPct) + '<span class="unit">%</span></div>' +
+      '</div>' +
+      '<div>' +
+        '<div class="mon-pool-bar"><i class="' + (poolLv ? 'lv-' + poolLv : '') +
+          '" style="width:' + Math.max(0, Math.min(100, poolPct)) + '%"></i></div>' +
+        '<div class="mon-pool-legend">' +
+          '<span>已用 <b>' + esc(usedText || '—') + '</b></span>' +
+          '<span>总容量 <b>' + esc(totText || '—') + '</b></span>' +
+          (poolN ? '<span>' + esc(poolN) + ' 个存储池</span>' : '') +
+          (diskN ? '<span>' + esc(diskN) + ' 块硬盘</span>' : '') +
+          (sum.sleepingCount ? '<span>' + esc(sum.sleepingCount) + ' 块休眠</span>' : '') +
+          (gradeCounts.warn ? '<span class="mon-lv-warn">' + esc(gradeCounts.warn) + ' 块需留意</span>' : '') +
+          (gradeCounts.crit ? '<span class="mon-lv-crit">' + esc(gradeCounts.crit) + ' 块故障</span>' : '') +
+        '</div>' +
+      '</div>' +
+      '<div class="mon-pool-free">' +
+        '<div class="mon-pool-eyebrow">可用空间</div>' +
+        '<div class="mon-pool-num sm">' + esc(freeText || '—') + '</div>' +
+      '</div>' +
+    '</div>';
 
-    /* --- 物理磁盘（SMART + 分级 + IO） --- */
+    /* --- NAS 前面板：每块物理盘一个盘位卡片 --- */
     if (st.disks && st.disks.length) {
-      var rows = st.disks.map(function (d) {
-        var t = d.temp;
-        var tHtml = (t === null || t === undefined)
-          ? '—'
-          : '<span class="mon-temp"><span class="mon-temp-dot lv-' + tempLevel(t) +
-            '"></span>' + t + '°C</span>';
-        var standby = d.standby
-          ? '<span class="mon-badge unknown">休眠</span>' : '';
-        var proto = d.proto ? '<span class="mon-badge unknown">' + esc(d.proto) + '</span>' : '';
-        return '<tr>' +
-          '<td class="mono">' + esc(d.name) + (standby ? ' ' + standby : '') + '</td>' +
-          '<td>' + esc(d.model || '') + (proto ? ' ' + proto : '') + '</td>' +
-          '<td>' + esc(d.type || '—') + '</td>' +
-          '<td class="num">' + esc(d.sizeText || '—') + '</td>' +
-          '<td class="num">' + tHtml + '</td>' +
-          '<td class="num">' + esc(d.health || '—') + '</td>' +
-          '<td class="num">' + gradeBadge(d.grade) + '</td>' +
-          '<td class="num">' + diskIoHtml(d) + '</td>' +
-        '</tr>';
-      }).join('');
-      html += item('物理磁盘', st.disks.length + ' 块',
-        '<div class="mon-table-wrap"><table class="mon-table"><thead><tr>' +
-        '<th>设备</th><th>型号</th><th>类型</th><th class="num">容量</th>' +
-        '<th class="num">温度</th><th class="num">SMART</th><th class="num">分级</th>' +
-        '<th class="num">实时读写</th>' +
-        '</tr></thead><tbody>' + rows + '</tbody></table></div>',
-        'mon-item-wide');
+      var scan = st.scan || {};
+      var lastScanTs = scan.last_ts || 0;
+      var ago = scanAgo(lastScanTs);
 
-      /* SMART 明细（每盘 5 项告警计数） */
+      var bays = st.disks.slice().sort(byVol).map(function (d) {
+        var kind = diskKind(d);
+        var lv = d.standby ? 'standby' : (d.grade || 'unknown');
+        var hasCap = Number(d.total) > 0;
+        var pct = Number(d.percent) || 0;
+        var gv = hasCap ? pct / 100 : 0;
+        var glv = lv === 'crit' ? 'crit' : (lv === 'warn' ? 'warn' : capLevel(pct));
+        var cols = (kind === 'nvme') ? 4 : 5;
+
+        var t = d.temp;
+        var tTxt = (d.standby || t === null || t === undefined || t === '') ? '--' : t;
+        var tLv = (d.standby || t === null || t === undefined) ? '' : tempLevel(t);
+
+        // 容量行：已挂载显示占用率 + 已用/总量；未挂载显示裸容量
+        var capTxt = hasCap
+          ? Math.round(pct) + '% · ' + (d.usedText || fmtBytes(d.used || 0)) +
+            ' / ' + (d.totalText || fmtBytes(d.total || 0))
+          : (d.sizeText || '—') + ' · 未挂载';
+
+        // 实时 IO：整合原「物理磁盘」表里的读写列
+        var io = d._io;
+        var ioTxt = io
+          ? '↓' + (io.readText || '—') + ' ↑' + (io.writeText || '—')
+          : '';
+
+        // 容量告警：仪表会变色，但 LED 仍反映健康状态（两者独立，fnmonitor 同语义）。
+        // 这里额外挂一个容量告警角标，避免「盘满」被误读成「盘坏了」。
+        var capWarn = (glv === 'warn' || glv === 'crit')
+          ? '<span class="mon-bay-alert' + (glv === 'crit' ? ' lv-crit' : '') +
+            '" title="容量占用 ' + Math.round(pct) +
+            '%（超过 ' + (glv === 'crit' ? 95 : 85) + '% 阈值）">!</span>'
+          : '';
+
+        var title = d.name + '（' + volLabel(d) + '） · ' +
+          (GRADE_TXT[d.grade] || '未巡检') +
+          (d.detail ? '：' + d.detail : '') +
+          (hasCap ? ' · 已用 ' + Math.round(pct) + '%' : '') +
+          (ago ? '（巡检于 ' + ago + '）' : '');
+
+        return '<div class="mon-bay" data-st="' + esc(lv) + '" data-kind="' + esc(kind) +
+          '" title="' + esc(title) + '">' +
+          '<div class="mon-bay-top">' +
+            '<span>' + esc(volLabel(d)) + '</span>' +
+            capWarn +
+            '<i class="mon-bay-led"></i>' +
+          '</div>' +
+          '<div class="mon-bay-body">' +
+            '<span class="mon-bay-gauge" data-l="' + (glv || '') + '">' +
+              gaugeSvg(cols, 16, gv, glv) +
+            '</span>' +
+            '<span class="mon-bay-zz" aria-hidden="true">Zz</span>' +
+            '<span class="mon-bay-info">' +
+              '<span class="mon-bay-temp' + (tLv ? ' lv-' + tLv : '') + '">' +
+                esc(tTxt) + '<small>℃</small></span>' +
+              '<span class="mon-bay-name">' + esc(d.name) + '</span>' +
+              '<span class="mon-bay-model">' + esc(vendorModel(d) || '未知型号') + '</span>' +
+              '<span class="mon-bay-cap' + (glv ? ' lv-' + glv : '') + '">' + esc(capTxt) + '</span>' +
+              (ioTxt ? '<span class="mon-bay-io">' + esc(ioTxt) + '</span>' : '') +
+            '</span>' +
+          '</div>' +
+          '<div class="mon-bay-grip"></div>' +
+        '</div>';
+      }).join('');
+
+      var sys = st._system || null;
+      var chName = '', chModel = 'NAS';
+      if (sys) {
+        chName = sys.hostname || '';
+        // productName 可能是 DMI 占位串（后端已过滤），这里再兜一层
+        chModel = (sys.productName || sys.boardName || 'NAS').slice(0, 24) || 'NAS';
+      }
+
+      html += '<div class="mon-nas">' +
+        '<div class="mon-chassis">' +
+          '<div class="mon-ch-top">' +
+            '<span class="pwr" title="电源"><i></i></span>' +
+            '<span>' + esc(chName) + '</span>' +
+            '<span class="vent"></span>' +
+            '<span>' + esc(chModel) + ' · ' + esc(st.disks.length) + ' 盘</span>' +
+          '</div>' +
+          '<div class="mon-bays" style="--bay-cols:' + Math.min(Math.max(st.disks.length, 1), 4) + '">' +
+            bays +
+          '</div>' +
+        '</div>' +
+        '<div class="mon-nas-foot">' +
+          '<span><i class="led-key"></i>正常</span>' +
+          '<span><i class="led-key warn"></i>留意</span>' +
+          '<span><i class="led-key crit"></i>故障</span>' +
+          '<span><i class="led-key off"></i>休眠 / 未巡检</span>' +
+          '<span class="hint">LED 为硬盘健康状态 · 容量超 85% 标黄、95% 标红</span>' +
+          '<span class="scan-ago">' +
+            (lastScanTs ? (ago ? '巡检于 ' + esc(ago) : '巡检中') : '尚未巡检') +
+          '</span>' +
+          '<span class="hint">盘位按存储空间排列</span>' +
+        '</div>' +
+      '</div>';
+
+      /* SMART 明细（每盘 5 项告警计数）—— 盘位卡片放不下的精细数据留在这张表里 */
       var smartRows = st.disks.map(function (d) {
         return '<tr>' +
           '<td class="mono">' + esc(d.name) + '</td>' +
@@ -525,6 +683,10 @@
     if (d.warming) {
       setStatus('', d.message || '监控数据采集中，请稍候…');
       return;
+    }
+    // system（主机名 / 型号）挂在顶层，转给存储板块渲染机箱顶栏
+    if (d.storage && typeof d.storage === 'object') {
+      d.storage._system = d.system || null;
     }
     renderStorage(d.storage);
     renderCore(d);

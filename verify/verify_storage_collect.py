@@ -26,6 +26,11 @@ check("_nz 空值→None", sc._nz(None) is None and sc._nz("") is None and sc._n
 check("_mbf 格式化", sc._mbf(500 * GIB).endswith("GB"), sc._mbf(500 * GIB))
 check("_pct 口径", sc._pct(50, 100) == 50)
 check("_pct 零分母", sc._pct(1, 0) == 0)
+check("_vol_of 取存储空间号", sc._vol_of(["/vol2"]) == 2)
+check("_vol_of 多挂载取最小", sc._vol_of(["/vol3", "/vol1"]) == 1)
+check("_vol_of 系统盘返回 0", sc._vol_of(["/", "/boot/efi"]) == 0)
+check("_vol_of 空列表返回 0", sc._vol_of([]) == 0)
+check("_vol_of 忽略非存储池路径", sc._vol_of(["/home/x", "/vol5/sub"]) == 5)
 
 print()
 print("=" * 60)

@@ -757,6 +757,7 @@ class MonitorCollector(object):
         data = {
             "cpu": cpu, "mem": mem, "gpu": gpu,
             "temp": temp, "storage": storage, "power": power,
+            "system": collect_system(),
             "uptime": _uptime_text(),
             "ts": int(time.time()),
             "interval": self.interval,
@@ -764,6 +765,72 @@ class MonitorCollector(object):
         with self._lock:
             self._cache = data
         return data
+
+
+def collect_system():
+    """主机与硬件标识（供存储板块的 NAS 机箱顶栏使用）。
+
+    取 /etc/hostname、/sys/devices/virtual/dmi/id/*（DMI），
+    DMI 读不到就退到 /proc/cpuinfo 的 model 与主板 device-tree 的 model。
+
+    ⚠️ DMI 的 product_name 经常是占位串（如 "To Be Filled By O.E.M."、
+    "Default string"、"System Product Name"），那不是真实型号，
+    直接显示在机箱顶栏会误导用户 —— 这里识别并丢弃。
+    """
+    out = {"hostname": "", "productName": "", "boardName": "", "available": False}
+    hn = read_text("/etc/hostname", 128).strip().split("\n")[0].strip()
+    if hn:
+        out["hostname"] = hn
+    dmi = "/sys/devices/virtual/dmi/id"
+    out["productName"] = read_text(os.path.join(dmi, "product_name"), 128).strip()
+    out["boardName"] = read_text(os.path.join(dmi, "board_name"), 128).strip()
+    if not out["productName"]:
+        out["productName"] = read_text(os.path.join(dmi, "product_version"), 128).strip()
+    if not out["productName"]:
+        # ARM 平台（如飞牛 ARM 机型）没有 DMI，退到 device-tree
+        out["productName"] = read_text("/proc/device-tree/model", 128).strip()
+        # device-tree 的 model 常带 \0 结尾
+        out["productName"] = out["productName"].replace("\x00", "").strip()
+    if not out["productName"] and not out["boardName"]:
+        m = re.search(r"^model name\s*:\s*(.+)$", read_text("/proc/cpuinfo", 8192), re.M)
+        if m:
+            out["productName"] = m.group(1).strip()
+    # 丢弃 DMI 占位串：它们不是真实型号，显示出来只会误导
+    for k in ("productName", "boardName"):
+        if _is_dmi_placeholder(out.get(k)):
+            out[k] = ""
+    # productName 丢了再尝试用板名兜底
+    if not out["productName"] and out["boardName"]:
+        out["productName"] = out["boardName"]
+    out["available"] = bool(out["hostname"] or out["productName"] or out["boardName"])
+    return out
+
+
+# DMI 占位串：这些是主板厂商没填型号时的默认值，不是真实信息
+_DMI_PLACEHOLDERS = (
+    "to be filled by o.e.m.",
+    "default string",
+    "system product name",
+    "system version",
+    "not specified",
+    "unknown",
+    "none",
+    "n/a",
+    "to be filled",
+    "oem",
+    "o.e.m.",
+)
+
+
+def _is_dmi_placeholder(s):
+    """判断一个 DMI 字段是否是厂商占位串（不是真实型号）。"""
+    t = str(s or "").strip().lower()
+    if not t:
+        return True
+    for p in _DMI_PLACEHOLDERS:
+        if t == p or t.startswith(p + " ") or t.startswith(p + " by"):
+            return True
+    return False
 
 
 def _uptime_text():

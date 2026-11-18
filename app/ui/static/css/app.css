@@ -30,6 +30,22 @@
   --radius-sm: 6px;
   --gap:       1rem;
   --shadow:    0 4px 20px rgba(0, 0, 0, .35);
+
+  /* ---- 存储：NAS 机箱与盘位卡（呈现方式参照 fnmonitor）----
+     机箱是「嵌进去」的暗色块，托盘比机箱略亮，形成层次。
+     所有半透明层都带蓝灰色相，避免换底色后发灰发脏。 */
+  --chassis:        #10151d;
+  --chassis-ink:    #e6edf3;
+  --chassis-ink-2:  #78828f;
+  --tray:           #1a2029;
+  --tray-hi:        #21262d;
+  --tray-off:       #141920;
+  --tray-dot:       #28303c;
+  --led-off:        #2b3440;
+  --vent:           #232b36;
+  --grip:           #2b3440;
+  --chassis-shadow: inset 0 1px 0 rgba(150, 180, 220, .06), inset 0 -1px 0 rgba(0, 0, 0, .55);
+  --tray-shadow:    inset 0 0 0 1px rgba(150, 180, 220, .06);
 }
 
 @media (prefers-color-scheme: light) {
@@ -49,6 +65,20 @@
 
     --accent-soft: rgba(59, 130, 246, .1);
     --shadow:    0 4px 20px rgba(31, 35, 40, .08);
+
+    /* 浅色主题下的机箱：机身浅灰、托盘略亮，形成「机身内嵌」的层次 */
+    --chassis:        #eceef1;
+    --chassis-ink:    #1f2328;
+    --chassis-ink-2:  #6b7580;
+    --tray:           #f7f8fa;
+    --tray-hi:        #ffffff;
+    --tray-off:       #e2e5e9;
+    --tray-dot:       #d7dbe0;
+    --led-off:        #c9ced5;
+    --vent:           #d3d7dc;
+    --grip:           #d3d7dc;
+    --chassis-shadow: inset 0 1px 0 rgba(255, 255, 255, .85), inset 0 -1px 0 rgba(0, 0, 0, .06);
+    --tray-shadow:    0 1px 2px rgba(31, 35, 40, .06), inset 0 0 0 1px rgba(31, 35, 40, .04);
   }
 }
 
@@ -1909,6 +1939,354 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
   font-size: .84rem;
   border: 1px dashed var(--border);
   border-radius: var(--radius-sm);
+}
+
+/* ==========================================================================
+   存储：NAS 机箱 + 盘位卡片
+   呈现方式参照 fnmonitor（MisiteQ/fnmonitor）的「02 STORAGE」版块：
+   存储池使用率大数字 + 进度条 + 图例，之下是 NAS 前面板式的盘位卡片，
+   每块物理盘一个托盘，含健康 LED、容量点阵仪表、温度、型号与实时 IO。
+   ========================================================================== */
+
+/* ---- 存储池总览卡 ---- */
+.mon-pool {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 1.1rem 1.25rem;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.mon-pool-eyebrow {
+  font: 500 .72rem/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.mon-pool-num {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: .18rem;
+  margin-top: .55rem;
+  font-size: 2.3rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -.02em;
+  font-variant-numeric: tabular-nums;
+}
+.mon-pool-num .unit {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: -.1rem;
+}
+.mon-pool-num.sm { font-size: 1.5rem; }
+.mon-pool-bar {
+  height: 10px;
+  border-radius: 5px;
+  background: var(--bg-hover);
+  overflow: hidden;
+}
+.mon-pool-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 5px;
+  background: var(--accent);
+  transition: width .35s ease, background-color .35s ease;
+}
+.mon-pool-bar > i.lv-warn { background: var(--warning); }
+.mon-pool-bar > i.lv-high { background: var(--danger); }
+.mon-pool-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .35rem 1.1rem;
+  margin-top: .6rem;
+  font-size: .78rem;
+  color: var(--text-secondary);
+}
+.mon-pool-legend b {
+  color: var(--text-primary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.mon-pool-free { text-align: right; }
+
+/* ---- NAS 机箱 ---- */
+.mon-nas {
+  grid-column: 1 / -1;
+  padding: .9rem .9rem 1rem;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.mon-chassis {
+  background: var(--chassis);
+  color: var(--chassis-ink);
+  border-radius: 14px;
+  padding: .8rem .9rem .9rem;
+  display: flex;
+  flex-direction: column;
+  gap: .65rem;
+  box-shadow: var(--chassis-shadow);
+}
+.mon-ch-top {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  font: 500 .68rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: .12em;
+  color: var(--chassis-ink-2);
+  text-transform: uppercase;
+  padding: 0 .15rem;
+}
+.mon-ch-top .pwr {
+  width: 15px; height: 15px;
+  border-radius: 50%;
+  border: 1.5px solid var(--vent);
+  display: grid; place-items: center;
+  flex: none;
+}
+.mon-ch-top .pwr i {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--success);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--success) 70%, transparent);
+}
+.mon-ch-top .vent {
+  flex: 1;
+  height: 7px;
+  background: radial-gradient(var(--vent) 1px, transparent 1.4px) 0 0 / 6px 4px;
+}
+.mon-bays {
+  display: grid;
+  /* 用 auto-fill + minmax：轨道数只由容器宽度决定（150px 一格），
+     不会像 auto-fit 那样在 getComputedStyle 里留下 0px 折叠轨道。
+     盘位少时用 JS 设置 --bay-cols 限制实际列数，让它们平分整行。 */
+  grid-template-columns: repeat(var(--bay-cols, 4), minmax(0, 1fr));
+  gap: .5rem;
+}
+.mon-bays-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: .5rem;
+  padding: 1.6rem 1rem;
+  color: var(--chassis-ink-2);
+  font-size: .8rem;
+  border: 1px dashed var(--vent);
+  border-radius: 10px;
+}
+
+/* ---- 单个盘位（托盘）---- */
+.mon-bay {
+  position: relative;
+  border: 0;
+  font: inherit;
+  text-align: left;
+  cursor: default;
+  border-radius: 10px;
+  background: var(--tray);
+  color: var(--chassis-ink);
+  padding: .6rem .65rem;
+  display: flex;
+  flex-direction: column;
+  gap: .55rem;
+  min-height: 168px;
+  min-width: 0;
+  box-shadow: var(--tray-shadow);
+  transition: background-color .2s ease;
+}
+.mon-bay:hover { background: var(--tray-hi); }
+.mon-bay-top {
+  display: flex;
+  align-items: center;
+  gap: .35rem;
+  font: 500 .68rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--chassis-ink-2);
+  letter-spacing: .04em;
+}
+.mon-bay-top > span:first-child {
+  margin-right: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mon-bay-led {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--led-off);
+  flex: none;
+  transition: background-color .2s ease, box-shadow .2s ease;
+}
+.mon-bay[data-st="ok"] .mon-bay-led {
+  background: var(--success);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--success) 55%, transparent);
+}
+.mon-bay[data-st="warn"] .mon-bay-led {
+  background: var(--warning);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--warning) 45%, transparent);
+}
+.mon-bay[data-st="crit"] .mon-bay-led {
+  background: var(--danger);
+  box-shadow: 0 0 7px var(--danger);
+}
+.mon-bay[data-st="unknown"] .mon-bay-led,
+.mon-bay[data-st="standby"] .mon-bay-led { background: var(--led-off); box-shadow: none; }
+
+.mon-bay-body {
+  position: relative;
+  flex: 1;
+  display: flex;
+  gap: .6rem;
+  min-height: 0;
+}
+.mon-bay-gauge {
+  width: 34px;
+  flex: none;
+  /* 点阵是 5 列 × 16 行的竖条。容器锁死宽高比，
+     否则被 flex 拉成 34×118 的细长条，圆点变成椭圆。
+     align-self:flex-end 让它贴底（与 fnmonitor 的底部对齐一致）。 */
+  align-self: flex-end;
+  aspect-ratio: 5 / 16;
+  height: auto;
+  max-height: 100%;
+}
+.mon-bay-gauge svg { width: 100%; height: 100%; display: block; }
+/* NVMe 用 4 列点阵，比例随之变化 */
+.mon-bay[data-kind="nvme"] .mon-bay-gauge { width: 28px; aspect-ratio: 4 / 16; }
+.mon-bay-gauge circle { fill: var(--tray-dot); transition: fill .4s ease; }
+.mon-bay-gauge circle.on { fill: var(--accent); }
+.mon-bay-gauge[data-l="warn"] circle.on { fill: var(--warning); }
+.mon-bay-gauge[data-l="crit"] circle.on { fill: var(--danger); }
+
+.mon-bay-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: .15rem;
+}
+.mon-bay-temp {
+  font: 600 1.32rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: -.02em;
+  font-variant-numeric: tabular-nums;
+}
+.mon-bay-temp small {
+  font-size: .68rem;
+  color: var(--chassis-ink-2);
+  margin-left: 1px;
+}
+.mon-bay-temp.lv-warn { color: var(--warning); }
+.mon-bay-temp.lv-high { color: var(--danger); }
+.mon-bay-name {
+  font: 600 .8rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  margin-top: .35rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mon-bay-model {
+  font-size: .7rem;
+  color: var(--chassis-ink-2);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  word-break: break-word;
+}
+.mon-bay-cap {
+  font: 500 .68rem/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--chassis-ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+/* 容量告警：仪表已变色，这里再给容量行上色 + 顶栏角标，
+   避免「盘满」被误读成「盘坏了」（LED 只反映健康状态）。 */
+.mon-bay-cap.lv-warn { color: var(--warning); }
+.mon-bay-cap.lv-crit { color: var(--danger); }
+.mon-bay-alert {
+  width: 13px; height: 13px;
+  border-radius: 50%;
+  display: inline-grid;
+  place-items: center;
+  font: 700 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--chassis-ink);
+  background: var(--warning);
+  flex: none;
+}
+.mon-bay-alert.lv-crit { background: var(--danger); }
+.mon-bay-io {
+  font: 500 .66rem/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--chassis-ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 休眠标记：默认隐藏，只有 data-st="standby" 的盘位才显示 */
+.mon-bay-zz { display: none; }
+.mon-bay-grip {
+  height: 8px;
+  border-radius: 4px;
+  background: repeating-linear-gradient(90deg, var(--grip) 0 2px, transparent 2px 5px);
+}
+.mon-bay[data-st="standby"] { background: var(--tray-off); }
+.mon-bay[data-st="standby"] .mon-bay-gauge { visibility: hidden; }
+.mon-bay[data-st="standby"] .mon-bay-temp,
+.mon-bay[data-st="standby"] .mon-bay-name { color: var(--chassis-ink-2); }
+.mon-bay[data-st="standby"] .mon-bay-zz {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 34px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: .3rem;
+  font-size: .65rem;
+  color: var(--chassis-ink-2);
+}
+.mon-bay[data-st="unknown"] .mon-bay-cap { opacity: .75; }
+
+/* ---- 机箱底部图例 ---- */
+.mon-nas-foot {
+  display: flex;
+  align-items: center;
+  gap: 1.1rem;
+  flex-wrap: wrap;
+  margin-top: .85rem;
+  padding: 0 .35rem;
+  font-size: .76rem;
+  color: var(--text-secondary);
+}
+.mon-nas-foot span { display: inline-flex; align-items: center; gap: .35rem; }
+.mon-nas-foot .led-key {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--success);
+  box-shadow: 0 0 5px color-mix(in srgb, var(--success) 45%, transparent);
+}
+.mon-nas-foot .led-key.warn { background: var(--warning); box-shadow: none; }
+.mon-nas-foot .led-key.crit { background: var(--danger); box-shadow: none; }
+.mon-nas-foot .led-key.off { background: var(--led-off); box-shadow: none; }
+.mon-nas-foot .scan-ago { margin-left: auto; color: var(--text-muted); }
+.mon-nas-foot .hint { color: var(--text-muted); }
+/* 末尾的提示不再抢 margin-left:auto（前面已有 scan-ago 顶到右边） */
+.mon-nas-foot .hint:last-child { margin-left: 0; }
+
+/* ---- 窄屏 ---- */
+@media (max-width: 900px) {
+  .mon-pool { grid-template-columns: 1fr; gap: .9rem; }
+  .mon-pool-free { text-align: left; }
+  .mon-nas-foot .scan-ago,
+  .mon-nas-foot .hint { margin-left: 0; }
+  /* 窄屏固定列数会把盘位挤扁，改为按容器宽度自动换行 */
+  .mon-bays { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
 }
 
 @media (max-width: 900px) {
