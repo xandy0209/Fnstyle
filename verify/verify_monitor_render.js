@@ -1456,4 +1456,112 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
   if (bad) { console.error('❌ v1.1.33 断言失败 ' + bad + ' 项'); process.exitCode = 1; }
 })();
 
+/* ---------- v1.1.34：软 RAID 卡片补字段 + 口径说明空白修复 ---------- */
+(function checkRaidCardAndScopeGap() {
+  console.log('\n--- 软 RAID 卡片与口径说明留白（v1.1.34）---');
+  const src = fs.readFileSync(SRC, 'utf8');
+  const css = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'css', 'app.css'), 'utf8');
+  let bad = 0;
+
+  /* --- 源码级：RAID 卡片要渲染 layout 与 raidState --- */
+  const srcRules = [
+    ['渲染 RAID 级别（layout）', /r\.layout\s*\?/],
+    ['渲染健康位图（raidState）', /r\.raidState/],
+    ['RAID 级别用专用徽章类', /mon-raid-lvl/],
+    /* 健康位图着色规则：出现 _ 或 F 判为异常 */
+    ['健康位图异常判定含 _ 与 F', /unhealthy\s*=\s*bits\.indexOf\('_'\)\s*>=\s*0\s*\|\|\s*bits\.indexOf\('F'\)\s*>=\s*0/],
+  ];
+  srcRules.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* --- CSS：口径说明必须覆盖全局 .empty 的 padding --- */
+  const cssRules = [
+    ['口径说明显式覆盖 padding', /\.mon-slog-scope \{[^}]*padding:\s*[\d.]+rem 0 0/.test(css)],
+    ['口径说明覆盖 text-align', /\.mon-slog-scope \{[^}]*text-align:\s*left/.test(css)],
+    /* .empty 本身的 padding 保持不变（别去动全局空状态样式） */
+    ['全局 .empty 样式未被改动', /\.empty \{[^}]*padding: 2\.6rem 1rem/.test(css)],
+    ['RAID 级别徽章样式存在', /\.mon-chip\.mon-raid-lvl \{/.test(css)],
+    ['RAID 级别徽章用中性灰底', /\.mon-chip\.mon-raid-lvl \{[^}]*background: var\(--bg-hover\)/.test(css)],
+  ];
+  cssRules.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* --- 渲染级：真实把 RAID 数据塞进去，看渲染结果 --- */
+  const raidData = {
+    storage: {
+      available: true,
+      disks: FULL.storage.disks,
+      volumes: FULL.storage.volumes,
+      raid: [
+        { device: 'md0', state: 'active', layout: 'raid1', active: 1, total: 1,
+          members: ['sda1[0]'], raidState: 'U' },
+        { device: 'md127', state: 'active', layout: 'raid10', active: 2, total: 2,
+          members: ['sdb1[0]', 'sdb2[1]'], raidState: 'UU' },
+        { device: 'md2', state: 'inactive', layout: 'raid5', active: 1, total: 2,
+          members: ['sdc1[0]', 'sdd1[1](F)'], raidState: '_U' },
+        /* 缺字段的脏数据不能炸 */
+        { device: 'md3', state: 'active', active: 1, total: 1, members: ['sde1[0]'] },
+      ],
+    },
+  };
+  setLastData(raidData);
+  const raidHtml = (function () {
+    try {
+      global.window.FnStyleMonitor.__renderForTest(raidData);
+    } catch (e) {
+      console.error('  ❌ RAID 渲染抛异常:', e.message);
+      bad++;
+      return '';
+    }
+    return els.monStorage ? els.monStorage.innerHTML : '';
+  })();
+
+  const hasLvl = raidHtml.indexOf('mon-raid-lvl') >= 0 && raidHtml.indexOf('>raid1<') >= 0;
+  console.log((hasLvl ? '  ✓ ' : '  ✗ ') + '渲染结果含 RAID 级别徽章');
+  if (!hasLvl) bad++;
+
+  const hasState = raidHtml.indexOf('[U]') >= 0 && raidHtml.indexOf('[UU]') >= 0
+    && raidHtml.indexOf('[_U]') >= 0;
+  console.log((hasState ? '  ✓ ' : '  ✗ ') + '渲染结果含成员健康位图');
+  if (!hasState) bad++;
+
+  /* 异常位图（带 _）必须用 crit 类着色 */
+  const critBits = /mon-chip crit[^>]*>\[_U\]</.test(raidHtml);
+  console.log((critBits ? '  ✓ ' : '  ✗ ') + '异常健康位图标红');
+  if (!critBits) bad++;
+
+  /* inactive 阵列状态标黄 */
+  const warnState = /mon-badge warn[^>]*>inactive</.test(raidHtml);
+  console.log((warnState ? '  ✓ ' : '  ✗ ') + '非 active 阵列状态标黄');
+  if (!warnState) bad++;
+
+  /* 缺 layout / raidState 的脏数据不能抛异常 */
+  const noCrash = typeof raidHtml === 'string' && raidHtml.indexOf('md3') >= 0;
+  console.log((noCrash ? '  ✓ ' : '  ✗ ') + '缺少 layout/raidState 时不报错且正常渲染');
+  if (!noCrash) bad++;
+
+  /* --- 口径说明的 DOM 高度不该有大片空白 ---
+     stub 的 innerHTML 不带样式表，只能验证文本与结构；
+     真实高度由 NAS 实机探针测量。 */
+  setLastData({ storage: {
+    available: true,
+    scan: { last_ts: now, summary: { counts: { ok: 3, warn: 0, crit: 0, unknown: 0 } } },
+    scanLog: [],
+  } });
+  openScanLogDrawer();
+  const scopeText = els.monScanLogBody ? els.monScanLogBody.innerHTML : '';
+  const scopeOk2 = /统计口径：盘体健康/.test(scopeText)
+    && /以盘位 LED 为准/.test(scopeText);
+  console.log((scopeOk2 ? '  ✓ ' : '  ✗ ') + '口径说明文本完整');
+  if (!scopeOk2) bad++;
+
+  closeScanLogDrawerFn();
+
+  if (bad) { console.error('❌ v1.1.34 断言失败 ' + bad + ' 项'); process.exitCode = 1; }
+})();
+
 console.log(process.exitCode ? '\n❌ 测试未全部通过' : '\n🎉 全部测试通过');

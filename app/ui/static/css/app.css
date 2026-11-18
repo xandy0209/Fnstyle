@@ -1909,13 +1909,19 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
 
 /* 巡检统计的口径说明（v1.1.33）
    —— 说明「留意 0」统计的是盘体健康，不含 UDMA CRC 这类链路告警，
-      避免与盘位 LED 的橙灯自相矛盾。 */
+      避免与盘位 LED 的橙灯自相矛盾。
+
+   ⚠️ 必须显式覆盖 .empty 的 padding ——
+      这段文本复用了 .mon-slog-text.empty，而全局 .empty 是
+      「空状态占位」样式，带 padding: 2.6rem 1rem。
+      不覆盖的话口径说明下方会凭空多出一大片空白。 */
 .mon-slog-scope {
   margin-top: .55rem;
-  padding-top: .55rem;
+  padding: .55rem 0 0;
   border-top: 1px dashed var(--border);
   font-size: .75rem;
   line-height: 1.55;
+  text-align: left;
 }
 
 .mon-row {
@@ -2033,6 +2039,17 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
 .mon-chip.ok   { background: var(--success-soft); color: var(--success); border-color: color-mix(in srgb, var(--success) 35%, transparent); }
 .mon-chip.warn { background: var(--warning-soft); color: var(--warning); border-color: color-mix(in srgb, var(--warning) 35%, transparent); }
 .mon-chip.crit { background: var(--danger-soft);  color: var(--danger);  border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
+
+/* RAID 级别徽章（raid0/raid1/raid5…）
+   —— 用中性灰而非状态色：级别本身没有「好/坏」之分，
+      颜色留给 active 状态与成员健康，避免三色徽章读起来像告警。 */
+.mon-chip.mon-raid-lvl {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  border-color: var(--border-strong);
+  font: 600 .7rem/1.3 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: .02em;
+}
 
 /* ---- 存储：SMART 告警计数 ---- */
 .mon-smart-flag {

@@ -1269,7 +1269,12 @@
          单独再列一张表属于重复呈现。 */
     }
 
-    /* --- 软 RAID --- */
+    /* --- 软 RAID ---
+       数据源 /proc/mdstat，后端已采集 layout（RAID 级别）与 raidState（健康位图），
+       这两个字段原先被丢掉了 —— 只显示设备名的话，
+       「md0 active 1/1 sda1[0]」既看不出阵列类型，也看不出冗余级别，
+       单盘伪 RAID1（raid1 却只有 1 块成员）这种隐患完全看不出来。
+       现在补上：RAID 级别徽章 + 成员健康位图。 */
     if (st.raid && st.raid.length) {
       var rrows = st.raid.map(function (r) {
         var cls = (r.state && r.state.indexOf('active') === 0) ? 'ok' : 'warn';
@@ -1277,10 +1282,21 @@
           var bad = m.indexOf('(F)') >= 0;
           return '<span class="mon-chip ' + (bad ? 'crit' : 'ok') + '">' + esc(m) + '</span>';
         }).join('');
+        /* RAID 级别（raid0/1/5/6/10…）—— 后端已采集，前端原先没渲染 */
+        var layout = r.layout ? '<span class="mon-chip mon-raid-lvl">' + esc(r.layout) + '</span>' : '';
+        /* 成员健康位图 [UUU] / [_U_] —— U=正常，_=缺失或故障 */
+        var rs = '';
+        if (r.raidState) {
+          var bits = String(r.raidState);
+          var unhealthy = bits.indexOf('_') >= 0 || bits.indexOf('F') >= 0;
+          rs = '<span class="mon-chip ' + (unhealthy ? 'crit' : 'ok') + '">[' + esc(bits) + ']</span>';
+        }
         return '<div class="mon-row">' +
           '<span class="mon-row-name">' + esc(r.device || r.name || 'md') + '</span>' +
+          layout +
           '<span class="mon-badge ' + cls + '">' + esc(r.state || '未知') + '</span>' +
           '<span class="mon-row-val">' + r.active + '/' + r.total + '</span>' +
+          rs +
           (members ? '<div class="mon-chips">' + members + '</div>' : '') +
         '</div>';
       }).join('');
