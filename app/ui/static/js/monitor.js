@@ -386,25 +386,17 @@
           ? '↓' + (io.readText || '—') + ' ↑' + (io.writeText || '—')
           : '';
 
-        // 容量告警：仪表会变色，但 LED 仍反映健康状态（两者独立，fnmonitor 同语义）。
-        // 这里额外挂一个容量告警角标，避免「盘满」被误读成「盘坏了」。
-        var capWarn = capLv
-          ? '<span class="mon-bay-alert' + (capLv === 'crit' ? ' lv-crit' : '') +
-            '" title="容量占用 ' + Math.round(pct) +
-            '%（超过 ' + (capLv === 'crit' ? 95 : 85) + '% 阈值）">!</span>'
-          : '';
-
         var title = d.name + '（' + volLabel(d) + '） · ' +
           (GRADE_TXT[d.grade] || '未巡检') +
           (d.detail ? '：' + d.detail : '') +
           (hasCap ? ' · 已用 ' + Math.round(pct) + '%' : '') +
-          (ago ? '（巡检于 ' + ago + '）' : '');
+          (ago ? '（巡检于 ' + ago + '）' : '') +
+          (capLv ? ' · 容量占用超 ' + (capLv === 'crit' ? 95 : 85) + '%' : '');
 
         return '<div class="mon-bay" data-st="' + esc(lv) + '" data-kind="' + esc(kind) +
           '" title="' + esc(title) + '">' +
           '<div class="mon-bay-top">' +
             '<span>' + esc(volLabel(d)) + '</span>' +
-            capWarn +
             '<i class="mon-bay-led"></i>' +
           '</div>' +
           '<div class="mon-bay-body">' +
@@ -451,7 +443,9 @@
           '<span><i class="led-key warn"></i>留意</span>' +
           '<span><i class="led-key crit"></i>故障</span>' +
           '<span><i class="led-key off"></i>休眠 / 未巡检</span>' +
-          '<span class="hint">LED 为硬盘健康状态 · 容量超 85% 标黄、95% 标红</span>' +
+          '<span class="hint">LED 为硬盘健康状态</span>' +
+          /* 点阵色阶图例：绿 → 黄绿 → 橙 → 红，与容量占用率一一对应 */
+          '<span class="ramp-key"><i class="ramp-bar"></i>点阵与容量行颜色 = 空间占用（绿 → 红）</span>' +
           '<span class="scan-ago">' +
             (lastScanTs ? (ago ? '巡检于 ' + esc(ago) : '巡检中') : '尚未巡检') +
           '</span>' +

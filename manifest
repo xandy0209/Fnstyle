@@ -1,5 +1,5 @@
 appname               = fnstyle
-version               = 1.1.21
+version               = 1.1.22
 display_name          = FnStyle
 desc                  = 集中管理飞牛个性化设置与丰富主题库：网站标题、登录框、LOGO、壁纸、毛玻璃、任务栏等独立配置，内置多源主题库，支持一键应用到 fnOS 系统。
 platform              = all
@@ -15,5 +15,5 @@ desktop_applaunchname = fnstyle.main
 service_port          = 9910
 checkport             = false
 ctl_stop              = true
-changelog             = 1.1.21：存储池使用率进度条与盘位容量点阵改用 fnmonitor「负载色阶」渲染 —— 填充段从绿色起步，随使用率升高逐步渐变为黄绿、橙、红，标识空间使用越多越需要注意；存储池使用率数字与盘位容量行同步走同一条色阶；深浅两套主题各自配色
-checksum              = c5a6c9761af6db438fb9b189b5533a6e
+changelog             = 1.1.22：盘位容量告警角标改为纯颜色 + 图例表达 —— 移除盘位右上角的橙色感叹号角标（紧挨健康指示灯容易被误读），容量告警统一由点阵渐变与容量行颜色承担；图例区新增绿→黄绿→橙→红的色阶条，说明点阵与容量行颜色对应空间占用率
+checksum              = 141a450de7930c46217bd43257798fcc
