@@ -23,8 +23,25 @@ function mkEl(id) {
 }
 ['monStorage', 'monStoreCount', 'monStatus', 'monUpdated', 'monCore', 'monCoreCount',
  'monTemp', 'monTempCount', 'monPower', 'monPowerSource', 'btnMonRefresh', 'monAuto',
- 'btnMonScan']
+ 'btnMonScan', 'monDrawerOverlay', 'monDrawerTitle', 'monDrawerSub', 'monDrawerBody',
+ 'btnCloseMonDrawer']
   .forEach(id => { els[id] = mkEl(id); });
+
+/* 抽屉的 overlay 需要 classList / hidden / 事件钩子 */
+els.monDrawerOverlay.classList = {
+  _s: {},
+  add: function (c) { this._s[c] = true; },
+  remove: function (c) { delete this._s[c]; },
+  contains: function (c) { return !!this._s[c]; },
+};
+els.monDrawerOverlay.hidden = true;
+els.monDrawerOverlay.__listeners = {};
+els.monDrawerOverlay.addEventListener = function (t, fn) {
+  (this.__listeners[t] = this.__listeners[t] || []).push(fn);
+};
+els.monDrawerOverlay.dispatch = function (t, ev) {
+  (this.__listeners[t] || []).forEach(function (fn) { fn(ev); });
+};
 
 global.document = {
   readyState: 'complete',
@@ -43,6 +60,8 @@ global.fetch = function () {
 };
 global.setTimeout = setTimeout;
 global.clearTimeout = clearTimeout;
+/* 抽屉动画用 requestAnimationFrame —— Node 环境用 setTimeout 顶替 */
+global.requestAnimationFrame = function (fn) { return setTimeout(fn, 0); };
 
 /* ---------- 加载 monitor.js ---------- */
 const code = fs.readFileSync(SRC, 'utf8');
@@ -201,10 +220,17 @@ if (patched === code) {
   console.error('❌ 未能注入测试钩子（源码结构变化）');
   process.exit(1);
 }
-/* 再注入 SMART 状态判定的测试钩子（bayLedState / smartAlertsText） */
+/* 再注入 SMART 状态判定的测试钩子（bayLedState / smartAlertsText）
+   以及硬盘详情抽屉的测试钩子（openDiskDrawer / dwSmartTable / dwInfoKv） */
 const patched2 = patched.replace(
   'window.FnStyleMonitor = {',
-  'window.__bayLedState = bayLedState;\n  window.__smartAlertsText = smartAlertsText;\n  window.FnStyleMonitor = {'
+  'window.__bayLedState = bayLedState;\n  window.__smartAlertsText = smartAlertsText;\n' +
+  '  window.__openDiskDrawer = openDiskDrawer;\n' +
+  '  window.__dwSmartTable = dwSmartTable;\n' +
+  '  window.__dwInfoKv = dwInfoKv;\n' +
+  '  window.__dwSmartRows = dwSmartRows;\n' +
+  '  window.__setLastData = function (d) { lastData = d; };\n' +
+  '  window.FnStyleMonitor = {'
 );
 if (patched2 === patched) {
   console.error('❌ 未能注入 SMART 测试钩子（源码结构变化）');
@@ -221,8 +247,18 @@ global.window = global;
 console.log('✅ 测试钩子注入成功');
 const bayLedState = global.__bayLedState;
 const smartAlertsText = global.__smartAlertsText;
+const openDiskDrawer = global.__openDiskDrawer;
+const dwSmartTable = global.__dwSmartTable;
+const dwInfoKv = global.__dwInfoKv;
+const dwSmartRows = global.__dwSmartRows;
+const setLastData = global.__setLastData;
 if (typeof bayLedState !== 'function' || typeof smartAlertsText !== 'function') {
   console.error('❌ SMART 测试钩子未就绪');
+  process.exit(1);
+}
+if (typeof openDiskDrawer !== 'function' || typeof dwSmartTable !== 'function'
+    || typeof dwInfoKv !== 'function' || typeof setLastData !== 'function') {
+  console.error('❌ 抽屉测试钩子未就绪');
   process.exit(1);
 }
 
@@ -358,6 +394,188 @@ if (html) {
     if (!ok) bad++;
   });
   if (bad) { console.error('❌ SMART 整合断言失败 ' + bad + ' 项'); process.exitCode = 1; }
+})();
+
+/* ---------- 盘位 LED：放大 + 留意/故障动画提醒（源码级） ---------- */
+(function checkLedSizeAndAnimation() {
+  console.log('\n--- 盘位 LED 尺寸与告警动画 ---');
+  const CSS = path.join(__dirname, '..', 'app', 'ui', 'static', 'css', 'app.css');
+  const css = fs.readFileSync(CSS, 'utf8');
+
+  /* 取 .mon-bay-led 规则块 */
+  const ledBlock = (css.match(/\.mon-bay-led\s*\{[^}]*\}/) || [''])[0];
+  const w = (ledBlock.match(/width:\s*(\d+)px/) || [])[1];
+  const h = (ledBlock.match(/height:\s*(\d+)px/) || [])[1];
+
+  const rules = [
+    ['LED 宽度已放大到 ≥10px', !!w && Number(w) >= 10, w],
+    ['LED 高度已放大到 ≥10px', !!h && Number(h) >= 10, h],
+    ['LED 有 position:relative（光环定位）', /position:\s*relative/.test(ledBlock)],
+    // 动画必须包在 prefers-reduced-motion: no-preference 里（系统关动效时不闪）
+    ['动画包在 prefers-reduced-motion: no-preference', /@media \(prefers-reduced-motion: no-preference\)/.test(css)],
+    ['warn 状态有呼吸动画', /\.mon-bay\[data-st="warn"\]\s+\.mon-bay-led\s*\{[^}]*animation:\s*mon-led-breathe/.test(css)],
+    ['crit 状态有呼吸动画', /\.mon-bay\[data-st="crit"\]\s+\.mon-bay-led\s*\{[^}]*animation:\s*mon-led-breathe/.test(css)],
+    ['crit 有外扩光环动画', /mon-led-ring/.test(css)],
+    ['呼吸关键帧存在', /@keyframes mon-led-breathe/.test(css)],
+    ['光环关键帧存在', /@keyframes mon-led-ring/.test(css)],
+    // 正常与休眠态不能有动画
+    ['ok 状态无动画', !/\.mon-bay\[data-st="ok"\]\s+\.mon-bay-led\s*\{[^}]*animation/.test(css)],
+    ['standby 状态无动画', !/\.mon-bay\[data-st="standby"\]\s+\.mon-bay-led\s*\{[^}]*animation/.test(css)],
+    // 图例圆点也同步动画
+    ['图例 warn 圆点有动画', /\.mon-nas-foot \.led-key\.warn\s*\{[^}]*animation/.test(css)],
+    ['图例 crit 圆点有动画', /\.mon-nas-foot \.led-key\.crit\s*\{[^}]*animation/.test(css)],
+  ];
+  let bad = 0;
+  rules.forEach(function ([label, ok, extra]) {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label + (extra !== undefined ? ' → ' + extra : ''));
+    if (!ok) bad++;
+  });
+  if (bad) { console.error('❌ LED 尺寸/动画断言失败 ' + bad + ' 项'); process.exitCode = 1; }
+})();
+
+/* ---------- 硬盘详情抽屉 ---------- */
+(function checkDiskDrawer() {
+  console.log('\n--- 硬盘详情抽屉 ---');
+  const HTML = path.join(__dirname, '..', 'app', 'ui', 'index.html');
+  const html = fs.readFileSync(HTML, 'utf8');
+  let bad = 0;
+
+  /* --- HTML 骨架 --- */
+  const htmlRules = [
+    ['抽屉容器存在', /id="monDrawerOverlay"/],
+    ['抽屉是 aside + role=dialog', /<aside class="mon-drawer" role="dialog" aria-modal="true"/],
+    ['有标题元素', /id="monDrawerTitle"/],
+    ['有副标题元素', /id="monDrawerSub"/],
+    ['有内容容器', /id="monDrawerBody"/],
+    ['有关闭按钮', /id="btnCloseMonDrawer"/],
+  ];
+  htmlRules.forEach(function ([label, re]) {
+    const ok = re.test(html);
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* --- 盘位可点击 --- */
+  const renderHtml = renderCase('抽屉用例', { storage: FULL.storage, ts: FULL.ts });
+  const clickRules = [
+    ['盘位带 data-dev', /class="mon-bay"[^>]*data-dev="sda"/],
+    ['盘位带 data-clickable', /data-clickable="1"/],
+    ['盘位带 tabindex（键盘可达）', /data-clickable="1" tabindex="0"/],
+    ['盘位带 role=button', /role="button"/],
+    ['盘位带 aria-label', /aria-label="sda 存储空间 vol1 详情"/],
+  ];
+  clickRules.forEach(function ([label, re]) {
+    const ok = re.test(renderHtml);
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* --- 抽屉内容渲染 --- */
+  setLastData({ storage: FULL.storage });
+  openDiskDrawer('sdb');   // 有 SMART 告警的盘
+  const body = els.monDrawerBody.innerHTML;
+  const contentRules = [
+    ['标题为「硬盘 存储空间 vol1」', els.monDrawerTitle.textContent === '硬盘 存储空间 vol1'],
+    ['副标题含设备名与型号', /sdb/.test(els.monDrawerSub.textContent) && /WD40EFZX/.test(els.monDrawerSub.textContent)],
+    ['有容量大数字区', /mon-dw-hero/.test(body)],
+    ['有容量条', /mon-dw-bar/.test(body)],
+    ['有容量图例（已用/可用/文件系统容量）', /已用/.test(body) && /可用/.test(body) && /文件系统容量/.test(body)],
+    ['有 SMART 分节', /mon-dw-sec">SMART/.test(body)],
+    ['有信息分节', /mon-dw-sec">信息/.test(body)],
+    ['有巡检分节', /mon-dw-sec">巡检/.test(body)],
+    ['有实时读写分节', /mon-dw-sec">实时读写/.test(body)],
+    ['SMART 表含「整体评估」', /整体评估/.test(body)],
+    ['SMART 表含「UDMA CRC 错误」', /UDMA CRC 错误/.test(body)],
+    ['SMART 表含「通电时间」', /通电时间/.test(body)],
+    ['SMART 表含「转速」', /转速/.test(body)],
+    ['SMART 表含「温度」', /温度/.test(body)],
+    // sdb: udma_crc=12, reallocated=3 → 留意告警条
+    ['告警条标为留意', /mon-dw-note warn/.test(body)],
+    ['告警条列出具体告警项', /UDMA CRC 错误/.test(body) && /重映射扇区/.test(body)],
+    ['信息表含型号', /型号/.test(body) && /WD40EFZX/.test(body)],
+    ['信息表含序列号', /序列号/.test(body) && /WD-WX32D0055678/.test(body)],
+    ['信息表含挂载点', /挂载点/.test(body) && /vol1/.test(body)],
+    ['overlay 变为可见', els.monDrawerOverlay.hidden === false],
+  ];
+  contentRules.forEach(function ([label, ok]) {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* --- 故障盘：提示条为 crit --- */
+  els.monDrawerBody.innerHTML = '';
+  openDiskDrawer('sdc');   // uncorrectable=2 → crit
+  const critBody = els.monDrawerBody.innerHTML;
+  const critOk = /mon-dw-note crit/.test(critBody);
+  console.log((critOk ? '  ✓ ' : '  ✗ ') + '无法纠正错误的盘 → 提示条为 crit');
+  if (!critOk) bad++;
+
+  /* --- 休眠盘：提示休眠、不显示实时读写 --- */
+  els.monDrawerBody.innerHTML = '';
+  openDiskDrawer('sdd');
+  const sleepBody = els.monDrawerBody.innerHTML;
+  const sleepRules = [
+    ['休眠盘有休眠提示条', /mon-dw-note sleep/.test(sleepBody)],
+    ['休眠盘不显示实时读写分节', !/mon-dw-sec">实时读写/.test(sleepBody)],
+    ['休眠盘的 SMART 计数标注「休眠前」', /休眠前/.test(sleepBody)],
+  ];
+  sleepRules.forEach(function ([label, ok]) {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* --- 未找到的盘 --- */
+  els.monDrawerBody.innerHTML = '';
+  openDiskDrawer('sdz-not-exist');
+  const missingOk = els.monDrawerTitle.textContent === '未找到硬盘'
+    && /可能已被移除/.test(els.monDrawerBody.innerHTML);
+  console.log((missingOk ? '  ✓ ' : '  ✗ ') + '不存在的盘 → 提示「未找到硬盘」');
+  if (!missingOk) bad++;
+
+  /* --- dwSmartTable 单元断言 --- */
+  const tbl = dwSmartTable({ health: 'PASSED', udma_crc: 60, reallocated_sectors: 0,
+    pending_sectors: 0, reallocated_events: 0, uncorrectable: 0, temp: 34, rpm: '5400 rpm',
+    power_on_hours: 8760, standby: false });
+  const tblRules = [
+    ['SMART 表：有计数的项标「留意」', /pill warn/.test(tbl)],
+    ['SMART 表：无计数的项标 ✓', /st-ok/.test(tbl)],
+    ['SMART 表：通电时间带小时', /8,760 小时/.test(tbl)],
+    ['SMART 表：温度带 ℃', /34℃/.test(tbl)],
+  ];
+  tblRules.forEach(function ([label, ok]) {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* SMART 表分级必须与盘位 LED 用同一套告警分类：
+     无法纠正错误 = 严重(crit)，其余非零计数 = 留意(warn)。 */
+  const critTbl = dwSmartTable({ health: 'PASSED', udma_crc: 0, reallocated_sectors: 0,
+    pending_sectors: 0, reallocated_events: 0, uncorrectable: 2, temp: 34, rpm: '5400 rpm',
+    power_on_hours: 8760, standby: false });
+  const critRules = [
+    ['SMART 表：无法纠正错误标「严重」', /pill crit/.test(critTbl) && /严重/.test(critTbl)],
+  ];
+  critRules.forEach(function ([label, ok]) {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* SSD 的 rpm 是描述文本，不能拼成 "Solid State Device RPM" */
+  const ssdTbl = dwSmartTable({ health: 'PASSED', udma_crc: 0, reallocated_sectors: 0,
+    pending_sectors: 0, reallocated_events: 0, uncorrectable: 0, temp: 30,
+    rpm: 'Solid State Device', power_on_hours: 100, standby: false });
+  const ssdOk = /Solid State Device/.test(ssdTbl) && !/Solid State Device RPM/.test(ssdTbl);
+  console.log((ssdOk ? '  ✓ ' : '  ✗ ') + 'SMART 表：SSD 转速不拼 RPM 后缀');
+  if (!ssdOk) bad++;
+
+  /* --- 滑入动画：.on 是在两帧 rAF 之后加的，必须异步断言 --- */
+  setTimeout(function () {
+    const onOk = els.monDrawerOverlay.classList.contains('on') === true;
+    console.log((onOk ? '  ✓ ' : '  ✗ ') + 'overlay 加上 .on（滑入动画）');
+    if (!onOk) process.exitCode = 1;
+  }, 30);
+
+  if (bad) { console.error('❌ 抽屉断言失败 ' + bad + ' 项'); process.exitCode = 1; }
 })();
 
 /* ---------- 源码级断言：容量单位进制不能被改回去 ---------- */

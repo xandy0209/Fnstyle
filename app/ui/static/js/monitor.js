@@ -351,6 +351,280 @@
     });
     return out;
   }
+
+  /* ==========================================================================
+     硬盘详情抽屉（点击盘位卡片从右侧滑出）
+     呈现内容对齐 fnmonitor 的「硬盘」详情面板（.sheet disk/<dev>）：
+     容量大数字 → 容量条 → 告警/休眠提示 → 实时读写 → SMART 表 → 信息表。
+     ========================================================================== */
+
+  var drawerOpen = false;
+  var drawerDev = null;
+
+  function monDrawerOverlay() { return $('#monDrawerOverlay'); }
+
+  /* 数值 → 千分位字符串；非数字返回 null */
+  function dwNum(v) {
+    if (v === null || v === undefined || v === '' || isNaN(v)) return null;
+    return Number(v).toLocaleString('zh-CN');
+  }
+
+  /* 单盘 SMART 表行：与 fnmonitor 一致 —— 有计数的标状态，无数据的显示 — */
+  function dwSmartRows(d) {
+    var rows = [];
+    var health = String((d && d.health) || '');
+    var healthTxt = health
+      ? (/PASS/i.test(health) ? '通过' : health)
+      : '<span class="faint">未读取到</span>';
+    var healthSt = /FAIL/i.test(health) ? 'crit' : (/PASS|OK/i.test(health) ? 'ok' : '');
+    rows.push({
+      k: '整体评估',
+      v: healthTxt,
+      st: healthSt,
+      // 休眠盘的扇区计数只有休眠前的值，用「休眠前」标注（fnmonitor 同款）
+      note: (d && d.standby) ? '休眠前' : ''
+    });
+
+    SMART_KEYS.forEach(function (k) {
+      var v = smartCount(d, k[0]);
+      var txt = (v === null) ? '<span class="faint">—</span>' : esc(String(v));
+      /* 分级与盘位 LED 保持同一套告警分类：
+         无法纠正错误 = 故障（crit），其余非零计数 = 留意（warn）。 */
+      var st = (v === null) ? '' : (v > 0
+        ? (SMART_CRIT_KEYS.indexOf(k[0]) >= 0 ? 'crit' : 'warn')
+        : 'ok');
+      rows.push({ k: k[1], v: txt, st: st, note: (d && d.standby) ? '休眠前' : '' });
+    });
+
+    rows.push({
+      k: '通电时间',
+      v: (d && d.power_on_hours)
+        ? esc(dwNum(d.power_on_hours) || d.power_on_hours) + ' 小时'
+        : '<span class="faint">—</span>',
+      st: '', note: ''
+    });
+    var t = (d && d.temp !== null && d.temp !== undefined && d.temp !== '') ? Number(d.temp) : null;
+    rows.push({
+      k: '温度',
+      v: (t === null) ? '<span class="faint">—</span>' : (esc(String(t)) + '℃'),
+      st: (t === null || !d || d.standby) ? '' : (tempLevel(t) || 'ok'),
+      note: ''
+    });
+    rows.push({
+      k: '转速',
+      // SSD 的 smartctl rpm 字段是 "Solid State Device" 这种描述文本，
+      // 不是转速数字 —— 拼上 " RPM" 会变成 "Solid State Device RPM"，很怪。
+      v: (d && d.rpm)
+        ? (/solid state/i.test(String(d.rpm))
+            ? esc(String(d.rpm))
+            : esc(String(d.rpm)) + ' RPM')
+        : '<span class="faint">—</span>',
+      st: '', note: ''
+    });
+    return rows;
+  }
+
+  /* SMART 表的 HTML */
+  function dwSmartTable(d) {
+    var rows = dwSmartRows(d);
+    var body = rows.map(function (r) {
+      var stCell;
+      if (r.note) stCell = '<span class="faint">' + esc(r.note) + '</span>';
+      else if (r.st === 'ok') stCell = '<span class="st-ok">✓</span>';
+      else if (r.st === 'warn') stCell = '<span class="pill warn">留意</span>';
+      else if (r.st === 'crit') stCell = '<span class="pill crit">严重</span>';
+      else stCell = '<span class="faint">—</span>';
+      var vCls = (r.st === 'warn' || r.st === 'crit') ? (' st-' + r.st) : '';
+      return '<tr><td>' + esc(r.k) + '</td>' +
+        '<td class="r num' + vCls + '">' + r.v + '</td>' +
+        '<td class="r">' + stCell + '</td></tr>';
+    }).join('');
+
+    /* 没有任何计数可读时给一句提示（fnmonitor 同款口径） */
+    var anyCount = SMART_KEYS.some(function (k) { return smartCount(d, k[0]) !== null; });
+    var hint = '';
+    if (!anyCount) {
+      hint = d && d.standby
+        ? '休眠中，扇区计数待硬盘唤醒后读取'
+        : '该硬盘未提供重映射 / 待映射扇区等计数（NVMe 或 smartctl 不可用）';
+    }
+    return '<table class="mon-dw-table"><thead><tr><th>属性</th>' +
+      '<th class="r">值</th><th class="r">状态</th></tr></thead><tbody>' + body +
+      (hint ? '<tr><td colspan="3" class="faint mon-dw-hint">' + esc(hint) + '</td></tr>' : '') +
+      '</tbody></table>';
+  }
+
+  /* 信息表（型号 / 序列号 / 类型 / 容量 / 挂载点 / 所属空间） */
+  function dwInfoKv(d) {
+    var mounts = (d && d.mounts) || [];
+    var kv = [
+      ['型号', esc(vendorModel(d) || '未知型号')],
+      ['序列号', d && d.serial ? '<span class="mono">' + esc(d.serial) + '</span>' : '<span class="faint">—</span>'],
+      ['类型', esc(d && d.type ? d.type : '未知')],
+      ['硬盘容量', esc(d && d.sizeText ? d.sizeText : fmtDisk((d && d.size) || 0))],
+      ['挂载点', mounts.length
+        ? '<span class="mono">' + esc(mounts.join('、')) + '</span>'
+        : '<span class="faint">未挂载</span>'],
+      ['所属存储空间', d && volOf(d) ? '存储空间 vol' + esc(volOf(d)) : '<span class="faint">—</span>']
+    ];
+    return '<dl class="mon-dw-kv">' + kv.map(function (p) {
+      return '<dt>' + p[0] + '</dt><dd>' + p[1] + '</dd>';
+    }).join('') + '</dl>';
+  }
+
+  /* 打开抽屉：dev = 设备名（sda / sdc …） */
+  function openDiskDrawer(dev) {
+    var ov = monDrawerOverlay();
+    if (!ov) return;
+    var st = lastData && lastData.storage ? lastData.storage : null;
+    var disks = (st && st.disks) || [];
+    var d = null;
+    for (var i = 0; i < disks.length; i++) {
+      if (disks[i].name === dev) { d = disks[i]; break; }
+    }
+    var body = $('#monDrawerBody');
+    var titleEl = $('#monDrawerTitle');
+    var subEl = $('#monDrawerSub');
+    if (!body || !titleEl || !subEl) return;
+
+    if (!d) {
+      titleEl.textContent = '未找到硬盘';
+      subEl.textContent = dev || '';
+      body.innerHTML = '<div class="mon-dw-note">它可能已被移除，或尚未被识别。</div>';
+      showDrawer();
+      return;
+    }
+
+    var led = bayLedState(d);
+    var hasCap = Number(d.total) > 0;
+    var pct = Number(d.percent) || 0;
+    var io = d._io;
+
+    /* 标题：物理位置；副标题：设备名 · 型号（fnmonitor 同款结构） */
+    titleEl.textContent = '硬盘 ' + volLabel(d);
+    subEl.textContent = [d.name, vendorModel(d)].filter(Boolean).join(' · ');
+
+    var html = '';
+
+    /* --- 容量大数字 + 状态徽标 --- */
+    html += '<div class="mon-dw-hero"><div>' +
+      '<div class="mon-dw-eyebrow">已用</div>' +
+      '<div class="mon-dw-big"' +
+      (hasCap && !d.standby ? ' style="color:' + rampInk(pct) + '"' : '') + '>' +
+      (hasCap ? esc(String(Math.round(pct))) : '—') +
+      '<span class="unit">%</span></div></div>' +
+      '<div class="mon-dw-right">' +
+      '<div class="mon-dw-eyebrow">可用</div>' +
+      '<b>' + (hasCap ? esc(fmtDisk(Math.max(0, (Number(d.total) || 0) - (Number(d.used) || 0)))) : '—') + '</b>' +
+      '</div></div>';
+
+    /* --- 容量条 + 图例 --- */
+    var barW = hasCap ? Math.max(0, Math.min(100, pct)) : 0;
+    var barColor = d.standby ? 'var(--led-off)' : (hasCap ? rampInk(pct) : 'var(--led-off)');
+    html += '<div class="mon-dw-bar"><i style="width:' + barW.toFixed(1) + '%;background:' + barColor + '"></i></div>';
+    html += '<div class="mon-dw-legend">' + (hasCap
+      ? '<span>已用 <b>' + esc(d.usedText || fmtDisk(d.used || 0)) + '</b></span>' +
+        '<span>可用 <b>' + esc(fmtDisk(Math.max(0, (Number(d.total) || 0) - (Number(d.used) || 0)))) + '</b></span>' +
+        '<span>文件系统容量 <b>' + esc(d.totalText || fmtDisk(d.total || 0)) + '</b></span>'
+      : '<span>未挂载或无用量数据</span><span>硬盘容量 <b>' + esc(d.sizeText || fmtDisk(d.size || 0)) + '</b></span>') +
+      '</div>';
+
+    /* --- 提示条：休眠 / 故障 / 留意 / 温度 --- */
+    var notes = '';
+    if (d.standby) {
+      notes += '<div class="mon-dw-note sleep">💤 <span>这块硬盘已停转休眠。' +
+        'FnStyle 不会主动唤醒它：容量与温度为休眠前的最后读数，SMART 会在它下次被系统唤醒时更新。</span></div>';
+    }
+    if (led.lv === 'crit' || led.lv === 'warn') {
+      var smText = smartAlertsText(led.smart);
+      notes += '<div class="mon-dw-note ' + led.lv + '">⚠ <span><b>' +
+        esc(GRADE_TXT[led.lv] || '告警') + '。</b>' +
+        (smText ? 'SMART 告警：' + esc(smText) + '。' : '') +
+        '建议确认 ' + esc(((d.mounts || []).join('、')) || '该盘上的数据') +
+        ' 有备份，并留意数值是否继续增长。</span></div>';
+    }
+    var t = (d.temp !== null && d.temp !== undefined && d.temp !== '') ? Number(d.temp) : null;
+    var tLv = (d.standby || t === null) ? '' : tempLevel(t);
+    if (tLv) {
+      notes += '<div class="mon-dw-note warn">🌡 <span>温度 ' + esc(String(t)) +
+        '℃，已超过' + (tLv === 'crit' ? '严重' : '警告') + '阈值。</span></div>';
+    }
+    if (notes) html += notes;
+
+    /* --- 实时读写 --- */
+    if (!d.standby) {
+      html += '<div class="mon-dw-sec">实时读写<span class="faint">近 5 分钟</span></div>';
+      html += '<dl class="mon-dw-kv">' +
+        '<dt>读取速率</dt><dd>' + (io && io.readText ? esc(io.readText) : '<span class="faint">无 IO 数据</span>') + '</dd>' +
+        '<dt>写入速率</dt><dd>' + (io && io.writeText ? esc(io.writeText) : '<span class="faint">无 IO 数据</span>') + '</dd>' +
+        '<dt>硬盘状态</dt><dd>' + (d.state === 'standby' ? '休眠' : esc(d.state || '—')) + '</dd>' +
+        '</dl>';
+    }
+
+    /* --- SMART --- */
+    html += '<div class="mon-dw-sec">SMART</div>' + dwSmartTable(d);
+
+    /* --- 信息 --- */
+    html += '<div class="mon-dw-sec">信息</div>' + dwInfoKv(d);
+
+    /* --- 巡检 --- */
+    var scan = (st && st.scan) || {};
+    var ago = scanAgo(scan.last_ts || 0);
+    html += '<div class="mon-dw-sec">巡检</div>' +
+      '<dl class="mon-dw-kv">' +
+      '<dt>巡检分级</dt><dd>' + gradeBadge(led.scanLv) + '</dd>' +
+      '<dt>巡检时间</dt><dd>' + (ago ? esc(ago) : '<span class="faint">未巡检</span>') + '</dd>' +
+      (d.detail ? '<dt>巡检说明</dt><dd>' + esc(d.detail) + '</dd>' : '') +
+      '</dl>';
+
+    body.innerHTML = html;
+    drawerDev = dev;
+    showDrawer();
+  }
+
+  function showDrawer() {
+    var ov = monDrawerOverlay();
+    if (!ov) return;
+    ov.hidden = false;
+    drawerOpen = true;
+    // 下一帧再加 .on，确保过渡动画能触发
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () { ov.classList.add('on'); });
+    });
+  }
+
+  function closeDiskDrawer() {
+    var ov = monDrawerOverlay();
+    if (!ov) return;
+    ov.classList.remove('on');
+    drawerOpen = false;
+    drawerDev = null;
+    // 等滑出动画结束再隐藏
+    setTimeout(function () {
+      if (!drawerOpen) ov.hidden = true;
+    }, 320);
+  }
+
+  /* 事件绑定：盘位点击 / 关闭 / 遮罩 / ESC */
+  function bindDrawer() {
+    var ov = monDrawerOverlay();
+    if (!ov || ov.__bound) return;
+    ov.__bound = true;
+
+    // 点遮罩关闭（点在抽屉内部不关）
+    ov.addEventListener('click', function (e) {
+      if (e.target === ov) closeDiskDrawer();
+    });
+    var btn = $('#btnCloseMonDrawer');
+    if (btn) btn.addEventListener('click', closeDiskDrawer);
+    document.addEventListener('keydown', function (e) {
+      if ((e.key === 'Escape' || e.key === 'Esc') && drawerOpen) {
+        e.preventDefault();
+        closeDiskDrawer();
+      }
+    });
+  }
+
   function renderStorage(st) {
     var box = $('#monStorage');
     if (!box) return;
@@ -478,7 +752,9 @@
           (capLv ? ' · 容量占用超 ' + (capLv === 'crit' ? 95 : 85) + '%' : '');
 
         return '<div class="mon-bay" data-st="' + esc(lv) + '" data-kind="' + esc(kind) +
-          '" title="' + esc(title) + '">' +
+          '" data-dev="' + esc(d.name) + '" data-clickable="1" tabindex="0"' +
+          ' role="button" aria-label="' + esc(d.name + ' ' + volLabel(d) + ' 详情') + '"' +
+          ' title="' + esc(title) + '">' +
           '<div class="mon-bay-top">' +
             '<span>' + esc(volLabel(d)) + '</span>' +
             '<i class="mon-bay-led"' +
@@ -648,6 +924,37 @@
         ? sum.diskCount : (st.disks || []).length;
       cntEl.textContent = poolN + ' 个存储池 · ' + diskN + ' 块硬盘';
     }
+
+    /* 盘位点击 → 打开右侧详情抽屉。
+       用事件委托绑在容器上：存储面板每次轮询都会重绘 innerHTML，
+       直接给每个盘位绑监听会反复叠加。
+       closest 在个别老内核上对 SVG 元素不生效（盘位里有 gauge SVG），
+       所以找不到时退回手动向上找 .mon-bay。 */
+    if (!box.__bayBound) {
+      box.__bayBound = true;
+      var findBay = function (el) {
+        while (el && el !== box) {
+          if (el.classList && el.classList.contains('mon-bay') && el.getAttribute('data-dev')) {
+            return el;
+          }
+          el = el.parentNode;
+        }
+        return null;
+      };
+      box.addEventListener('click', function (e) {
+        var bay = (e.target.closest ? e.target.closest('.mon-bay[data-dev]') : null) || findBay(e.target);
+        if (!bay) return;
+        openDiskDrawer(bay.getAttribute('data-dev'));
+      });
+      box.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        var bay = (e.target.closest ? e.target.closest('.mon-bay[data-dev]') : null) || findBay(e.target);
+        if (!bay) return;
+        e.preventDefault();
+        openDiskDrawer(bay.getAttribute('data-dev'));
+      });
+    }
+    bindDrawer();
   }
 
   /* ---------------- 2. 处理器 / 内存 / 显卡 ---------------- */

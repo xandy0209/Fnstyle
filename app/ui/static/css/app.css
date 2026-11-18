@@ -2120,26 +2120,65 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
   white-space: nowrap;
 }
 .mon-bay-led {
-  width: 7px; height: 7px;
+  width: 11px; height: 11px;
   border-radius: 50%;
   background: var(--led-off);
   flex: none;
+  position: relative;
   transition: background-color .2s ease, box-shadow .2s ease;
+}
+/* 告警态的外扩光环：只 crit 用，warn 靠呼吸即可，避免两态互相干扰 */
+.mon-bay-led::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  opacity: 0;
+  pointer-events: none;
 }
 .mon-bay[data-st="ok"] .mon-bay-led {
   background: var(--success);
-  box-shadow: 0 0 6px color-mix(in srgb, var(--success) 55%, transparent);
+  color: var(--success);
+  box-shadow: 0 0 7px color-mix(in srgb, var(--success) 55%, transparent);
 }
 .mon-bay[data-st="warn"] .mon-bay-led {
   background: var(--warning);
-  box-shadow: 0 0 6px color-mix(in srgb, var(--warning) 45%, transparent);
+  color: var(--warning);
+  box-shadow: 0 0 7px color-mix(in srgb, var(--warning) 50%, transparent);
 }
 .mon-bay[data-st="crit"] .mon-bay-led {
   background: var(--danger);
-  box-shadow: 0 0 7px var(--danger);
+  color: var(--danger);
+  box-shadow: 0 0 9px var(--danger);
 }
 .mon-bay[data-st="unknown"] .mon-bay-led,
-.mon-bay[data-st="standby"] .mon-bay-led { background: var(--led-off); box-shadow: none; }
+.mon-bay[data-st="standby"] .mon-bay-led { background: var(--led-off); color: var(--led-off); box-shadow: none; }
+
+/* 留意 / 故障的动态提醒。
+   动画全部包在 prefers-reduced-motion: no-preference 里 —— 用户在系统里
+   关掉动效时，LED 退回静态颜色，不做任何闪烁。 */
+@keyframes mon-led-breathe {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: .45; transform: scale(.82); }
+}
+@keyframes mon-led-ring {
+  0%       { opacity: .85; transform: scale(.7); }
+  75%, 100% { opacity: 0;  transform: scale(2.1); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  /* 留意：缓慢呼吸，提醒但不刺眼 */
+  .mon-bay[data-st="warn"] .mon-bay-led {
+    animation: mon-led-breathe 1.9s ease-in-out infinite;
+  }
+  /* 故障：更快更强的呼吸 + 外扩光环，视觉上区别于「留意」 */
+  .mon-bay[data-st="crit"] .mon-bay-led {
+    animation: mon-led-breathe 1.05s ease-in-out infinite;
+  }
+  .mon-bay[data-st="crit"] .mon-bay-led::after {
+    animation: mon-led-ring 1.5s ease-out infinite;
+  }
+}
 
 .mon-bay-body {
   position: relative;
@@ -2267,7 +2306,7 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
 }
 .mon-nas-foot span { display: inline-flex; align-items: center; gap: .35rem; }
 .mon-nas-foot .led-key {
-  width: 7px; height: 7px;
+  width: 9px; height: 9px;
   border-radius: 50%;
   background: var(--success);
   box-shadow: 0 0 5px color-mix(in srgb, var(--success) 45%, transparent);
@@ -2275,6 +2314,11 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
 .mon-nas-foot .led-key.warn { background: var(--warning); box-shadow: none; }
 .mon-nas-foot .led-key.crit { background: var(--danger); box-shadow: none; }
 .mon-nas-foot .led-key.off { background: var(--led-off); box-shadow: none; }
+/* 图例里的告警圆点跟着盘位 LED 一起动，图标与实际状态一一对应 */
+@media (prefers-reduced-motion: no-preference) {
+  .mon-nas-foot .led-key.warn { animation: mon-led-breathe 1.9s ease-in-out infinite; }
+  .mon-nas-foot .led-key.crit { animation: mon-led-breathe 1.05s ease-in-out infinite; }
+}
 /* 点阵色阶图例：一条绿→黄绿→橙→红的渐变条，
    说明「点阵与容量行的颜色 = 空间占用率，越红越需要注意」。 */
 .mon-nas-foot .ramp-key { color: var(--text-muted); }
@@ -2292,6 +2336,271 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
 .mon-nas-foot .hint { color: var(--text-muted); }
 /* 末尾的提示不再抢 margin-left:auto（前面已有 scan-ago 顶到右边） */
 .mon-nas-foot .hint:last-child { margin-left: 0; }
+
+/* ==========================================================================
+   硬盘详情抽屉（点击盘位卡片从右侧滑出）
+   交互与呈现对齐 fnmonitor 的「硬盘」详情面板（.sheet disk/<dev>）：
+   容量大数字 → 容量条 → 告警提示 → 实时读写 → SMART 表 → 信息表。
+   ========================================================================== */
+
+.mon-drawer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, .62);
+  backdrop-filter: blur(3px);
+  z-index: 99990;
+  display: flex;
+  justify-content: flex-end;
+  align-items: stretch;
+  padding: 0;
+}
+.mon-drawer-overlay[hidden] { display: none; }
+
+.mon-drawer {
+  width: min(520px, 100vw);
+  height: 100%;
+  background: var(--bg-elevated);
+  border-left: 1px solid var(--border-strong);
+  box-shadow: -12px 0 40px rgba(0, 0, 0, .45);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  /* 从右侧滑入（fnmonitor 的 .sheet 同样是 translateX 位移） */
+  transform: translateX(100%);
+  transition: transform .32s cubic-bezier(.32, .72, 0, 1);
+}
+.mon-drawer-overlay.on .mon-drawer { transform: none; }
+
+.mon-drawer-head {
+  display: flex;
+  align-items: flex-start;
+  gap: .6rem;
+  padding: 1.1rem 1.1rem .8rem;
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+.mon-drawer-head-main { flex: 1; min-width: 0; }
+.mon-drawer-head h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 650;
+  letter-spacing: -.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mon-drawer-sub {
+  margin: .28rem 0 0;
+  font-size: .8rem;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mon-drawer-close {
+  flex: none;
+  width: 30px; height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: .95rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color .15s ease, color .15s ease;
+}
+.mon-drawer-close:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+.mon-drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 1rem 1.1rem 1.4rem;
+}
+.mon-drawer-body > * + * { margin-top: .85rem; }
+
+/* ---- 容量大数字区（fnmonitor 的 sheet-hero） ---- */
+.mon-dw-hero {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: .8rem;
+}
+.mon-dw-eyebrow {
+  font-size: .72rem;
+  color: var(--text-muted);
+  letter-spacing: .04em;
+  margin-bottom: .1rem;
+}
+.mon-dw-big {
+  font-size: 2.6rem;
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -.02em;
+  font-variant-numeric: tabular-nums;
+}
+.mon-dw-big .unit {
+  font-size: 1rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-left: .12rem;
+}
+.mon-dw-right { text-align: right; }
+.mon-dw-right b {
+  display: block;
+  font-size: 1.05rem;
+  font-variant-numeric: tabular-nums;
+  margin-top: .1rem;
+}
+
+/* ---- 容量条 ---- */
+.mon-dw-bar {
+  height: 8px;
+  border-radius: 5px;
+  background: var(--bg-hover);
+  overflow: hidden;
+}
+.mon-dw-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 5px;
+  transition: width .5s ease;
+}
+.mon-dw-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .2rem 1rem;
+  margin-top: .5rem;
+  font-size: .78rem;
+  color: var(--text-secondary);
+}
+.mon-dw-legend b { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+
+/* ---- 分节标题 ---- */
+.mon-dw-sec {
+  margin-top: 1.15rem !important;
+  margin-bottom: -.35rem !important;
+  font-size: .78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: .5rem;
+}
+.mon-dw-sec .faint { font-weight: 400; }
+
+/* ---- 提示条 ---- */
+.mon-dw-note {
+  display: flex;
+  align-items: flex-start;
+  gap: .5rem;
+  padding: .6rem .7rem;
+  border-radius: 8px;
+  font-size: .82rem;
+  line-height: 1.55;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+.mon-dw-note .ico { flex: none; margin-top: .1rem; }
+.mon-dw-note.warn {
+  background: var(--warning-soft);
+  border-color: color-mix(in srgb, var(--warning) 35%, transparent);
+  color: var(--text-primary);
+}
+.mon-dw-note.crit {
+  background: var(--danger-soft);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+  color: var(--text-primary);
+}
+.mon-dw-note.sleep {
+  background: var(--bg-card);
+  color: var(--text-secondary);
+}
+
+/* ---- 键值信息表 ---- */
+.mon-dw-kv {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: .45rem .9rem;
+  margin: 0;
+  font-size: .84rem;
+}
+.mon-dw-kv dt { color: var(--text-secondary); white-space: nowrap; }
+.mon-dw-kv dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+}
+.mon-dw-kv dd .faint { color: var(--text-muted); }
+
+/* ---- SMART 表 ---- */
+.mon-dw-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .82rem;
+}
+.mon-dw-table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-muted);
+  padding: .3rem .4rem;
+  border-bottom: 1px solid var(--border);
+  font-size: .75rem;
+}
+.mon-dw-table th.r, .mon-dw-table td.r { text-align: right; }
+.mon-dw-table td {
+  padding: .42rem .4rem;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-primary);
+}
+.mon-dw-table tr:last-child td { border-bottom: none; }
+.mon-dw-table .num { font-variant-numeric: tabular-nums; }
+.mon-dw-table .st-warn { color: var(--warning); }
+.mon-dw-table .st-crit { color: var(--danger); }
+.mon-dw-table .st-ok { color: var(--success); }
+.mon-dw-table .faint { color: var(--text-muted); }
+.mon-dw-table .pill {
+  display: inline-block;
+  padding: .05rem .45rem;
+  border-radius: 999px;
+  font-size: .72rem;
+  line-height: 1.5;
+}
+.mon-dw-table .pill.warn {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+.mon-dw-table .pill.crit {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.mon-dw-hint {
+  font-size: .76rem;
+  color: var(--text-muted);
+  padding: .5rem .4rem 0;
+  line-height: 1.6;
+}
+
+/* ---- 盘位卡片变为可点击 ---- */
+.mon-bay[data-clickable="1"] { cursor: pointer; }
+.mon-bay[data-clickable="1"]:hover {
+  background: var(--tray-hi);
+  box-shadow: var(--tray-shadow), 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.mon-bay[data-clickable="1"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---- 窄屏：抽屉占满宽度 ---- */
+@media (max-width: 560px) {
+  .mon-drawer { width: 100vw; }
+  .mon-dw-big { font-size: 2.1rem; }
+}
 
 /* ---- 窄屏 ---- */
 @media (max-width: 900px) {
