@@ -118,7 +118,12 @@ def _nz(v):
 
 
 def _mbf(float_val):
-    """字节 → 可读字符串。"""
+    """字节 → 可读字符串（1024 进制）。
+
+    ⚠️ 只用于内存 / Swap / 显存等「操作系统按二进制计量」的场景。
+    硬盘与存储池容量必须用 _dsize()（十进制），否则与 fnOS 存储页、
+    磁盘厂商标称容量对不上（1 TB 盘显示成 0.91 TiB 就是这个原因）。
+    """
     units = ["B", "KB", "MB", "GB", "TB", "PB"]
     v = float(float_val)
     i = 0
@@ -126,6 +131,31 @@ def _mbf(float_val):
         v /= 1024.0
         i += 1
     return "%.1f %s" % (v, units[i])
+
+
+def _dsize(float_val):
+    """字节 → 硬盘/存储池容量字符串（十进制，与 fnmonitor F.dsize 一致）。
+
+    口径：T=1e12, G=1e9, M=1e6 —— 与磁盘厂商标称容量、fnOS 存储页一致。
+    显示规则（照搬 fnmonitor）：
+      ≥100 TB/GB 取整、≥10 取 1 位小数、否则 2 位小数；
+      GB 以上才带小数，MB 为整数。
+    """
+    try:
+        b = float(float_val)
+    except Exception:
+        return "—"
+    if b <= 0:
+        return "0 MB"
+    T, G, M = 1e12, 1e9, 1e6
+    if b >= T:
+        v = b / T
+        return ("%d TB" % round(v)) if v >= 100 else \
+               (("%.1f TB" % v) if v >= 10 else ("%.2f TB" % v))
+    if b >= G:
+        v = b / G
+        return ("%d GB" % round(v)) if v >= 100 else ("%.1f GB" % v)
+    return "%d MB" % round(b / M)
 
 
 def _pct(part, total):
@@ -186,15 +216,19 @@ _WHOLE_DISK_RE = re.compile(r"^(?:sd[a-z]{1,3}|nvme\d+n\d+|vd[a-z]{1,3}|xvd[a-z]
 def disk_usage(mountpoint):
     """statvfs 读取挂载点容量。
 
-    ⚠️ 口径：free 用 f_bavail（普通用户真正可用），used = total - f_bavail。
-    f_bfree 含 ext4 保留块，用 total - f_bfree 会把保留块算成已用 → 百分比恒 100%。
+    ⚠️ 口径（与 fnmonitor / fnOS 存储页一致）：
+    - total = f_blocks × f_frsize
+    - used  = (f_blocks - f_bfree) × f_frsize —— 含 ext4 保留块，
+      与系统 df 的 Used 列、fnOS 存储页、fnmonitor 完全同源；
+    - free  = f_bavail × f_frsize —— 普通用户真正可用的空间（保留块不给普通用户）。
+    所以 free 与 total - used 并不相等，差值就是保留块。
     fsid 用于同一文件系统的多挂载点去重（fnOS 的 btrfs 子卷与存储池同 fsid）。
     """
     try:
         st = os.statvfs(mountpoint)
         total = st.f_blocks * st.f_frsize
         free = st.f_bavail * st.f_frsize
-        used = max(0, total - free)
+        used = max(0, (st.f_blocks - st.f_bfree) * st.f_frsize)
         return {
             "total": total, "used": used, "free": free,
             "percent": _pct(used, total),
@@ -263,21 +297,52 @@ def collect_disks():
     return disks
 
 
+def _pool_mountpoints():
+    """列出 fnOS 存储池的挂载点（/vol1、/vol2 …）。
+
+    ⚠️ 必须以 /proc/mounts 的**挂载点**为准，不能用 glob 扫 /vol[0-9]* 目录：
+    fnOS 的系统盘虽然挂在 /（ext4），但磁盘根目录下同样存在 /vol00 这个
+    普通目录 —— glob 会把它当存储池收进来，于是把 62.5 GB 的系统盘算进
+    存储池总量（表现为「4 个存储池 / 2.4 TB」），与 fnOS 存储页和 fnmonitor
+    的「3 个存储池」对不上。
+
+    另外系统卷编号是 vol00（没有独立挂载点），存储池编号从 vol1 起；
+    这里同时排除 vol00，双保险。
+    """
+    out = []
+    for m in read_mounts():
+        mp = m["mount"]
+        if not re.match(r"^/vol[1-9][0-9]*$", mp):
+            continue
+        if m["fs"] in _PSEUDO_FS:
+            continue
+        if "ro" in (m.get("opts") or []):
+            continue
+        if mp not in out:
+            out.append(mp)
+    return out
+
+
 def collect_volumes():
     """fnOS 存储池容量（/volN）。
 
     与 collect_disks 的区别：这里只取 fnOS 的存储池挂载点 /volN。
     只统计池级别容量，不下钻子目录 —— 与 fnmonitor 行为一致，
     避免每个池的每个一级子目录都做一次 statvfs（纯浪费 IO）。
+
+    口径对齐 fnmonitor / fnOS 存储页：
+    - 只统计存储池挂载点，系统盘（vol00 / 挂在 / 的 ext4）不计入；
+    - 无存储池时回退为 collect_disks() 的结果（开发机 / 普通 Linux）。
     """
     volumes = []
     seen = set()
-    candidates = sorted(glob.glob("/vol[0-9]*"))
-    # 回退源：从 /proc/mounts 里找挂载点形如 /volN 的文件系统
+    candidates = _pool_mountpoints()
     if not candidates:
-        for m in read_mounts():
-            if re.match(r"^/vol[0-9]+$", m["mount"]):
-                candidates.append(m["mount"])
+        # 回退：没有 /volN 挂载点时，用文件系统清单里容量最大的当"池"
+        ds = collect_disks()
+        if ds:
+            d = ds[0]
+            candidates = [d["mount"]]
     for vol in candidates:
         try:
             if vol in seen or not os.path.isdir(vol):
@@ -289,13 +354,11 @@ def collect_volumes():
             volumes.append({
                 "name": os.path.basename(vol),
                 "path": vol,
-                "total": usage["total"],
-                "used": usage["used"],
-                "free": usage["free"],
+                "total": usage["total"], "used": usage["used"], "free": usage["free"],
                 "percent": usage["percent"],
-                "totalText": _mbf(usage["total"]),
-                "usedText": _mbf(usage["used"]),
-                "freeText": _mbf(usage["free"]),
+                "totalText": _dsize(usage["total"]),
+                "usedText": _dsize(usage["used"]),
+                "freeText": _dsize(usage["free"]),
             })
         except Exception:
             continue
@@ -725,11 +788,11 @@ def collect_disks_detail(prev=None, with_states=True, health_prev=None):
             "vendor": vendor or old.get("vendor", ""),
             "serial": serial or old.get("serial", ""),
             "size": size or old.get("size", 0),
-            "sizeText": _mbf(size) if size else (old.get("sizeText") or "—"),
+            "sizeText": _dsize(size) if size else (old.get("sizeText") or "—"),
             "used": used,
             "total": total,
             "percent": percent,
-            "usedText": _mbf(used) if used else "—",
+            "usedText": _dsize(used) if used else "—",
             "mounts": mount_paths,
             # 所属存储空间编号：挂载点形如 /volN 的取 N（fnOS「存储空间 N」= /volN）。
             # 没挂载到存储池（纯系统盘 / 未挂载）返回 0，前端标「未挂载」。
@@ -822,7 +885,7 @@ def _collect_disks_detail_sysfs(prev_by):
             "vendor": old.get("vendor", ""),
             "serial": old.get("serial", ""),
             "size": size,
-            "sizeText": _mbf(size) if size else (old.get("sizeText") or "—"),
+            "sizeText": _dsize(size) if size else (old.get("sizeText") or "—"),
             "used": old.get("used", 0),
             "total": old.get("total", 0),
             "percent": old.get("percent", 0.0),
@@ -1900,16 +1963,20 @@ class StorageMonitor:
                 })
         total = sum(v.get("total", 0) for v in volumes)
         used = sum(v.get("used", 0) for v in volumes)
-        free = sum(v.get("free", 0) for v in volumes)
+        # 汇总的"可用空间"用 total - used（与 fnmonitor 的
+        # `dsizeStr(o.disk_size - o.disk_used)` 同一口径），
+        # 而不是逐池 free 相加 —— 后者是 f_bavail（不含保留块），
+        # 与"总容量 - 已用"对不上，两处显示会差出几个 GB。
+        free = max(0, total - used)
         return {
             "poolCount": len(volumes),
             "diskCount": len(disks),
             "sleepingCount": sum(1 for d in disks if d.get("standby")),
             "total": total, "used": used, "free": free,
             "percent": _pct(used, total),
-            "totalText": _mbf(total) if total else "—",
-            "usedText": _mbf(used) if used else "—",
-            "freeText": _mbf(free) if free else "—",
+            "totalText": _dsize(total) if total else "—",
+            "usedText": _dsize(used) if used else "—",
+            "freeText": _dsize(free) if free else "—",
             "grades": counts,
             "warnDisks": warn_disks,
             "raidCount": len(data.get("raid") or []),

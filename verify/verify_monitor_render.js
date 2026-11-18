@@ -69,7 +69,7 @@ const FULL = {
     volumes: [{
       name: 'vol1', path: '/vol1',
       total: 500 * GIB, used: 312.5 * GIB, free: 187.5 * GIB, percent: 62,
-      totalText: '500.0 GB', usedText: '312.5 GB', freeText: '187.5 GB',
+      totalText: '500 GB', usedText: '313 GB', freeText: '188 GB',
       children: [
         { name: '1000', total: 100 * GIB, used: 60 * GIB, free: 40 * GIB, percent: 60 },
         { name: '2000', total: 200 * GIB, used: 150 * GIB, free: 50 * GIB, percent: 75 },
@@ -81,11 +81,11 @@ const FULL = {
     disks: [
       {
         name: 'sda', model: 'WDC WD40EFZX-68AWUN0', vendor: 'ATA', type: 'disk',
-        size: 4000653453312, sizeText: '3.64 TB',
+        size: 4000653453312, sizeText: '4.00 TB',
         serial: 'WD-WX32D0051234', temp: 34, rpm: '5400 rpm',
         health: 'PASSED', grade: 'ok', gradeLabel: '正常', detail: '未发现异常计数',
         mounts: ['/vol1'], vol: 1, used: 250 * GIB, total: 4000653453312,
-        percent: 6.4, usedText: '250.0 GB',
+        percent: 6.4, usedText: '250 GB',
         standby: false, proto: 'SATA',
         reallocated_sectors: 0, reallocated_events: 0,
         pending_sectors: 0, offline_uncorrectable: 0,
@@ -93,12 +93,12 @@ const FULL = {
       },
       {
         name: 'sdb', model: 'WDC WD40EFZX-68AWUN0', vendor: 'ATA', type: 'disk',
-        size: 4000653453312, sizeText: '3.64 TB',
+        size: 4000653453312, sizeText: '4.00 TB',
         serial: 'WD-WX32D0055678', temp: 41, rpm: '5400 rpm',
         health: 'PASSED', grade: 'warn', gradeLabel: '留意',
         detail: '重映射扇区计数 3',
         mounts: ['/vol1'], vol: 1, used: 300 * GIB, total: 4000653453312,
-        percent: 7.7, usedText: '300.0 GB',
+        percent: 7.7, usedText: '300 GB',
         standby: false, proto: 'SATA',
         reallocated_sectors: 3, reallocated_events: 3,
         pending_sectors: 0, offline_uncorrectable: 0,
@@ -106,12 +106,12 @@ const FULL = {
       },
       {
         name: 'sdc', model: 'Samsung SSD 870 EVO 1TB', vendor: 'ATA', type: 'SSD',
-        size: 1000204886016, sizeText: '931.5 GB',
+        size: 1000204886016, sizeText: '1.00 TB',
         serial: 'S6P2NJ0T123456', temp: null, rpm: 'Solid State Device',
         health: 'PASSED', grade: 'crit', gradeLabel: '故障',
         detail: '不可纠正扇区计数 2；待映射扇区 5',
         mounts: ['/vol2'], vol: 2, used: 500 * GIB, total: 1000204886016,
-        percent: 51.2, usedText: '500.0 GB',
+        percent: 51.2, usedText: '500 GB',
         standby: false, proto: 'SATA',
         reallocated_sectors: 10, reallocated_events: 10,
         pending_sectors: 5, offline_uncorrectable: 2,
@@ -119,7 +119,7 @@ const FULL = {
       },
       {
         name: 'sdd', model: 'ST4000VN008-2DR166', vendor: 'ATA', type: 'HDD',
-        size: 4000787030016, sizeText: '3.64 TB',
+        size: 4000787030016, sizeText: '4.00 TB',
         serial: 'ZDH1AAAA', temp: 36, rpm: '5900 rpm',
         health: 'PASSED', grade: 'unknown', gradeLabel: '未知',
         detail: '休眠中，未唤醒检测',
@@ -160,7 +160,7 @@ const FULL = {
     summary: {
       poolCount: 1, diskCount: 4, sleepingCount: 1,
       total: 500 * GIB, used: 312.5 * GIB, free: 187.5 * GIB,
-      totalText: '500.0 GB', usedText: '312.5 GB', freeText: '187.5 GB',
+      totalText: '500 GB', usedText: '313 GB', freeText: '188 GB',
       percent: 62,
       grades: { ok: 1, warn: 1, crit: 1, unknown: 1 },
       warnDisks: [{ name: 'sdb', grade: 'warn', detail: '重映射扇区计数 3' },
@@ -262,6 +262,11 @@ if (html) {
     ['进度条露出填充段', 'background-size:'],
     ['点阵按位置取色阶', 'style="fill:color-mix(in oklch'],
     ['存储池数字走文字色阶', 'style="color:'],
+    // 容量单位必须用十进制（与 fnmonitor F.dsize / fnOS 存储页一致）：
+    // 1 TB 盘不能显示成 931.5 GB。这里断言后端下发的十进制文本被原样透传。
+    ['存储池容量十进制文本', '>500 GB<'],
+    ['存储池已用十进制文本', '>313 GB<'],
+    ['盘位容量十进制文本', '250 GB / 4.00 TB'],
   ];
   let bad = 0;
   checks.forEach(([label, needle]) => {
@@ -290,6 +295,30 @@ if (html) {
   });
   if (bad) { console.error('❌ 缺少 ' + bad + ' 个预期片段'); process.exitCode = 1; }
 }
+
+/* ---------- 源码级断言：容量单位进制不能被改回去 ---------- */
+(function checkDecimalUnits() {
+  console.log('\n--- 容量单位进制（源码级）---');
+  const src = fs.readFileSync(SRC, 'utf8');
+  const rules = [
+    ['fmtDisk 函数存在', /function fmtDisk\s*\(/],
+    ['fmtDisk 用十进制常量 1e12', /var T = 1e12, G = 1e9, M = 1e6/],
+    ['存储池汇总用 fmtDisk', /totText = fmtDisk\(tSum\)/],
+    ['盘位容量行用 fmtDisk', /d\.usedText \|\| fmtDisk\(d\.used \|\| 0\)/],
+    // 内存/Swap/显存仍走 1024 进制（fnmonitor 的 F.bytes），不能被一起改成十进制
+    ['Swap 仍用 fmtBytes', /fmtBytes\(mem\.swapTotal\)/],
+    ['显存仍用 fmtBytes', /fmtBytes\(g\.memTotal\)/],
+    // fmtBytes 不能被改成十进制
+    ['fmtBytes 仍按 1024 递减', /while \(v >= 1024 && i < units\.length - 1\)/],
+  ];
+  let bad = 0;
+  rules.forEach(([label, re]) => {
+    const ok = re.test(src);
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+  if (bad) { console.error('❌ 容量单位断言失败 ' + bad + ' 项'); process.exitCode = 1; }
+})();
 
 renderCase('空对象', { storage: {} });
 renderCase('storage 缺失', { success: true });

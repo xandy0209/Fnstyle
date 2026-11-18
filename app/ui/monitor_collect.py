@@ -103,6 +103,28 @@ def _mbf(float_val):
     return "%.1f %s" % (v, units[i])
 
 
+def _dsize(float_val):
+    """字节 → 硬盘/存储池容量字符串（十进制，与 fnmonitor F.dsize 一致）。
+
+    口径：T=1e12, G=1e9, M=1e6 —— 与磁盘厂商标称容量、fnOS 存储页一致。
+    """
+    try:
+        b = float(float_val)
+    except Exception:
+        return "—"
+    if b <= 0:
+        return "0 MB"
+    T, G, M = 1e12, 1e9, 1e6
+    if b >= T:
+        v = b / T
+        return ("%d TB" % round(v)) if v >= 100 else \
+               (("%.1f TB" % v) if v >= 10 else ("%.2f TB" % v))
+    if b >= G:
+        v = b / G
+        return ("%d GB" % round(v)) if v >= 100 else ("%.1f GB" % v)
+    return "%d MB" % round(b / M)
+
+
 def _pct(part, total):
     if not total:
         return 0
@@ -159,10 +181,16 @@ def collect_storage():
 
 
 def _collect_storage_fallback():
-    """storage_collect 不可用时的兜底：只统计 /volN 容量。"""
+    """storage_collect 不可用时的兜底：只统计 /volN 容量。
+
+    ⚠️ 口径与主路径一致：排除系统卷 vol00（它只是磁盘根目录下的普通目录，
+    不是存储池挂载点），容量文本用十进制。
+    """
     volumes = []
     try:
         for vol in sorted(glob.glob("/vol[0-9]*")):
+            if os.path.basename(vol) == "vol00":
+                continue
             if not os.path.isdir(vol):
                 continue
             usage = _disk_usage(vol)
@@ -172,22 +200,30 @@ def _collect_storage_fallback():
                 "name": os.path.basename(vol), "path": vol,
                 "total": usage["total"], "used": usage["used"], "free": usage["free"],
                 "percent": usage["percent"],
-                "totalText": _mbf(usage["total"]),
-                "usedText": _mbf(usage["used"]),
-                "freeText": _mbf(usage["free"]),
+                "totalText": _dsize(usage["total"]),
+                "usedText": _dsize(usage["used"]),
+                "freeText": _dsize(usage["free"]),
             })
     except Exception:
         pass
+    _sum_total = sum(v["total"] for v in volumes)
+    _sum_used = sum(v["used"] for v in volumes)
+    _sum_free = max(0, _sum_total - _sum_used)
     return {"volumes": volumes, "filesystems": [], "disks": [], "diskio": [],
             "raid": [], "raidcard": {"type": "none", "label": "", "detail": "",
                                      "tool": "", "controllers": [], "error": ""},
             "scan": {"last_ts": 0.0, "running": False, "summary": {}, "error": ""},
             "scanLog": [],
             "summary": {"poolCount": len(volumes), "diskCount": 0, "sleepingCount": 0,
-                        "total": sum(v["total"] for v in volumes),
-                        "used": sum(v["used"] for v in volumes),
-                        "free": sum(v["free"] for v in volumes),
-                        "percent": 0, "grades": {"ok": 0, "warn": 0, "crit": 0, "unknown": 0},
+                        "total": _sum_total,
+                        "used": _sum_used,
+                        "free": _sum_free,
+                        "percent": (int(round(100.0 * _sum_used / _sum_total))
+                                    if _sum_total else 0),
+                        "totalText": _dsize(_sum_total) if _sum_total else "—",
+                        "usedText": _dsize(_sum_used) if _sum_used else "—",
+                        "freeText": _dsize(_sum_free) if _sum_free else "—",
+                        "grades": {"ok": 0, "warn": 0, "crit": 0, "unknown": 0},
                         "warnDisks": [], "raidCount": 0, "raidCardType": "none"},
             "available": bool(volumes)}
 
@@ -195,15 +231,15 @@ def _collect_storage_fallback():
 def _disk_usage(path):
     """statvfs 读取挂载点容量。
 
-    ⚠️ 口径：free 用 f_bavail（普通用户真正可用），used = total - f_bavail。
-    f_bfree 含 ext4 保留块，用 total - f_bfree 会把保留块算成已用 → 百分比恒 100%
-    （实测 vol1 62.5G 显示 100%，但实际可用还有 48.2G）。
+    ⚠️ 口径（与 storage_collect / fnmonitor / fnOS 存储页一致）：
+    - used = (f_blocks - f_bfree) × f_frsize（含 ext4 保留块，同系统 df）
+    - free = f_bavail × f_frsize（普通用户真正可用）
     """
     try:
         st = os.statvfs(path)
         total = st.f_blocks * st.f_frsize
         free = st.f_bavail * st.f_frsize
-        used = max(0, total - free)
+        used = max(0, (st.f_blocks - st.f_bfree) * st.f_frsize)
         return {"total": total, "used": used, "free": free,
                 "percent": _pct(used, total)}
     except Exception:

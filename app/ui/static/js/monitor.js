@@ -33,6 +33,26 @@
     return (i === 0 ? v.toFixed(0) : v.toFixed(1)) + ' ' + units[i];
   }
 
+  /* 硬盘 / 存储池容量格式化（十进制，与 fnmonitor F.dsize 和 fnOS 存储页一致）。
+     磁盘厂商标称 1 TB = 10^12 字节，若用 1024 进制会显示成 0.91 TB，
+     与系统存储页、fnmonitor 的数字都对不上。
+     舍入规则照搬 fnmonitor：≥100 取整、≥10 取 1 位小数、否则 2 位小数。 */
+  function fmtDisk(n) {
+    if (n === null || n === undefined || isNaN(n)) return '—';
+    var b = Number(n);
+    if (b <= 0) return '0 MB';
+    var T = 1e12, G = 1e9, M = 1e6;
+    if (b >= T) {
+      var vt = b / T;
+      return (vt >= 100 ? vt.toFixed(0) : vt >= 10 ? vt.toFixed(1) : vt.toFixed(2)) + ' TB';
+    }
+    if (b >= G) {
+      var vg = b / G;
+      return (vg >= 100 ? vg.toFixed(0) : vg.toFixed(1)) + ' GB';
+    }
+    return Math.round(b / M) + ' MB';
+  }
+
   /* 百分比 → 等级（用于条形/温度着色）。warn 从 70% 起，high 从 90% 起。 */
   function level(pct, warnAt, highAt) {
     if (pct === null || pct === undefined || isNaN(pct)) return 'ok';
@@ -312,7 +332,7 @@
       });
       if (tSum) {
         totBytes = tSum; usedBytes = uSum; freeBytes = fSum;
-        totText = fmtBytes(tSum); usedText = fmtBytes(uSum); freeText = fmtBytes(fSum);
+        totText = fmtDisk(tSum); usedText = fmtDisk(uSum); freeText = fmtDisk(fSum);
       }
     }
     var poolPct = (sum.percent !== undefined && sum.percent !== null)
@@ -376,8 +396,8 @@
 
         // 容量行：已挂载显示占用率 + 已用/总量；未挂载显示裸容量
         var capTxt = hasCap
-          ? Math.round(pct) + '% · ' + (d.usedText || fmtBytes(d.used || 0)) +
-            ' / ' + (d.totalText || fmtBytes(d.total || 0))
+          ? Math.round(pct) + '% · ' + (d.usedText || fmtDisk(d.used || 0)) +
+            ' / ' + (d.totalText || fmtDisk(d.total || 0))
           : (d.sizeText || '—') + ' · 未挂载';
 
         // 实时 IO：整合原「物理磁盘」表里的读写列

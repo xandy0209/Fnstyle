@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 import storage_collect as sc
 
 GIB = 1024 ** 3
+TIB = 1024 ** 4
 
 PASS = []
 FAIL = []
@@ -23,7 +24,13 @@ print("=" * 60)
 print("1. 基础工具函数")
 print("=" * 60)
 check("_nz 空值→None", sc._nz(None) is None and sc._nz("") is None and sc._nz("12") == 12)
-check("_mbf 格式化", sc._mbf(500 * GIB).endswith("GB"), sc._mbf(500 * GIB))
+check("_mbf 格式化（1024 进制，内存用）", sc._mbf(500 * GIB).endswith("GB"), sc._mbf(500 * GIB))
+check("_dsize 十进制（硬盘容量用）", sc._dsize(500 * 10**9) == "500 GB", sc._dsize(500 * 10**9))
+check("_dsize TB 两位小数", sc._dsize(2.559 * 10**12) == "2.56 TB", sc._dsize(2.559 * 10**12))
+check("_dsize TB ≥100 取整", sc._dsize(120 * 10**12) == "120 TB", sc._dsize(120 * 10**12))
+check("_dsize 与 1024 进制不同（1TB 盘≠0.91TiB）",
+      sc._dsize(10**12) == "1.00 TB" and sc._mbf(10**12) == "931.3 GB",
+      sc._dsize(10**12) + " vs " + sc._mbf(10**12))
 check("_pct 口径", sc._pct(50, 100) == 50)
 check("_pct 零分母", sc._pct(1, 0) == 0)
 check("_vol_of 取存储空间号", sc._vol_of(["/vol2"]) == 2)
@@ -34,7 +41,75 @@ check("_vol_of 忽略非存储池路径", sc._vol_of(["/home/x", "/vol5/sub"]) =
 
 print()
 print("=" * 60)
-print("2. 存储池容量（volumes）")
+print("2. 存储池口径（与 fnmonitor / fnOS 存储页对齐）")
+print("=" * 60)
+# —— 真实逻辑测试：桩掉 read_mounts / disk_usage，跑真正的 collect_volumes ——
+_orig_collect_volumes = sc.collect_volumes
+_orig_read_mounts = sc.read_mounts
+_orig_disk_usage = sc.disk_usage
+try:
+    FAKE_MOUNTS = [
+        {"device": "/dev/sdc2", "mount": "/", "fs": "ext4", "opts": ["rw"]},
+        {"device": "/dev/mapper/trim_aaa", "mount": "/vol1", "fs": "ext4", "opts": ["rw"]},
+        {"device": "/dev/mapper/trim_bbb", "mount": "/vol2", "fs": "btrfs", "opts": ["rw"]},
+        {"device": "/dev/mapper/trim_ccc", "mount": "/vol3", "fs": "btrfs", "opts": ["rw"]},
+        {"device": "trimafs", "mount": "/fs", "fs": "trimafs", "opts": ["rw"]},
+    ]
+    # 系统盘 62.5 GB；三个存储池 58.7 / 499.9 / 2000.2 GB（十进制字节）
+    FAKE_USAGE = {
+        "/": {"total": 67119927296, "used": 15393316864, "free": 51726610432,
+              "percent": 23, "fsid": 1},
+        "/vol1": {"total": 58773143552, "used": 7214465024, "free": 51558678528,
+                  "percent": 12, "fsid": 2},
+        "/vol2": {"total": 499969425408, "used": 36776071168, "free": 463193354240,
+                  "percent": 7, "fsid": 3},
+        "/vol3": {"total": 2000259383296, "used": 1723500535808, "free": 276758847488,
+                  "percent": 86, "fsid": 4},
+        "/fs": {"total": 2559001952256, "used": 1767491072000, "free": 791510880256,
+                "percent": 69, "fsid": 5},
+    }
+    sc.read_mounts = lambda: list(FAKE_MOUNTS)
+    sc.disk_usage = lambda mp: dict(FAKE_USAGE.get(mp, {"total": 0, "used": 0,
+                                                         "free": 0, "percent": 0, "fsid": 0}))
+    # 测试机上没有 /volN 目录，桩掉 isdir 让逻辑走通
+    _orig_isdir = sc.os.path.isdir
+    sc.os.path.isdir = lambda p: True
+    try:
+        vols = sc.collect_volumes()
+    finally:
+        sc.os.path.isdir = _orig_isdir
+    names = sorted(v["name"] for v in vols)
+    check("存储池只含 vol1/vol2/vol3（排除系统卷 vol00 与系统盘 /）",
+          names == ["vol1", "vol2", "vol3"], names)
+    check("存储池不含 /fs（trimafs 不是存储池挂载点）",
+          not any(v["path"] == "/fs" for v in vols))
+    tot = sum(v["total"] for v in vols)
+    used = sum(v["used"] for v in vols)
+    check("三池总容量 = 2559001952256", tot == 2559001952256, tot)
+    check("总容量文本用十进制 → 2.56 TB",
+          any(v["totalText"] == "2.00 TB" for v in vols), [v["totalText"] for v in vols])
+    check("vol2 容量文本 → 500 GB（十进制，非 465.6 GB）",
+          any(v["name"] == "vol2" and v["totalText"] == "500 GB" for v in vols),
+          [(v["name"], v["totalText"]) for v in vols])
+
+    # 汇总口径：free = total - used（fnmonitor 同源），不含系统盘
+    inst = sc.StorageMonitor.__new__(sc.StorageMonitor)
+    summ = inst._summarize({"volumes": vols, "disks": []})
+    check("summary.poolCount = 3", summ["poolCount"] == 3, summ["poolCount"])
+    check("summary.totalText = 2.56 TB", summ["totalText"] == "2.56 TB", summ["totalText"])
+    check("summary.usedText = 1.77 TB", summ["usedText"] == "1.77 TB", summ["usedText"])
+    check("summary.freeText = 792 GB", summ["freeText"] == "792 GB", summ["freeText"])
+    check("summary.percent = 69", summ["percent"] == 69, summ["percent"])
+    check("summary 不含系统盘容量（< 2.6 TB）",
+          summ["total"] == 2559001952256, summ["total"])
+finally:
+    sc.collect_volumes = _orig_collect_volumes
+    sc.read_mounts = _orig_read_mounts
+    sc.disk_usage = _orig_disk_usage
+
+print()
+print("=" * 60)
+print("2b. 存储池容量（volumes）结构")
 print("=" * 60)
 sc.collect_volumes = lambda: [{
     "name": "vol1", "path": "/vol1",
