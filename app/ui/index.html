@@ -35,7 +35,7 @@
     </div>
     <!-- 顶栏右侧：当前版本号 + 检查更新入口 + 新页面打开 -->
     <div class="topbar-right" id="topbarUpdate">
-      <span class="ver-pill" id="verPill" title="当前版本">v1.1.31</span>
+      <span class="ver-pill" id="verPill" title="当前版本">v1.1.32</span>
       <span class="ub-status" id="tbUpdateStatus"></span>
       <button class="btn sm icon-btn" id="tbCheckUpdate" type="button" title="检查更新" aria-label="检查更新">
         <svg class="upd-ico" viewBox="0 0 24 24" aria-hidden="true">
@@ -146,11 +146,12 @@
     <!-- 1. 存储 -->
     <div class="card">
       <header>
-        <h2><span>💾</span> 存储</h2>
+        <h2><span>💾</span> 存储<span class="theme-count" id="monStoreCount">—</span></h2>
         <div class="spacer"></div>
         <button class="btn sm" id="btnMonScan" type="button"
                 title="立即对所有硬盘做一次 SMART 巡检并入库">🔍 立即巡检</button>
-        <span class="theme-count" id="monStoreCount">—</span>
+        <button class="btn sm" id="btnMonScanLog" type="button"
+                title="查看历史巡检记录">🗂 巡检历史</button>
       </header>
       <div class="body">
         <div class="mon-grid" id="monStorage">
@@ -321,19 +322,42 @@
   </div>
 </div>
 
-<!-- ================== 硬盘详情抽屉（右侧滑出） ================== -->
+<!-- ================== 硬盘详情抽屉（右侧滑出） ==================
+     顶部标题改成一个下拉：列出所有硬盘，切换即换盘，不用回列表再点一次。 -->
 <div class="mon-drawer-overlay" id="monDrawerOverlay" hidden>
   <aside class="mon-drawer" role="dialog" aria-modal="true"
          aria-labelledby="monDrawerTitle">
     <header class="mon-drawer-head">
       <div class="mon-drawer-head-main">
-        <h3 id="monDrawerTitle">硬盘详情</h3>
+        <h3 id="monDrawerTitle" class="mon-dw-picker-h">
+          <span class="mon-dw-picker">
+            <select id="monDrawerDiskSel" class="mon-dw-picker-sel"
+                    aria-label="选择要查看的硬盘"></select>
+            <span class="mon-dw-picker-arrow" aria-hidden="true">▾</span>
+          </span>
+        </h3>
         <p class="mon-drawer-sub" id="monDrawerSub"></p>
       </div>
       <button type="button" class="mon-drawer-close" id="btnCloseMonDrawer"
               title="关闭（Esc）" aria-label="关闭">✕</button>
     </header>
     <div class="mon-drawer-body" id="monDrawerBody"></div>
+  </aside>
+</div>
+
+<!-- ================== 巡检历史抽屉（右侧滑出） ================== -->
+<div class="mon-drawer-overlay" id="monScanLogOverlay" hidden>
+  <aside class="mon-drawer" role="dialog" aria-modal="true"
+         aria-labelledby="monScanLogTitle">
+    <header class="mon-drawer-head">
+      <div class="mon-drawer-head-main">
+        <h3 id="monScanLogTitle">巡检历史</h3>
+        <p class="mon-drawer-sub" id="monScanLogSub"></p>
+      </div>
+      <button type="button" class="mon-drawer-close" id="btnCloseMonScanLog"
+              title="关闭（Esc）" aria-label="关闭">✕</button>
+    </header>
+    <div class="mon-drawer-body" id="monScanLogBody"></div>
   </aside>
 </div>
 

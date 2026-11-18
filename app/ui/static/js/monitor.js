@@ -382,17 +382,140 @@
     return 'color-mix(in oklch, var(--rt-l) ' + Math.round(t * 100) + '%, var(--rt-g))';
   }
 
-  function smartFlagsHtml(d) {
-    /* 有告警计数的项标红，无数据的显示 — */
-    var out = '';
-    SMART_KEYS.forEach(function (k) {
-      var v = d[k[0]];
-      var txt = (v === null || v === undefined || v === '') ? '—' : String(v);
-      var cls = (v !== null && v !== undefined && v !== '' && Number(v) > 0) ? 'crit' : '';
-      out += '<span class="mon-smart-flag ' + cls + '" title="' + esc(k[1]) + '">' +
-        esc(k[1]) + ' <b>' + esc(txt) + '</b></span>';
+  /* smartFlagsHtml 已移除：
+     原「SMART 告警计数」卡片用的徽章式 5 项计数，与硬盘详情抽屉里
+     dwSmartTable() 的 SMART 表（同样的 5 项，且带状态列）完全重复。
+     卡片删掉后这个函数失去唯一调用点，一并清理，避免留下死代码。 */
+
+  /* ==========================================================================
+     巡检历史抽屉
+     巡检记录原先是一张独立的「硬盘巡检」卡片，占掉监控面板一整块位置，
+     但它的信息密度低（时间 + 一句话结论），又和盘位卡片的「巡检于 …」重复。
+     现在改由存储标题栏的「🗂 巡检历史」按钮打开右抽屉查看。
+     ========================================================================== */
+
+  var scanLogOpen = false;
+
+  function monScanLogOverlay() { return $('#monScanLogOverlay'); }
+
+  /* 巡检流水渲染：
+     scan     = { last_ts, running, summary, error }
+     scanLog  = [{ ts, total, changed, summary }]（新→旧）
+     异常轮次永久保留，「未见异常」只留 7 天（后端策略）。 */
+  function renderScanLogHtml(scan, scanLog) {
+    scan = scan || {};
+    scanLog = scanLog || [];
+    var html = '';
+
+    /* 顶部概览：最近一次巡检时间 + 本轮盘数 + 状态 */
+    var lastTs = scan.last_ts || 0;
+    var lastText = lastTs
+      ? new Date(lastTs * 1000).toLocaleString('zh-CN', {
+          month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+        })
+      : '尚未巡检';
+    var ago = scanAgo(lastTs);
+    var counts = (scan.summary && scan.summary.counts) || {};
+
+    html += '<div class="mon-dw-hero"><div>' +
+      '<div class="mon-dw-eyebrow">最近巡检</div>' +
+      '<div class="mon-dw-big" style="font-size:1.25rem">' + esc(lastText) + '</div>' +
+      '</div>' +
+      '<div class="mon-dw-right">' +
+      '<div class="mon-dw-eyebrow">状态</div>' +
+      '<b>' + (scan.running ? '巡检中…' : (lastTs ? (ago || '刚刚') : '未巡检')) + '</b>' +
+      '</div></div>';
+
+    /* 本轮分级统计（后端 summary.counts） */
+    var cntHtml = '';
+    if (counts.ok || counts.warn || counts.crit || counts.unknown) {
+      cntHtml = '<span class="mon-badge ok">正常 ' + (counts.ok || 0) + '</span>' +
+        '<span class="mon-badge warn">留意 ' + (counts.warn || 0) + '</span>' +
+        '<span class="mon-badge crit">故障 ' + (counts.crit || 0) + '</span>' +
+        '<span class="mon-badge unknown">未知 ' + (counts.unknown || 0) + '</span>';
+      html += '<div class="mon-dw-card"><div class="mon-chips">' + cntHtml + '</div></div>';
+    }
+
+    /* 巡检异常：置顶红色提示 */
+    if (scan.error) {
+      html += '<div class="mon-dw-note crit">⚠ <span>巡检异常：' + esc(scan.error) + '</span></div>';
+    }
+
+    /* 流水列表 */
+    html += dwSec('巡检流水', scanLog.length ? ('共 ' + scanLog.length + ' 条') : '');
+    if (scanLog.length) {
+      html += '<div class="mon-slog">' + scanLog.map(function (l) {
+        var cls = l.changed ? 'changed' : 'ok';
+        var when = l.ts ? new Date(l.ts * 1000).toLocaleString('zh-CN', {
+          month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+        }) : '—';
+        var ag = scanAgo(l.ts);
+        var txt = l.summary || '';
+        return '<div class="mon-slog-item ' + cls + '">' +
+          '<div class="mon-slog-head">' +
+            '<span class="mon-slog-time">' + esc(when) + '</span>' +
+            (ag ? '<span class="mon-slog-ago">' + esc(ag) + '</span>' : '') +
+            '<span class="mon-slog-badge ' + cls + '">' +
+              (l.changed ? '有变化' : '未见异常') + '</span>' +
+          '</div>' +
+          '<div class="mon-slog-text' + (txt ? '' : ' empty') + '">' +
+            (txt ? esc(txt) : '无结论') + '</div>' +
+          '</div>';
+      }).join('') + '</div>';
+    } else {
+      html += '<div class="mon-dw-card"><div class="mon-slog-text empty">' +
+        '尚未巡检（首轮巡检在服务启动约 30 秒后进行，之后每 6 小时一轮）</div></div>';
+    }
+
+    return html;
+  }
+
+  function openScanLogDrawer() {
+    var ov = monScanLogOverlay();
+    if (!ov) return;
+    var body = $('#monScanLogBody');
+    var sub = $('#monScanLogSub');
+    if (!body) return;
+    var st = lastData && lastData.storage ? lastData.storage : null;
+    body.innerHTML = renderScanLogHtml((st && st.scan) || {}, (st && st.scanLog) || []);
+    if (sub) {
+      var n = ((st && st.scanLog) || []).length;
+      sub.textContent = n ? ('最近 ' + n + ' 条记录') : '暂无巡检记录';
+    }
+    ov.hidden = false;
+    scanLogOpen = true;
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () { ov.classList.add('on'); });
     });
-    return out;
+  }
+
+  function closeScanLogDrawer() {
+    var ov = monScanLogOverlay();
+    if (!ov) return;
+    ov.classList.remove('on');
+    scanLogOpen = false;
+    setTimeout(function () {
+      if (!scanLogOpen) ov.hidden = true;
+    }, 320);
+  }
+
+  function bindScanLogDrawer() {
+    var ov = monScanLogOverlay();
+    if (!ov || ov.__bound) return;
+    ov.__bound = true;
+    ov.addEventListener('click', function (e) {
+      if (e.target === ov) closeScanLogDrawer();
+    });
+    var btn = $('#btnCloseMonScanLog');
+    if (btn) btn.addEventListener('click', closeScanLogDrawer);
+    var openBtn = $('#btnMonScanLog');
+    if (openBtn) openBtn.addEventListener('click', openScanLogDrawer);
+    document.addEventListener('keydown', function (e) {
+      if ((e.key === 'Escape' || e.key === 'Esc') && scanLogOpen) {
+        e.preventDefault();
+        closeScanLogDrawer();
+      }
+    });
   }
 
   /* ==========================================================================
@@ -665,13 +788,29 @@
       if (disks[i].name === dev) { d = disks[i]; break; }
     }
     var body = $('#monDrawerBody');
-    var titleEl = $('#monDrawerTitle');
     var subEl = $('#monDrawerSub');
-    if (!body || !titleEl || !subEl) return;
+    var selEl = $('#monDrawerDiskSel');
+    if (!body || !subEl || !selEl) return;
+
+    /* 顶部下拉：列出所有硬盘，切换即换盘。
+       选项文字用「存储空间 volN · 设备名」—— 物理位置 + 设备名都带上，
+       避免同名盘（都是 vol1）分不清。 */
+    selEl.innerHTML = disks.length
+      ? disks.slice().sort(byVol).map(function (x) {
+          return '<option value="' + esc(x.name) + '">' +
+            esc(volLabel(x) + ' · ' + x.name) + '</option>';
+        }).join('')
+      : '<option value="">（无硬盘）</option>';
+
+    /* 只有一块盘时不必给「可切换」的错觉 —— 触发器淡出边框 */
+    var picker = selEl.parentNode;
+    if (picker && picker.classList) {
+      picker.classList.toggle('single', disks.length <= 1);
+    }
 
     if (!d) {
-      titleEl.textContent = '未找到硬盘';
-      subEl.textContent = dev || '';
+      selEl.value = '';
+      subEl.textContent = '未找到硬盘' + (dev ? ' · ' + dev : '');
       body.innerHTML = '<div class="mon-dw-note">它可能已被移除，或尚未被识别。</div>';
       showDrawer();
       return;
@@ -682,8 +821,9 @@
     var pct = Number(d.percent) || 0;
     var io = d._io;
 
-    /* 标题：物理位置；副标题：设备名 · 型号（fnmonitor 同款结构） */
-    titleEl.textContent = '硬盘 ' + volLabel(d);
+    /* 下拉选中当前盘；标题不再重复写「硬盘 …」，位置信息已在下拉里 */
+    selEl.value = d.name;
+    /* 副标题：设备名 · 型号（fnmonitor 同款结构） */
     subEl.textContent = [d.name, vendorModel(d)].filter(Boolean).join(' · ');
 
     var html = '';
@@ -854,7 +994,7 @@
     }, 320);
   }
 
-  /* 事件绑定：盘位点击 / 关闭 / 遮罩 / ESC */
+  /* 事件绑定：盘位点击 / 关闭 / 遮罩 / ESC / 顶部下拉切换硬盘 */
   function bindDrawer() {
     var ov = monDrawerOverlay();
     if (!ov || ov.__bound) return;
@@ -866,6 +1006,19 @@
     });
     var btn = $('#btnCloseMonDrawer');
     if (btn) btn.addEventListener('click', closeDiskDrawer);
+
+    /* 顶部下拉换盘：切到另一块盘就重绘整个抽屉。
+       重绘而不是局部更新 —— 容量/分级/SMART 三块内容都要跟着换，
+       局部更新比全量重绘更容易漏改。 */
+    var sel = $('#monDrawerDiskSel');
+    if (sel) {
+      sel.addEventListener('change', function () {
+        var v = sel.value;
+        if (!v || v === drawerDev) return;
+        openDiskDrawer(v);
+      });
+    }
+
     document.addEventListener('keydown', function (e) {
       if ((e.key === 'Escape' || e.key === 'Esc') && drawerOpen) {
         e.preventDefault();
@@ -1062,27 +1215,9 @@
         '</div>' +
       '</div>';
 
-      /* SMART 明细（每盘 5 项告警计数）—— 盘位卡片放不下的精细数据留在这张表里 */
-      var smartRows = st.disks.map(function (d) {
-        var led = bayLedState(d);
-        var smText = smartAlertsText(led.smart);
-        /* 分级列显示整合后的状态（与盘位 LED 完全一致）：
-           巡检说正常但 SMART 有告警时，这里也要显示「留意」，
-           否则表和灯会自相矛盾。 */
-        var detailTxt = (d.detail ? d.detail : '') +
-          (smText ? (d.detail ? '；' : '') + 'SMART 告警：' + smText : '');
-        return '<tr>' +
-          '<td class="mono">' + esc(d.name) + '</td>' +
-          '<td>' + gradeBadge(led.lv) + '</td>' +
-          '<td class="num">' + (detailTxt ? esc(detailTxt) : '—') + '</td>' +
-          '<td>' + smartFlagsHtml(d) + '</td>' +
-        '</tr>';
-      }).join('');
-      html += item('SMART 告警计数', '5 项',
-        '<div class="mon-table-wrap"><table class="mon-table"><thead><tr>' +
-        '<th>设备</th><th>状态</th><th>说明</th><th>计数</th>' +
-        '</tr></thead><tbody>' + smartRows + '</tbody></table></div>',
-        'mon-item-wide');
+      /* SMART 明细（每盘 5 项告警计数）—— 已移除独立的「SMART 告警计数」卡片：
+         盘位卡片的 LED 已反映每盘健康状态，硬盘详情抽屉里有完整的 SMART 明细表，
+         单独再列一张表属于重复呈现。 */
     }
 
     /* --- 软 RAID --- */
@@ -1137,32 +1272,10 @@
         rc.error ? 'mon-item-warn' : '');
     }
 
-    /* --- 巡检历史 --- */
-    var scan = st.scan || {};
-    var scanLog = st.scanLog || [];
-    var scanHtml = '';
-    if (scan.error) {
-      scanHtml = '<div class="mon-note crit">巡检异常：' + esc(scan.error) + '</div>';
-    } else if (scanLog.length) {
-      var logRows = scanLog.slice(0, 12).map(function (l) {
-        var cls = l.changed ? 'warn' : 'ok';
-        var when = l.ts ? new Date(l.ts * 1000).toLocaleString('zh-CN', {
-          month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
-        }) : '—';
-        return '<div class="mon-row"><span class="mon-row-name mono">' + esc(when) + '</span>' +
-          '<span class="mon-badge ' + cls + '">' + (l.changed ? '有变化' : '未见异常') + '</span>' +
-          '<span class="mon-row-val faint">' + esc(l.summary || '') + '</span></div>';
-      }).join('');
-      scanHtml = '<div class="mon-list">' + logRows + '</div>';
-    } else {
-      scanHtml = '<div class="mon-note faint">尚未巡检（首轮巡检在服务启动约 30 秒后进行）</div>';
-    }
-    var lastScan = scan.last_ts
-      ? new Date(scan.last_ts * 1000).toLocaleString('zh-CN', {
-          month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
-        })
-      : '尚未巡检';
-    html += item('硬盘巡检', esc(lastScan), scanHtml, 'mon-item-wide');
+    /* --- 巡检历史 ---
+       已移除独立的「硬盘巡检」卡片：巡检记录改由标题栏的
+       「🗂 巡检历史」按钮打开右抽屉查看（renderScanLogHtml），
+       监控面板只保留盘位卡片与「巡检于 …」的时间提示。 */
 
     box.innerHTML = html;
     if (cntEl) {
@@ -1204,6 +1317,7 @@
       });
     }
     bindDrawer();
+    bindScanLogDrawer();
   }
 
   /* ---------------- 2. 处理器 / 内存 / 显卡 ---------------- */
@@ -1476,8 +1590,18 @@
       render(d);
       // 抽屉开着时同步刷新趋势图与实时速率数字
       if (drawerOpen) refreshDrawerLive();
+      // 巡检历史抽屉开着时同步刷新流水
+      if (scanLogOpen) refreshScanLogLive();
       return d;
     });
+  }
+
+  /* 巡检历史抽屉开着时，只重绘内容区（保持滚动位置）。 */
+  function refreshScanLogLive() {
+    var body = $('#monScanLogBody');
+    if (!body) return;
+    var st = lastData && lastData.storage ? lastData.storage : null;
+    body.innerHTML = renderScanLogHtml((st && st.scan) || {}, (st && st.scanLog) || []);
   }
 
   /* 抽屉开着时，只更新「实时读写」这一段（趋势图 + 实时速率），不重建整个抽屉
@@ -1574,6 +1698,8 @@
         runDiskScan();
       });
     }
+    /* 巡检历史抽屉：即使还没拉到数据也要能打开（显示"尚未巡检"占位） */
+    bindScanLogDrawer();
     var auto = $('#monAuto');
     if (auto) {
       auto.addEventListener('change', function () {

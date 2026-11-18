@@ -997,6 +997,19 @@ input[type="range"] {
   white-space: nowrap;
   flex-shrink: 0;
 }
+/* 标题内联的计数标签：放在 h2 内部时不能带边框和底色，
+   否则像在标题里塞了个按钮 —— 改成纯文字 + 左侧细竖线分隔。 */
+.card > header h2 .theme-count {
+  padding: 0 0 0 .55rem;
+  border: 0;
+  border-left: 1px solid var(--border-strong);
+  border-radius: 0;
+  background: none;
+  font-size: .78rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  letter-spacing: .02em;
+}
 
 /* ------------------------- 加载更多（网格下方） ------------------------- */
 .load-more-wrap {
@@ -1816,6 +1829,64 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
 
 /* ---- 温度 / 风扇列表 ---- */
 .mon-list { display: flex; flex-direction: column; gap: .45rem; }
+
+/* ---- 巡检历史（抽屉内）----
+   巡检流水是"时间序列 + 一句话结论"，不是键值表 ——
+   每条记录用一张小卡片竖排，结论单独一行，方便扫读。 */
+.mon-slog { display: flex; flex-direction: column; gap: .55rem; }
+.mon-slog-item {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: .7rem .85rem;
+}
+.mon-slog-item.changed { border-left-color: var(--warning); }
+.mon-slog-item.ok      { border-left-color: var(--success); }
+.mon-slog-head {
+  display: flex;
+  align-items: center;
+  gap: .55rem;
+  margin-bottom: .3rem;
+}
+.mon-slog-time {
+  font: 500 .78rem/1.3 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.mon-slog-ago {
+  font-size: .75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.mon-slog-badge {
+  margin-left: auto;
+  flex: none;
+  font-size: .75rem;
+  font-weight: 600;
+  padding: .1rem .42rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.mon-slog-badge.changed {
+  background: var(--warning-soft);
+  color: var(--warning);
+  border: 1px solid color-mix(in srgb, var(--warning) 40%, transparent);
+}
+.mon-slog-badge.ok {
+  background: var(--success-soft);
+  color: var(--success);
+  border: 1px solid color-mix(in srgb, var(--success) 40%, transparent);
+}
+.mon-slog-text {
+  font-size: .82rem;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+.mon-slog-text.empty { color: var(--text-muted); }
+
 .mon-row {
   display: flex;
   align-items: center;
@@ -2440,6 +2511,71 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
   transition: background-color .15s ease, color .15s ease;
 }
 .mon-drawer-close:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+/* ---- 抽屉顶部的硬盘切换下拉 ----
+   原标题是一行纯文字（"硬盘 存储空间 vol1"），现在改成下拉：
+   列出所有硬盘，切换即换盘，省掉"关掉抽屉再点另一块盘"的往返。
+   样式走自定义触发器路线（appearance:none + 自绘箭头），
+   避免原生 select 在深色主题下箭头看不清。 */
+.mon-dw-picker-h {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 650;
+  letter-spacing: -.01em;
+}
+.mon-dw-picker {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+}
+.mon-dw-picker-sel {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  padding: .28rem 1.7rem .28rem .62rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: .96rem;
+  font-weight: 650;
+  letter-spacing: -.01em;
+  line-height: 1.35;
+  cursor: pointer;
+  outline: none;
+  text-overflow: ellipsis;
+  transition: border-color .15s, box-shadow .15s, background-color .15s;
+}
+.mon-dw-picker-sel:hover { border-color: var(--accent); }
+.mon-dw-picker-sel:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.mon-dw-picker-sel option {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+.mon-dw-picker-arrow {
+  position: absolute;
+  right: .6rem;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: .7rem;
+  line-height: 1;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+/* 只有一个盘时不必给"可切换"的错觉 —— 下拉淡出但仍可选 */
+.mon-dw-picker.single .mon-dw-picker-sel {
+  border-color: var(--border);
+  background: transparent;
+  cursor: default;
+}
+.mon-dw-picker.single .mon-dw-picker-arrow { opacity: .45; }
 
 .mon-drawer-body {
   flex: 1;

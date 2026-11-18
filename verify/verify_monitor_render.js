@@ -24,17 +24,37 @@ function mkEl(id) {
 ['monStorage', 'monStoreCount', 'monStatus', 'monUpdated', 'monCore', 'monCoreCount',
   'monTemp', 'monTempCount', 'monPower', 'monPowerSource', 'btnMonRefresh', 'monAuto',
   'btnMonScan', 'monDrawerOverlay', 'monDrawerTitle', 'monDrawerSub', 'monDrawerBody',
-  'btnCloseMonDrawer', 'monDwSpark', 'monDwTimeFrom', 'monDwTimeTo']
+  'btnCloseMonDrawer', 'monDwSpark', 'monDwTimeFrom', 'monDwTimeTo',
+  /* v1.1.32：抽屉顶部的硬盘切换下拉 + 巡检历史抽屉 */
+  'monDrawerDiskSel', 'monScanLogOverlay', 'monScanLogTitle', 'monScanLogSub',
+  'monScanLogBody', 'btnCloseMonScanLog', 'btnMonScanLog']
   .forEach(id => { els[id] = mkEl(id); });
 
 /* 抽屉的 overlay 需要 classList / hidden / 事件钩子 */
-els.monDrawerOverlay.classList = {
+[els.monDrawerOverlay, els.monScanLogOverlay].forEach(function (ov) {
+  ov.classList = {
+    _s: {},
+    add: function (c) { this._s[c] = true; },
+    remove: function (c) { delete this._s[c]; },
+    contains: function (c) { return !!this._s[c]; },
+    toggle: function (c, on) { if (on === undefined) on = !this._s[c]; if (on) this._s[c] = true; else delete this._s[c]; },
+  };
+  ov.hidden = true;
+});
+els.monDrawerOverlay.classList.toggle = function (c, on) {
+  if (on === undefined) on = !this._s[c];
+  if (on) this._s[c] = true; else delete this._s[c];
+};
+/* select 元素：需要 value / parentNode.classList */
+els.monDrawerDiskSel.value = '';
+els.monDrawerDiskSel.parentNode = { className: '', classList: {
   _s: {},
   add: function (c) { this._s[c] = true; },
   remove: function (c) { delete this._s[c]; },
   contains: function (c) { return !!this._s[c]; },
-};
-els.monDrawerOverlay.hidden = true;
+  toggle: function (c, on) { if (on === undefined) on = !this._s[c]; if (on) this._s[c] = true; else delete this._s[c]; },
+} };
+
 /* spark 画布：需要尺寸才能算出曲线坐标 */
 els.monDwSpark.clientWidth = 320;
 els.monDwSpark.clientHeight = 64;
@@ -247,6 +267,8 @@ const patched2 = patched.replace(
   '  window.__fmtHM = fmtHM;\n' +
   '  window.__drawDrawerTimeAxis = drawDrawerTimeAxis;\n' +
   '  window.__setLastData = function (d) { lastData = d; };\n' +
+  '  window.__openScanLogDrawer = openScanLogDrawer;\n' +
+  '  window.__renderScanLogHtml = renderScanLogHtml;\n' +
   '  window.FnStyleMonitor = {'
 );
 if (patched2 === patched) {
@@ -283,6 +305,8 @@ const getDiskBuf = global.__getDiskBuf;
 const fmtRate = global.__fmtRate;
 const fmtHM = global.__fmtHM;
 const drawDrawerTimeAxis = global.__drawDrawerTimeAxis;
+const openScanLogDrawer = global.__openScanLogDrawer;
+const renderScanLogHtml = global.__renderScanLogHtml;
 if (typeof bayLedState !== 'function' || typeof smartAlertsText !== 'function') {
   console.error('❌ SMART 测试钩子未就绪');
   process.exit(1);
@@ -290,6 +314,10 @@ if (typeof bayLedState !== 'function' || typeof smartAlertsText !== 'function') 
 if (typeof openDiskDrawer !== 'function' || typeof dwSmartTable !== 'function'
     || typeof dwInfoKv !== 'function' || typeof setLastData !== 'function') {
   console.error('❌ 抽屉测试钩子未就绪');
+  process.exit(1);
+}
+if (typeof openScanLogDrawer !== 'function' || typeof renderScanLogHtml !== 'function') {
+  console.error('❌ 巡检历史抽屉测试钩子未就绪');
   process.exit(1);
 }
 if (typeof diskTempLevel !== 'function' || typeof tempExceed !== 'function'
@@ -340,10 +368,8 @@ if (html) {
     ['盘位显示型号', 'WDC WD40EFZX'],
     ['盘位显示存储空间标签', '存储空间 vol1'],
     // 其余板块
-    ['SMART 计数表', 'SMART 告警计数'],
     ['软 RAID', '软 RAID'],
     ['阵列卡', '阵列卡'],
-    ['硬盘巡检', '硬盘巡检'],
     ['休眠标记', '休眠'],
     ['故障盘分级', '故障'],
     ['成员盘故障 (F)', '(F)'],
@@ -378,6 +404,10 @@ if (html) {
     ['顶栏电源灯已移除', 'class="pwr"'],
     ['电源灯图例已移除', 'pwr-key'],
     ['电源灯说明已移除', '机箱电源灯'],
+    // v1.1.32：两张重复卡片已删除 —— 巡检记录改由标题栏按钮开抽屉，
+    // SMART 5 项计数在硬盘详情抽屉里已完整呈现
+    ['SMART 告警计数卡片已移除', 'SMART 告警计数'],
+    ['硬盘巡检卡片已移除', '硬盘巡检'],
   ];
   noChildren.forEach(([label, needle]) => {
     const ok = html.indexOf(needle) < 0;
@@ -520,7 +550,10 @@ if (html) {
   openDiskDrawer('sdb');   // 有 SMART 告警的盘
   const body = els.monDrawerBody.innerHTML;
   const contentRules = [
-    ['标题为「硬盘 存储空间 vol1」', els.monDrawerTitle.textContent === '硬盘 存储空间 vol1'],
+    /* v1.1.32：标题改为下拉切换，标题文字由 <select> 的选中项承载 */
+    ['下拉选中当前盘（sdb）', els.monDrawerDiskSel.value === 'sdb'],
+    ['下拉列出全部 4 块盘', (els.monDrawerDiskSel.innerHTML.match(/<option /g) || []).length === 4],
+    ['下拉选项含存储空间与设备名', /存储空间 vol1 · sdb/.test(els.monDrawerDiskSel.innerHTML)],
     ['副标题含设备名与型号', /sdb/.test(els.monDrawerSub.textContent) && /WD40EFZX/.test(els.monDrawerSub.textContent)],
     ['有容量大数字区', /mon-dw-hero/.test(body)],
     ['有容量条', /mon-dw-bar/.test(body)],
@@ -550,6 +583,17 @@ if (html) {
     if (!ok) bad++;
   });
 
+  /* --- 只有一块盘时，下拉应标记 single（不给"可切换"的错觉） ---
+     注意：这里会改写 lastData，跑完必须恢复并重开抽屉，
+     否则后面的断言拿到的副标题会是 sda 的。 */
+  setLastData({ storage: { available: true, disks: [FULL.storage.disks[0]], volumes: [] } });
+  openDiskDrawer('sda');
+  const singleOk = els.monDrawerDiskSel.parentNode.classList.contains('single');
+  console.log((singleOk ? '  ✓ ' : '  ✗ ') + '下拉容器在只有 1 块盘时标记 single');
+  if (!singleOk) bad++;
+  setLastData({ storage: FULL.storage });
+  openDiskDrawer('sdb');
+
   /* --- 故障盘：提示条为 crit --- */
   els.monDrawerBody.innerHTML = '';
   openDiskDrawer('sdc');   // uncorrectable=2 → crit
@@ -575,8 +619,10 @@ if (html) {
   /* --- 未找到的盘 --- */
   els.monDrawerBody.innerHTML = '';
   openDiskDrawer('sdz-not-exist');
-  const missingOk = els.monDrawerTitle.textContent === '未找到硬盘'
-    && /可能已被移除/.test(els.monDrawerBody.innerHTML);
+  /* v1.1.32：标题不再是纯文字，「未找到硬盘」挪到副标题 */
+  const missingOk = /未找到硬盘/.test(els.monDrawerSub.textContent)
+    && /可能已被移除/.test(els.monDrawerBody.innerHTML)
+    && els.monDrawerDiskSel.value === '';
   console.log((missingOk ? '  ✓ ' : '  ✗ ') + '不存在的盘 → 提示「未找到硬盘」');
   if (!missingOk) bad++;
 
@@ -1124,6 +1170,121 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     if (!ok) bad++;
   });
   if (bad) { console.error('❌ 接线断言失败 ' + bad + ' 项'); process.exitCode = 1; }
+})();
+
+/* ---------- v1.1.32：巡检历史抽屉 + 硬盘切换下拉 + 两张卡片删除 ---------- */
+(function checkScanLogDrawerAndPicker() {
+  console.log('\n--- 巡检历史抽屉与硬盘切换下拉（v1.1.32）---');
+  const src = fs.readFileSync(SRC, 'utf8');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'index.html'), 'utf8');
+  const css = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'css', 'app.css'), 'utf8');
+
+  let bad = 0;
+
+  /* --- HTML 骨架 --- */
+  const htmlRules = [
+    ['存储标题栏有「巡检历史」按钮', /id="btnMonScanLog"/],
+    ['巡检历史抽屉容器存在', /id="monScanLogOverlay"/],
+    ['巡检历史抽屉有标题', /id="monScanLogTitle"/],
+    ['巡检历史抽屉有内容容器', /id="monScanLogBody"/],
+    ['巡检历史抽屉有关闭按钮', /id="btnCloseMonScanLog"/],
+    ['硬盘抽屉顶部有切换下拉', /id="monDrawerDiskSel"/],
+    ['下拉有 aria-label', /id="monDrawerDiskSel"[^>]*aria-label="选择要查看的硬盘"/],
+    /* 存储计数标签移到标题「存储」后面 */
+    ['存储计数标签在 h2 内', /<h2><span>💾<\/span> 存储<span class="theme-count" id="monStoreCount">/],
+  ];
+  htmlRules.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* --- JS 接线 --- */
+  const srcRules = [
+    ['存在 renderScanLogHtml', /function renderScanLogHtml\s*\(/],
+    ['存在 openScanLogDrawer', /function openScanLogDrawer\s*\(/],
+    ['存在 closeScanLogDrawer', /function closeScanLogDrawer\s*\(/],
+    ['存在 bindScanLogDrawer', /function bindScanLogDrawer\s*\(/],
+    ['巡检历史按钮绑定打开事件', /btnMonScanLog[\s\S]{0,120}addEventListener\('click', openScanLogDrawer\)/],
+    ['巡检历史抽屉支持遮罩关闭', /e\.target === ov\) closeScanLogDrawer\(\)/],
+    ['巡检历史抽屉支持 ESC 关闭', /scanLogOpen\) \{[\s\S]{0,120}closeScanLogDrawer\(\)/],
+    /* 下拉切换硬盘 */
+    ['下拉绑定 change 事件', /monDrawerDiskSel[\s\S]{0,200}addEventListener\('change'/],
+    ['下拉切换调用 openDiskDrawer', /openDiskDrawer\(v\)/],
+    ['下拉选中当前盘', /selEl\.value = d\.name/],
+    ['下拉列出全部硬盘', /disks\.slice\(\)\.sort\(byVol\)\.map/],
+    ['单盘时标记 single', /classList\.toggle\('single', disks\.length <= 1\)/],
+    /* 轮询时同步刷新两个抽屉 */
+    ['抽屉开着时刷新实时数据', /if \(drawerOpen\) refreshDrawerLive\(\)/],
+    ['巡检历史开着时同步刷新', /if \(scanLogOpen\) refreshScanLogLive\(\)/],
+    /* 两张卡片确实删掉了 */
+    ['已移除 SMART 告警计数卡片', !/item\('SMART 告警计数'/.test(src)],
+    ['已移除硬盘巡检卡片', !/item\('硬盘巡检'/.test(src)],
+    ['smartFlagsHtml 已清理（无死代码）', !/function smartFlagsHtml\s*\(/.test(src)],
+  ];
+  srcRules.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* --- CSS --- */
+  const cssRules = [
+    ['下拉触发器有自定义样式', /\.mon-dw-picker-sel \{[^}]*appearance: none/.test(css)],
+    ['下拉触发器隐藏原生箭头', /\.mon-dw-picker-sel \{[^}]*-webkit-appearance: none/.test(css)],
+    ['下拉箭头为自绘元素', /\.mon-dw-picker-arrow \{[^}]*position: absolute/.test(css)],
+    ['单盘态样式存在', /\.mon-dw-picker\.single \.mon-dw-picker-sel \{/],
+    ['巡检流水卡片样式存在', /\.mon-slog-item \{/],
+    ['巡检流水「有变化」左侧色条', /\.mon-slog-item\.changed\s*\{[^}]*border-left-color: var\(--warning\)/.test(css)],
+    ['巡检流水「未见异常」左侧色条', /\.mon-slog-item\.ok\s*\{[^}]*border-left-color: var\(--success\)/.test(css)],
+    ['巡检流水徽章样式存在', /\.mon-slog-badge \{/],
+  ];
+  cssRules.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* --- renderScanLogHtml 渲染内容 --- */
+  const st = { storage: {
+    available: true,
+    scan: { last_ts: now - 3600, running: false,
+            summary: { counts: { ok: 2, warn: 1, crit: 0, unknown: 1 } }, error: '' },
+    scanLog: [
+      { ts: now - 3600, total: 4, changed: true, summary: 'sdb 重映射扇区较上次 +3' },
+      { ts: now - 7200, total: 4, changed: false, summary: '未见异常（4 块盘分级与计数均无变化）' },
+    ],
+  } };
+  setLastData(st);
+  openScanLogDrawer();
+  const logBody = els.monScanLogBody.innerHTML;
+  const logRules = [
+    ['巡检抽屉内容已渲染', logBody.length > 100],
+    ['显示最近巡检时间', /mon-dw-hero/.test(logBody)],
+    ['显示分级统计', /正常 2/.test(logBody) && /留意 1/.test(logBody)],
+    ['有「巡检流水」分节', /mon-dw-sec-main[^>]*>.*巡检流水/.test(logBody)],
+    ['列出「有变化」记录', /有变化/.test(logBody) && /sdb 重映射扇区较上次 \+3/.test(logBody)],
+    ['列出「未见异常」记录', /未见异常/.test(logBody)],
+    ['overlay 变为可见', els.monScanLogOverlay.hidden === false],
+  ];
+  logRules.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* 空流水：显示占位说明而不是空白 */
+  setLastData({ storage: { available: true, scan: { last_ts: 0 }, scanLog: [] } });
+  openScanLogDrawer();
+  const emptyOk = /尚未巡检/.test(els.monScanLogBody.innerHTML);
+  console.log((emptyOk ? '  ✓ ' : '  ✗ ') + '无记录时显示「尚未巡检」占位');
+  if (!emptyOk) bad++;
+
+  /* 巡检异常：置顶红色提示 */
+  setLastData({ storage: { available: true, scan: { last_ts: now, error: 'smartctl 超时' }, scanLog: [] } });
+  openScanLogDrawer();
+  const errOk = /mon-dw-note crit/.test(els.monScanLogBody.innerHTML)
+    && /smartctl 超时/.test(els.monScanLogBody.innerHTML);
+  console.log((errOk ? '  ✓ ' : '  ✗ ') + '巡检异常时显示 crit 提示');
+  if (!errOk) bad++;
+
+  if (bad) { console.error('❌ v1.1.32 断言失败 ' + bad + ' 项'); process.exitCode = 1; }
 })();
 
 console.log(process.exitCode ? '\n❌ 测试未全部通过' : '\n🎉 全部测试通过');
