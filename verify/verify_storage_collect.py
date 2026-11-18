@@ -35,12 +35,10 @@ sc.collect_volumes = lambda: [{
     "name": "vol1", "path": "/vol1",
     "total": 500 * GIB, "used": 312 * GIB, "free": 188 * GIB, "percent": 62,
     "totalText": "500.0 GB", "usedText": "312.0 GB", "freeText": "188.0 GB",
-    "children": [{"name": "1000", "total": 100 * GIB, "used": 60 * GIB,
-                   "free": 40 * GIB, "percent": 60}],
 }]
 vols = sc.collect_volumes()
 check("volumes 结构", vols and vols[0]["name"] == "vol1")
-check("volumes children", bool(vols[0]["children"]))
+check("volumes 不再下钻 children", "children" not in vols[0])
 
 print()
 print("=" * 60)
@@ -301,7 +299,7 @@ print("=" * 60)
 sc.collect_volumes = lambda: [{
     "name": "vol1", "path": "/vol1", "total": 500 * GIB, "used": 312 * GIB,
     "free": 188 * GIB, "percent": 62, "totalText": "500.0 GB",
-    "usedText": "312.0 GB", "freeText": "188.0 GB", "children": []}]
+    "usedText": "312.0 GB", "freeText": "188.0 GB"}]
 sc.collect_disks = lambda: [{"name": "/vol1", "total": 500 * GIB, "used": 312 * GIB,
                              "free": 188 * GIB, "percent": 62}]
 sc.collect_disks_detail = lambda prev=None, with_states=True, health_prev=None: [

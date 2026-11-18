@@ -1800,42 +1800,6 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
 /* 宽表（物理磁盘）独占整行，避免挤在窄列里 */
 .mon-item-wide { grid-column: 1 / -1; }
 
-/* ---- 子目录容量条（存储下钻） ----
-   ⚠️ 三列布局（名称 | 条 | 数值）在窄卡片里会横向溢出：
-   数值文本 "150.0 GB / 200.0 GB" 撑破 88px 的固定列，探针实测
-   scrollWidth > clientWidth。
-   改成两行布局：上行 名称 + 数值，下行 进度条独占整行 —— 任何宽度都不溢出。 */
-.mon-children { margin-top: .6rem; display: flex; flex-direction: column; gap: .5rem; }
-.mon-child {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-areas:
-    "name val"
-    "bar  bar";
-  align-items: center;
-  gap: .15rem .5rem;
-  font-size: .78rem;
-}
-.mon-child-name {
-  grid-area: name;
-  color: var(--text-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-}
-.mon-child .mon-bar {
-  grid-area: bar;
-  margin-top: .1rem;
-}
-.mon-child-val {
-  grid-area: val;
-  text-align: right;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
 /* ---- 每核负载 ---- */
 .mon-cores {
   display: flex;

@@ -224,6 +224,17 @@ if (html) {
     console.log((ok ? '  ✓ ' : '  ✗ ') + label + ' → "' + needle + '"');
     if (!ok) bad++;
   });
+  // 存储池卡片不应再下钻子目录明细（即便后端仍传来 children）
+  const noChildren = [
+    ['子目录明细不渲染', 'mon-child'],
+    ['子目录名不出现', '>1000<'],
+    ['子目录名不出现2', '>2000<'],
+  ];
+  noChildren.forEach(([label, needle]) => {
+    const ok = html.indexOf(needle) < 0;
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label + ' → 不含 "' + needle + '"');
+    if (!ok) bad++;
+  });
   // 检查未替换的模板残留
   ['undefined', 'NaN', '[object Object]'].forEach(bad2 => {
     const cnt = (html.match(new RegExp(bad2.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;

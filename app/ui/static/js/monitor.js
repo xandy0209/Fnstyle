@@ -172,23 +172,12 @@
 
     /* --- 存储池容量 --- */
     (st.volumes || []).forEach(function (v) {
-      var sub = '';
-      if (v.children && v.children.length) {
-        var rows = v.children.slice(0, 6).map(function (c) {
-          return '<div class="mon-child">' +
-            '<span class="mon-child-name" title="' + esc(c.name) + '">' + esc(c.name) + '</span>' +
-            bar(c.percent) +
-            '<span class="mon-child-val">' + fmtBytes(c.used) + ' / ' + fmtBytes(c.total) + '</span>' +
-          '</div>';
-        }).join('');
-        sub = '<div class="mon-children">' + rows + '</div>';
-      }
       html += item(
         '存储池 ' + v.name,
         v.percent + '%',
         bar(v.percent) +
         '<div class="mon-item-sub">已用 <span>' + esc(v.usedText) + '</span> / 共 ' +
-        esc(v.totalText) + '，剩余 <span>' + esc(v.freeText) + '</span></div>' + sub
+        esc(v.totalText) + '，剩余 <span>' + esc(v.freeText) + '</span></div>'
       );
     });
 

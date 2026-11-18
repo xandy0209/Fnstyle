@@ -1,5 +1,5 @@
 appname               = fnstyle
-version               = 1.1.18
+version               = 1.1.19
 display_name          = FnStyle
 desc                  = 集中管理飞牛个性化设置与丰富主题库：网站标题、登录框、LOGO、壁纸、毛玻璃、任务栏等独立配置，内置多源主题库，支持一键应用到 fnOS 系统。
 platform              = all
@@ -15,5 +15,5 @@ desktop_applaunchname = fnstyle.main
 service_port          = 9910
 checkport             = false
 ctl_stop              = true
-changelog             = 1.1.18：系统监控「存储」板块能力对齐 fnmonitor —— 物理盘 SMART 全量采集（5 项告警计数 / SAS 缺陷表）、硬盘分级（正常/留意/故障/未知）、定时巡检与历史趋势（SQLite）、磁盘实时读写与 IOPS、休眠保护、软 RAID 成员故障标记、硬 RAID 卡识别
-checksum              = 445c1b2847f4cb746f1667475529ea6c
+changelog             = 1.1.19：存储池卡片不再下钻子目录明细 —— 只保留池级容量（百分比 / 进度条 / 已用 / 总量 / 剩余），去掉 @appcenter、用户目录等一级子目录列表；同时移除后端子目录 statvfs 采集，省去每池每子目录一次 IO
+checksum              = b8a08535b187387aef6fca9a95372574

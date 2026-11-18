@@ -264,10 +264,11 @@ def collect_disks():
 
 
 def collect_volumes():
-    """fnOS 存储池容量（/volN）+ 各一级子目录占用。
+    """fnOS 存储池容量（/volN）。
 
-    与 collect_disks 的区别：这里只取 fnOS 的存储池挂载点 /volN，
-    并额外统计每个池下一级子目录（@appshare / 用户目录等）用于下钻展示。
+    与 collect_disks 的区别：这里只取 fnOS 的存储池挂载点 /volN。
+    只统计池级别容量，不下钻子目录 —— 与 fnmonitor 行为一致，
+    避免每个池的每个一级子目录都做一次 statvfs（纯浪费 IO）。
     """
     volumes = []
     seen = set()
@@ -285,19 +286,6 @@ def collect_volumes():
             usage = disk_usage(vol)
             if not usage or not usage["total"]:
                 continue
-            children = []
-            try:
-                for name in sorted(os.listdir(vol)):
-                    sub = os.path.join(vol, name)
-                    if not os.path.isdir(sub) or name.startswith("."):
-                        continue
-                    su = disk_usage(sub)
-                    if su and su["total"] > 0:
-                        children.append({"name": name, "total": su["total"],
-                                         "used": su["used"], "free": su["free"],
-                                         "percent": su["percent"]})
-            except Exception:
-                pass
             volumes.append({
                 "name": os.path.basename(vol),
                 "path": vol,
@@ -308,7 +296,6 @@ def collect_volumes():
                 "totalText": _mbf(usage["total"]),
                 "usedText": _mbf(usage["used"]),
                 "freeText": _mbf(usage["free"]),
-                "children": children,
             })
         except Exception:
             continue

@@ -175,7 +175,6 @@ def _collect_storage_fallback():
                 "totalText": _mbf(usage["total"]),
                 "usedText": _mbf(usage["used"]),
                 "freeText": _mbf(usage["free"]),
-                "children": [],
             })
     except Exception:
         pass
