@@ -1,5 +1,5 @@
 appname               = fnstyle
-version               = 1.1.24
+version               = 1.1.25
 display_name          = FnStyle
 desc                  = 集中管理飞牛个性化设置与丰富主题库：网站标题、登录框、LOGO、壁纸、毛玻璃、任务栏等独立配置，内置多源主题库，支持一键应用到 fnOS 系统。
 platform              = all
@@ -15,5 +15,5 @@ desktop_applaunchname = fnstyle.main
 service_port          = 9910
 checkport             = false
 ctl_stop              = true
-changelog             = 1.1.24：存储池统计口径与 fnmonitor / fnOS 存储页对齐 —— ① 存储池范围改为只取 /proc/mounts 里的 /volN 挂载点，不再用 glob 扫 /vol[0-9]* 把系统卷 vol00（普通目录，实为系统盘 62.5 GB）当成第 4 个存储池，池数由 4 修正为 3，总容量 2.4 TB → 2.56 TB；② 硬盘与存储池容量单位由 1024 进制改为十进制（1 TB 盘不再显示成 931.5 GB），内存 / Swap / 显存仍保持 1024 进制；③ 已用空间改用 df 同源的 f_bfree 口径（含 ext4 保留块），汇总可用空间按「总容量 - 已用」计算，与 fnmonitor 显示一致（799 GB）
-checksum              = 59d2fb70d61738bd874b44f2c5b2b3a6
+changelog             = 1.1.25：盘位状态灯整合 SMART 告警，去掉机箱电源灯 —— ① 盘位 LED 不再只看巡检分级，而是把 SMART 告警计数一并纳入：无法纠正错误、SMART 自检未通过判「故障」（红）；重映射扇区、重映射事件、待映射扇区、UDMA CRC 错误判「留意」（橙）；巡检分级与 SMART 告警取更严重者，避免巡检说「正常」而绿灯把 UDMA CRC 告警盖住；LED 与盘位标题均列出具体告警项与计数，SMART 表格「分级」列同步显示整合后状态，表与灯不再自相矛盾；② 移除机箱顶栏的装饰性电源灯及其图例项（该灯与盘位 LED 语义无关，易被误读为状态指示）；图例说明改为「盘位 LED = 硬盘健康与 SMART 告警状态」
+checksum              = 147377e9ec59367eb9419dfd4c64e01c

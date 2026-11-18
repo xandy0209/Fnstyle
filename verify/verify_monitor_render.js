@@ -201,6 +201,15 @@ if (patched === code) {
   console.error('❌ 未能注入测试钩子（源码结构变化）');
   process.exit(1);
 }
+/* 再注入 SMART 状态判定的测试钩子（bayLedState / smartAlertsText） */
+const patched2 = patched.replace(
+  'window.FnStyleMonitor = {',
+  'window.__bayLedState = bayLedState;\n  window.__smartAlertsText = smartAlertsText;\n  window.FnStyleMonitor = {'
+);
+if (patched2 === patched) {
+  console.error('❌ 未能注入 SMART 测试钩子（源码结构变化）');
+  process.exit(1);
+}
 global.document = {
   readyState: 'complete', hidden: false,
   querySelector: function (sel) { return sel.charAt(0) === '#' ? (els[sel.slice(1)] || null) : null; },
@@ -208,8 +217,14 @@ global.document = {
   addEventListener: function () {},
 };
 global.window = global;
-(0, eval)(patched);
+(0, eval)(patched2);
 console.log('✅ 测试钩子注入成功');
+const bayLedState = global.__bayLedState;
+const smartAlertsText = global.__smartAlertsText;
+if (typeof bayLedState !== 'function' || typeof smartAlertsText !== 'function') {
+  console.error('❌ SMART 测试钩子未就绪');
+  process.exit(1);
+}
 
 /* ---------- 各用例 ---------- */
 let html = renderCase('完整数据', { storage: FULL.storage, ts: FULL.ts });
@@ -235,10 +250,7 @@ if (html) {
     // 色阶图例：点阵与容量行的颜色含义
     ['色阶图例条', 'ramp-bar'],
     ['色阶图例说明', '点阵与容量行颜色 = 空间占用'],
-    ['LED 语义说明', '盘位 LED 为硬盘健康状态'],
-    ['电源灯图例', 'pwr-key'],
-    ['电源灯图例说明', '机箱电源灯'],
-    ['电源灯 tooltip', '机箱电源灯（装饰标识，非状态指示）'],
+    ['LED 语义说明', '盘位 LED = 硬盘健康与 SMART 告警状态'],
     ['LED 图例-休眠未巡检', '休眠 / 未巡检'],
     ['巡检时间', '巡检于'],
     ['盘位排序提示', '盘位按存储空间排列'],
@@ -281,6 +293,10 @@ if (html) {
     ['子目录名不出现2', '>2000<'],
     // 盘位右上角不再挂容量告警角标：状态一律靠颜色 + 图例表达
     ['盘位容量告警角标已移除', 'mon-bay-alert'],
+    // v1.1.25：机箱顶栏的装饰性电源灯已整体移除（渲染 + 图例）
+    ['顶栏电源灯已移除', 'class="pwr"'],
+    ['电源灯图例已移除', 'pwr-key'],
+    ['电源灯说明已移除', '机箱电源灯'],
   ];
   noChildren.forEach(([label, needle]) => {
     const ok = html.indexOf(needle) < 0;
@@ -295,6 +311,54 @@ if (html) {
   });
   if (bad) { console.error('❌ 缺少 ' + bad + ' 个预期片段'); process.exitCode = 1; }
 }
+
+/* ---------- SMART 告警 → 盘位 LED 状态整合 ---------- */
+(function checkSmartLedIntegration() {
+  console.log('\n--- SMART 告警整合到盘位 LED ---');
+  const base = {
+    name: 'sdz', health: 'PASSED', grade: 'ok', standby: false,
+    reallocated_sectors: 0, reallocated_events: 0, pending_sectors: 0,
+    uncorrectable: 0, udma_crc: 0,
+  };
+  const mk = o => Object.assign({}, base, o);
+  const cases = [
+    ['全零告警 → 正常(ok)', mk({}), 'ok'],
+    ['巡检 ok + UDMA CRC 60 → 留意(warn)', mk({ udma_crc: 60 }), 'warn'],
+    ['巡检 ok + 重映射扇区 10 → 留意(warn)', mk({ reallocated_sectors: 10 }), 'warn'],
+    ['巡检 ok + 待映射扇区 5 → 留意(warn)', mk({ pending_sectors: 5 }), 'warn'],
+    ['巡检 ok + 重映射事件 3 → 留意(warn)', mk({ reallocated_events: 3 }), 'warn'],
+    ['巡检 ok + 无法纠正错误 2 → 故障(crit)', mk({ uncorrectable: 2 }), 'crit'],
+    ['SMART 自检未通过 → 故障(crit)', mk({ health: 'FAILED!' }), 'crit'],
+    ['巡检 warn + SMART warn → 仍是留意', mk({ grade: 'warn', udma_crc: 5 }), 'warn'],
+    ['巡检 crit + SMART warn → 仍是故障', mk({ grade: 'crit', udma_crc: 5 }), 'crit'],
+    ['休眠盘优先于 SMART 告警', mk({ standby: true, udma_crc: 99 }), 'standby'],
+    ['未巡检(unknown) + SMART warn → 留意', mk({ grade: 'unknown', udma_crc: 7 }), 'warn'],
+    ['未巡检(unknown) + 无告警 → 未巡检', mk({ grade: 'unknown' }), 'unknown'],
+  ];
+  let bad = 0;
+  cases.forEach(([label, d, expect]) => {
+    const got = bayLedState(d).lv;
+    const ok = got === expect;
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label + ' → got=' + got + ' expect=' + expect);
+    if (!ok) bad++;
+  });
+  // 告警明细文本
+  const t1 = smartAlertsText(bayLedState(mk({ udma_crc: 60 })).smart);
+  const t2 = smartAlertsText(bayLedState(mk({ uncorrectable: 2, udma_crc: 60 })).smart);
+  const t3 = smartAlertsText(bayLedState(mk({})).smart);
+  const t4 = smartAlertsText(bayLedState(mk({ health: 'FAILED!' })).smart);
+  const txts = [
+    ['告警文本含 UDMA CRC 计数', t1.indexOf('UDMA CRC 错误 60') >= 0, t1],
+    ['告警文本含无法纠正错误', t2.indexOf('无法纠正错误 2') >= 0, t2],
+    ['无告警时文本为空', t3 === '', t3],
+    ['自检未通过进文本', t4.indexOf('SMART 自检未通过') >= 0, t4],
+  ];
+  txts.forEach(([label, ok, extra]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label + (extra ? ' → "' + extra + '"' : ''));
+    if (!ok) bad++;
+  });
+  if (bad) { console.error('❌ SMART 整合断言失败 ' + bad + ' 项'); process.exitCode = 1; }
+})();
 
 /* ---------- 源码级断言：容量单位进制不能被改回去 ---------- */
 (function checkDecimalUnits() {

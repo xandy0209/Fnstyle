@@ -100,6 +100,7 @@
     ok: { cls: 'ok', text: '正常' },
     warn: { cls: 'warn', text: '留意' },
     crit: { cls: 'crit', text: '故障' },
+    standby: { cls: 'unknown', text: '休眠' },
     unknown: { cls: 'unknown', text: '未知' }
   };
 
@@ -112,8 +113,66 @@
     ['udma_crc', 'UDMA CRC 错误']
   ];
 
+  /* SMART 告警项 → 严重等级。
+     crit = 数据已不可恢复地损坏（必须立刻处理）；
+     warn = 已有异常征兆但尚未致命（需留意，安排换盘）。
+     判据与后端 grade_disk 一致：无法纠正错误 → crit，
+     其余非零计数项 → warn；SMART 自检未通过一律 crit。 */
+  var SMART_CRIT_KEYS = ['uncorrectable'];
+  var SMART_WARN_KEYS = ['reallocated_sectors', 'reallocated_events',
+    'pending_sectors', 'udma_crc'];
+
+  /* 取某项告警计数值（非数字 / 缺失 → null） */
+  function smartCount(d, key) {
+    if (!d) return null;
+    var v = d[key];
+    if (v === null || v === undefined || v === '' || isNaN(v)) return null;
+    return Number(v);
+  }
+
+  /* 汇总单盘的 SMART 告警：返回 { lv, items }。
+     lv 取 'crit' / 'warn' / ''（无告警）；items 为 [{label, value, lv}]。 */
+  function smartAlerts(d) {
+    var items = [];
+    var lv = '';
+    // SMART 自检未通过 —— 直接判故障
+    if (/FAIL/i.test(String((d && d.health) || ''))) {
+      items.push({ label: 'SMART 自检未通过', value: null, lv: 'crit' });
+      lv = 'crit';
+    }
+    SMART_KEYS.forEach(function (k) {
+      var v = smartCount(d, k[0]);
+      if (v === null || v <= 0) return;
+      var itemLv = SMART_CRIT_KEYS.indexOf(k[0]) >= 0 ? 'crit' : 'warn';
+      items.push({ label: k[1], value: v, lv: itemLv });
+      // crit 优先于 warn
+      if (itemLv === 'crit' || !lv) lv = itemLv;
+    });
+    return { lv: lv, items: items };
+  }
+
+  /* 盘位 LED 的最终状态 = 巡检分级 与 SMART 告警 取更严重者。
+     - 休眠 > 故障 > 留意 > 正常 > 未巡检
+     这样「巡检说正常但 SMART 计数不为 0」的情况不会被绿灯掩盖。 */
+  var LED_RANK = { standby: 4, crit: 3, warn: 2, ok: 1, unknown: 0 };
+  function bayLedState(d) {
+    var scanLv = d.standby ? 'standby' : (d.grade || 'unknown');
+    var sm = smartAlerts(d);
+    var lv = scanLv;
+    if (sm.lv && LED_RANK[sm.lv] > LED_RANK[lv]) lv = sm.lv;
+    return { lv: lv, scanLv: scanLv, smart: sm };
+  }
+
+  /* SMART 告警的可读描述（用于 LED 的 title 说明） */
+  function smartAlertsText(sm) {
+    if (!sm || !sm.items.length) return '';
+    return sm.items.map(function (it) {
+      return it.value === null ? it.label : (it.label + ' ' + it.value);
+    }).join('、');
+  }
+
   /* 分级文案（与后端 GRADE_LABEL 一致；fnmonitor 用「未巡检」，这里保持一致） */
-  var GRADE_TXT = { ok: '正常', warn: '留意', crit: '故障', unknown: '未巡检' };
+  var GRADE_TXT = { ok: '正常', warn: '留意', crit: '故障', standby: '休眠中', unknown: '未巡检' };
 
   function gradeBadge(g) {
     var m = GRADE_BADGE[g] || GRADE_BADGE.unknown;
@@ -292,7 +351,6 @@
     });
     return out;
   }
-
   function renderStorage(st) {
     var box = $('#monStorage');
     if (!box) return;
@@ -381,7 +439,10 @@
 
       var bays = st.disks.slice().sort(byVol).map(function (d) {
         var kind = diskKind(d);
-        var lv = d.standby ? 'standby' : (d.grade || 'unknown');
+        /* LED 状态 = 巡检分级 与 SMART 告警取更严重者：
+           巡检说「正常」但 SMART 有非零计数时，不能让绿灯把告警盖住。 */
+        var led = bayLedState(d);
+        var lv = led.lv;
         var hasCap = Number(d.total) > 0;
         var pct = Number(d.percent) || 0;
         var gv = hasCap ? pct / 100 : 0;
@@ -406,9 +467,12 @@
           ? '↓' + (io.readText || '—') + ' ↑' + (io.writeText || '—')
           : '';
 
+        // SMART 告警明细（若有），直接拼进 title —— 悬停 LED/盘位即知是哪一项
+        var smText = smartAlertsText(led.smart);
         var title = d.name + '（' + volLabel(d) + '） · ' +
-          (GRADE_TXT[d.grade] || '未巡检') +
+          (GRADE_TXT[led.scanLv] || '未巡检') +
           (d.detail ? '：' + d.detail : '') +
+          (smText ? ' · SMART 告警：' + smText : '') +
           (hasCap ? ' · 已用 ' + Math.round(pct) + '%' : '') +
           (ago ? '（巡检于 ' + ago + '）' : '') +
           (capLv ? ' · 容量占用超 ' + (capLv === 'crit' ? 95 : 85) + '%' : '');
@@ -417,7 +481,8 @@
           '" title="' + esc(title) + '">' +
           '<div class="mon-bay-top">' +
             '<span>' + esc(volLabel(d)) + '</span>' +
-            '<i class="mon-bay-led"></i>' +
+            '<i class="mon-bay-led"' +
+              (smText ? ' title="' + esc(smText) + '"' : '') + '></i>' +
           '</div>' +
           '<div class="mon-bay-body">' +
             '<span class="mon-bay-gauge">' +
@@ -449,7 +514,6 @@
       html += '<div class="mon-nas">' +
         '<div class="mon-chassis">' +
           '<div class="mon-ch-top">' +
-            '<span class="pwr" title="机箱电源灯（装饰标识，非状态指示）"><i></i></span>' +
             '<span>' + esc(chName) + '</span>' +
             '<span class="vent"></span>' +
             '<span>' + esc(chModel) + ' · ' + esc(st.disks.length) + ' 盘</span>' +
@@ -463,10 +527,7 @@
           '<span><i class="led-key warn"></i>留意</span>' +
           '<span><i class="led-key crit"></i>故障</span>' +
           '<span><i class="led-key off"></i>休眠 / 未巡检</span>' +
-          '<span class="hint">盘位 LED 为硬盘健康状态</span>' +
-          /* 机箱顶栏的电源灯是机箱外观元素（fnmonitor 同款），不是状态指示，
-             用蓝色与盘位 LED 区分；这里单列一项说明，避免与盘位 LED 混淆。 */
-          '<span class="hint"><i class="pwr-key"></i>机箱电源灯</span>' +
+          '<span class="hint">盘位 LED = 硬盘健康与 SMART 告警状态</span>' +
           /* 点阵色阶图例：绿 → 黄绿 → 橙 → 红，与容量占用率一一对应 */
           '<span class="ramp-key"><i class="ramp-bar"></i>点阵与容量行颜色 = 空间占用（绿 → 红）</span>' +
           '<span class="scan-ago">' +
@@ -478,16 +539,23 @@
 
       /* SMART 明细（每盘 5 项告警计数）—— 盘位卡片放不下的精细数据留在这张表里 */
       var smartRows = st.disks.map(function (d) {
+        var led = bayLedState(d);
+        var smText = smartAlertsText(led.smart);
+        /* 分级列显示整合后的状态（与盘位 LED 完全一致）：
+           巡检说正常但 SMART 有告警时，这里也要显示「留意」，
+           否则表和灯会自相矛盾。 */
+        var detailTxt = (d.detail ? d.detail : '') +
+          (smText ? (d.detail ? '；' : '') + 'SMART 告警：' + smText : '');
         return '<tr>' +
           '<td class="mono">' + esc(d.name) + '</td>' +
-          '<td>' + gradeBadge(d.grade) + '</td>' +
-          '<td class="num">' + (d.detail ? esc(d.detail) : '—') + '</td>' +
+          '<td>' + gradeBadge(led.lv) + '</td>' +
+          '<td class="num">' + (detailTxt ? esc(detailTxt) : '—') + '</td>' +
           '<td>' + smartFlagsHtml(d) + '</td>' +
         '</tr>';
       }).join('');
       html += item('SMART 告警计数', '5 项',
         '<div class="mon-table-wrap"><table class="mon-table"><thead><tr>' +
-        '<th>设备</th><th>分级</th><th>说明</th><th>计数</th>' +
+        '<th>设备</th><th>状态</th><th>说明</th><th>计数</th>' +
         '</tr></thead><tbody>' + smartRows + '</tbody></table></div>',
         'mon-item-wide');
     }
