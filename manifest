@@ -1,5 +1,5 @@
 appname               = fnstyle
-version               = 1.1.17
+version               = 1.1.18
 display_name          = FnStyle
 desc                  = 集中管理飞牛个性化设置与丰富主题库：网站标题、登录框、LOGO、壁纸、毛玻璃、任务栏等独立配置，内置多源主题库，支持一键应用到 fnOS 系统。
 platform              = all
@@ -15,5 +15,5 @@ desktop_applaunchname = fnstyle.main
 service_port          = 9910
 checkport             = false
 ctl_stop              = true
-changelog             = 1.1.17：修复桌面入口 502 Bad Gateway —— 服务启动时校验网关 socket 是否真在监听，冷 socket 自动重建
-checksum              = 4bfe9218ff495e59b877603e4c70df7b
+changelog             = 1.1.18：系统监控「存储」板块能力对齐 fnmonitor —— 物理盘 SMART 全量采集（5 项告警计数 / SAS 缺陷表）、硬盘分级（正常/留意/故障/未知）、定时巡检与历史趋势（SQLite）、磁盘实时读写与 IOPS、休眠保护、软 RAID 成员故障标记、硬 RAID 卡识别
+checksum              = 445c1b2847f4cb746f1667475529ea6c

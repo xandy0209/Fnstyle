@@ -1875,6 +1875,66 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
 .mon-badge.ok   { background: var(--success-soft); color: var(--success); border-color: color-mix(in srgb, var(--success) 40%, transparent); }
 .mon-badge.warn { background: var(--warning-soft); color: var(--warning); border-color: color-mix(in srgb, var(--warning) 40%, transparent); }
 .mon-badge.err  { background: var(--danger-soft);  color: var(--danger);  border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
+.mon-badge.crit { background: var(--danger-soft);  color: var(--danger);  border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
+.mon-badge.unknown { background: var(--bg-hover); color: var(--text-muted); border-color: var(--border); }
+
+/* ---- 存储：状态小片（RAID 成员盘 / 阵列卡物理盘）---- */
+.mon-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .3rem;
+  margin-top: .35rem;
+}
+.mon-chip {
+  display: inline-block;
+  padding: .1rem .45rem;
+  border-radius: var(--radius-sm);
+  font-size: .7rem;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+.mon-chip.ok   { background: var(--success-soft); color: var(--success); border-color: color-mix(in srgb, var(--success) 35%, transparent); }
+.mon-chip.warn { background: var(--warning-soft); color: var(--warning); border-color: color-mix(in srgb, var(--warning) 35%, transparent); }
+.mon-chip.crit { background: var(--danger-soft);  color: var(--danger);  border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
+
+/* ---- 存储：SMART 告警计数 ---- */
+.mon-smart-flag {
+  display: inline-block;
+  margin: .1rem .3rem .1rem 0;
+  padding: .08rem .4rem;
+  border-radius: var(--radius-sm);
+  font-size: .68rem;
+  color: var(--text-muted);
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+.mon-smart-flag b { font-variant-numeric: tabular-nums; color: var(--text-secondary); font-weight: 600; }
+.mon-smart-flag.crit { background: var(--danger-soft); color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
+.mon-smart-flag.crit b { color: var(--danger); }
+
+/* ---- 存储：说明 / 提示条 ---- */
+.mon-note {
+  padding: .5rem .7rem;
+  border-radius: var(--radius-sm);
+  font-size: .78rem;
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+}
+.mon-note.crit { background: var(--danger-soft); color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
+.mon-note.faint { color: var(--text-muted); }
+
+/* ---- 存储：等宽数字 ---- */
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .92em; }
+.faint { color: var(--text-muted); }
+
+/* ---- 存储：分级着色（总览数值）---- */
+.mon-lv-crit { color: var(--danger); }
+.mon-lv-warn { color: var(--warning); }
+.mon-lv-ok   { color: var(--success); }
 
 /* ---- 空状态 ---- */
 .mon-empty {

@@ -422,7 +422,57 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_update_start()
         if p == "/api/monitor":
             return self._handle_monitor()
+        if p == "/api/storage/scan":
+            return self._handle_storage_scan()
+        if p == "/api/storage/history":
+            return self._handle_storage_history()
         return False
+
+    def _handle_storage_scan(self):
+        """手动触发一次硬盘巡检（POST）。
+
+        巡检要跑 smartctl，耗时可达十几秒，所以只接受 POST 明确触发，
+        不做 GET 侧的隐式巡检。
+        """
+        if _MONITOR is None or _mc is None:
+            self._send_json(503, {"success": False, "error": "监控模块不可用"})
+            return True
+        try:
+            result = _mc.storage_scan_now()
+        except Exception as e:
+            self._send_json(500, {"success": False, "error": str(e)})
+            return True
+        ok = bool(result and result.get("ok"))
+        self._send_json(200 if ok else 400, {
+            "success": ok,
+            "result": result,
+            "error": "" if ok else (result or {}).get("error", "巡检失败"),
+        })
+        return True
+
+    def _handle_storage_history(self):
+        """单盘巡检历史：GET /api/storage/history?dev=sda&serial=XXX&limit=60"""
+        if _MONITOR is None or _mc is None:
+            self._send_json(503, {"success": False, "error": "监控模块不可用"})
+            return True
+        q = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+        dev = (q.get("dev", [""])[0] or "").strip()
+        serial = (q.get("serial", [""])[0] or "").strip()
+        try:
+            limit = int(q.get("limit", ["60"])[0] or 60)
+        except Exception:
+            limit = 60
+        if not dev:
+            self._send_json(400, {"success": False, "error": "缺少 dev 参数"})
+            return True
+        try:
+            rows = _mc.storage_disk_history(dev, limit, serial=serial)
+        except Exception as e:
+            self._send_json(500, {"success": False, "error": str(e)})
+            return True
+        self._send_json(200, {"success": True, "dev": dev, "serial": serial,
+                              "history": rows})
+        return True
 
     def _handle_monitor(self):
         """系统监控数据：直接返回后台采集线程的缓存快照。

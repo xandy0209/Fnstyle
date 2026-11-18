@@ -24,7 +24,7 @@ set -uo pipefail
 # ------------------------- 版本与更新检查 -------------------------
 # ⚠️ 必须与 manifest 的 version 保持一致（自动更新靠它判断「是否比线上新」）。
 # GitHub 发布新版本时，两处都要改：manifest 的 version + 本常量。
-APP_VERSION="1.1.17"
+APP_VERSION="1.1.18"
 
 # ----------------------------- 路径配置 -----------------------------
 # APP_ROOT 是 fnOS 安装后创建的标准软链：
@@ -2295,6 +2295,43 @@ PY
             http_json "503 Service Unavailable" '{"success":false,"available":false,"error":"监控服务未就绪，请确认应用服务已启动"}'
         fi
         rm -f "$MON_FILE"
+        exit 0
+        ;;
+
+    /api/storage/scan)
+        # 手动触发一次硬盘巡检（POST）。巡检要跑 smartctl，耗时可达十几秒，
+        # 所以统一转发给本机 9910 的采集服务执行。
+        SCAN_URL="http://127.0.0.1:9910/api/storage/scan"
+        SCAN_FILE="${TMPDIR:-/tmp}/fnstyle_scan.$$"
+        if [ "$REQ_METHOD" = "POST" ] && \
+           curl -s --max-time 120 -X POST -o "$SCAN_FILE" "$SCAN_URL" 2>/dev/null && [ -s "$SCAN_FILE" ]; then
+            http_json_file_nobom "200 OK" "$SCAN_FILE"
+        else
+            http_json "405 Method Not Allowed" '{"success":false,"error":"巡检接口仅支持 POST"}'
+        fi
+        rm -f "$SCAN_FILE"
+        exit 0
+        ;;
+
+    /api/storage/history)
+        # 单盘巡检历史：?dev=sda&serial=XXX&limit=60
+        HIST_DEV=$(query_get "$QUERY" dev)
+        HIST_DEV=$(url_decode "$HIST_DEV")
+        HIST_SERIAL=$(query_get "$QUERY" serial)
+        HIST_SERIAL=$(url_decode "$HIST_SERIAL")
+        HIST_LIMIT=$(query_get "$QUERY" limit)
+        [ -z "$HIST_LIMIT" ] && HIST_LIMIT=60
+        case "$HIST_DEV" in
+            ""|*"/"*|*".."*) http_json "400 Bad Request" '{"success":false,"error":"缺少或非法的 dev 参数"}'; exit 0 ;;
+        esac
+        HIST_URL="http://127.0.0.1:9910/api/storage/history?dev=${HIST_DEV}&serial=${HIST_SERIAL}&limit=${HIST_LIMIT}"
+        HIST_FILE="${TMPDIR:-/tmp}/fnstyle_hist.$$"
+        if curl -s --max-time 15 -o "$HIST_FILE" "$HIST_URL" 2>/dev/null && [ -s "$HIST_FILE" ]; then
+            http_json_file_nobom "200 OK" "$HIST_FILE"
+        else
+            http_json "503 Service Unavailable" '{"success":false,"error":"监控服务未就绪，请确认应用服务已启动"}'
+        fi
+        rm -f "$HIST_FILE"
         exit 0
         ;;
 

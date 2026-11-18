@@ -113,19 +113,96 @@ def _pct(part, total):
 
 
 # ============================ 1. 存储 ============================
+# 存储能力已完整迁移到独立模块 storage_collect.py（能力对齐 fnmonitor 存储板块：
+# 存储池容量 / 物理盘详情 / SMART 健康与告警计数 / 硬盘分级 / 巡检历史 /
+# 磁盘 IO 速率 / 休眠保护 / 软 RAID / 硬 RAID 卡）。
+# 这里保留薄封装，避免大段代码重复。
+
+
+def _storage_module():
+    """惰性导入 storage_collect（导入失败时降级为 None）。"""
+    global _STORAGE_MOD
+    if _STORAGE_MOD is None:
+        try:
+            import storage_collect as _sc
+            _STORAGE_MOD = _sc
+        except Exception:
+            _STORAGE_MOD = False
+    return _STORAGE_MOD or None
+
+
+_STORAGE_MOD = None
+
+
+def collect_storage():
+    """采集存储池与数据盘容量（薄封装，真实实现见 storage_collect.py）。
+
+    返回结构：
+      volumes    存储池容量（/volN）
+      filesystems 文件系统清单（fsid 去重、过滤伪文件系统与网络挂载）
+      disks      物理盘详情（含 SMART、分级、IO）
+      diskio     各盘读写速率与 IOPS
+      raid       软 RAID（/proc/mdstat）
+      raidcard   硬 RAID 卡（lspci + storcli）
+      scan       巡检状态
+      scanLog    巡检流水
+      summary    汇总统计
+    """
+    sc = _storage_module()
+    if sc is None:
+        # 降级：模块加载失败时用最基础的 statvfs 统计，至少不空屏
+        return _collect_storage_fallback()
+    try:
+        return _STORAGE_MONITOR.collect()
+    except Exception:
+        return _collect_storage_fallback()
+
+
+def _collect_storage_fallback():
+    """storage_collect 不可用时的兜底：只统计 /volN 容量。"""
+    volumes = []
+    try:
+        for vol in sorted(glob.glob("/vol[0-9]*")):
+            if not os.path.isdir(vol):
+                continue
+            usage = _disk_usage(vol)
+            if not usage:
+                continue
+            volumes.append({
+                "name": os.path.basename(vol), "path": vol,
+                "total": usage["total"], "used": usage["used"], "free": usage["free"],
+                "percent": usage["percent"],
+                "totalText": _mbf(usage["total"]),
+                "usedText": _mbf(usage["used"]),
+                "freeText": _mbf(usage["free"]),
+                "children": [],
+            })
+    except Exception:
+        pass
+    return {"volumes": volumes, "filesystems": [], "disks": [], "diskio": [],
+            "raid": [], "raidcard": {"type": "none", "label": "", "detail": "",
+                                     "tool": "", "controllers": [], "error": ""},
+            "scan": {"last_ts": 0.0, "running": False, "summary": {}, "error": ""},
+            "scanLog": [],
+            "summary": {"poolCount": len(volumes), "diskCount": 0, "sleepingCount": 0,
+                        "total": sum(v["total"] for v in volumes),
+                        "used": sum(v["used"] for v in volumes),
+                        "free": sum(v["free"] for v in volumes),
+                        "percent": 0, "grades": {"ok": 0, "warn": 0, "crit": 0, "unknown": 0},
+                        "warnDisks": [], "raidCount": 0, "raidCardType": "none"},
+            "available": bool(volumes)}
+
 
 def _disk_usage(path):
+    """statvfs 读取挂载点容量。
+
+    ⚠️ 口径：free 用 f_bavail（普通用户真正可用），used = total - f_bavail。
+    f_bfree 含 ext4 保留块，用 total - f_bfree 会把保留块算成已用 → 百分比恒 100%
+    （实测 vol1 62.5G 显示 100%，但实际可用还有 48.2G）。
+    """
     try:
         st = os.statvfs(path)
         total = st.f_blocks * st.f_frsize
-        # ⚠️ f_bfree 是「包括保留块在内的空闲空间」，f_bavail 才是
-        #    **普通用户真正可用**的空间。fnOS 的系统卷会预留一大块
-        #    ext4 保留空间（通常 5%，大卷可达几十 GB），
-        #    用 total - f_bfree 算「已用」会把保留块也算进去 →
-        #    百分比永远显示 100%（实测 vol1 62.5G 显示 100%，
-        #    但实际可用还有 48.2G）。
-        #    正确口径：used = total - f_bavail（相对用户视角），
-        #    free = f_bavail。
         free = st.f_bavail * st.f_frsize
         used = max(0, total - free)
         return {"total": total, "used": used, "free": free,
@@ -134,129 +211,73 @@ def _disk_usage(path):
         return None
 
 
-def collect_storage():
-    """采集存储池与数据盘容量。
+# 存储监控聚合器（单例）
+_STORAGE_MONITOR = None
 
-    来源：/volN（fnOS 存储池挂载点）、/proc/mdstat（软 RAID 状态）。
-    降级：/vol* 不存在时回退到 /proc/mounts 里挂在 /vol* 的设备；
-          都没有则返回空列表，不抛错。
-    """
-    volumes = []
-    seen = set()
-    try:
-        candidates = sorted(glob.glob("/vol[0-9]*"))
-    except Exception:
-        candidates = []
 
-    # 回退源：从 /proc/mounts 里找挂载点形如 /volN 的文件系统
-    if not candidates:
+def _storage_monitor():
+    """惰性创建存储监控聚合器（首次调用时建库、起巡检线程）。"""
+    global _STORAGE_MONITOR
+    if _STORAGE_MONITOR is None:
+        sc = _storage_module()
+        if sc is None:
+            return None
         try:
-            mounts = read_text("/proc/mounts", 65536)
-            for line in mounts.splitlines():
-                parts = line.split()
-                if len(parts) >= 2 and re.match(r"^/vol[0-9]+$", parts[1]):
-                    candidates.append(parts[1])
+            db_path = os.path.join(_storage_data_dir(), "storage.db")
         except Exception:
-            pass
-
-    for vol in candidates:
+            db_path = None
         try:
-            if vol in seen or not os.path.isdir(vol):
-                continue
-            seen.add(vol)
-            # 存储池根目录本身不含用户数据（数据在 @appshare / 用户目录），
-            # 但 fnOS 的存储池即整个卷，故整体统计即可。
-            usage = _disk_usage(vol)
-            if not usage:
-                continue
-            # 统计各一级子目录占用（appshare / 用户目录等），用于下钻展示
-            children = []
-            try:
-                for name in sorted(os.listdir(vol)):
-                    sub = os.path.join(vol, name)
-                    if not os.path.isdir(sub) or name.startswith("."):
-                        continue
-                    su = _disk_usage(sub)
-                    if su and su["total"] > 0:
-                        children.append({"name": name, "total": su["total"],
-                                         "used": su["used"], "free": su["free"],
-                                         "percent": su["percent"]})
-            except Exception:
-                pass
-            volumes.append({
-                "name": os.path.basename(vol),
-                "path": vol,
-                "total": usage["total"],
-                "used": usage["used"],
-                "free": usage["free"],
-                "percent": usage["percent"],
-                "totalText": _mbf(usage["total"]),
-                "usedText": _mbf(usage["used"]),
-                "freeText": _mbf(usage["free"]),
-                "children": children,
-            })
+            _STORAGE_MONITOR = sc.StorageMonitor(db_path, scan_interval_h=6)
+            _STORAGE_MONITOR.start()
+        except Exception:
+            _STORAGE_MONITOR = None
+    return _STORAGE_MONITOR
+
+
+def _storage_data_dir():
+    """存储监控数据目录（巡检历史库）。"""
+    for env in ("FNSTYLE_DATA_DIR", "TRIM_PKGVAR"):
+        p = os.environ.get(env)
+        if p and os.path.isdir(p):
+            return p
+    for cand in ("/var/apps/fnstyle/var", "/usr/local/apps/@appcenter/fnstyle/var",
+                 os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "var")):
+        try:
+            if os.path.isdir(cand):
+                return os.path.abspath(cand)
         except Exception:
             continue
+    return "/tmp"
 
-    # 物理磁盘清单（型号 / 类型 / 温度）
-    disks = collect_disks()
 
-    # 软 RAID 状态（/proc/mdstat）
-    raid = []
-    md = read_text("/proc/mdstat", 4096)
-    if md:
-        for m in re.finditer(r"^(md\d+)\s*:\s*(\S+)\s+(\S+)\s+\[(\d+)/(\d+)\]",
-                             md, re.M):
-            raid.append({
-                "name": m.group(1),
-                "state": m.group(2),
-                "active": int(m.group(4)),
-                "total": int(m.group(5)),
-            })
+def storage_scan_now():
+    """手动触发一次硬盘巡检。"""
+    m = _storage_monitor()
+    if not m:
+        return {"ok": False, "error": "存储监控未启用"}
+    return m.scan_now()
 
-    return {"volumes": volumes, "raid": raid, "disks": disks,
-            "available": bool(volumes)}
+
+def storage_disk_history(dev, limit=60, serial=None):
+    """单盘巡检历史（可传 serial 以跨设备名轮换续查）。"""
+    m = _storage_monitor()
+    if not m:
+        return []
+    try:
+        return m.disk_history(dev, limit, serial=serial)
+    except Exception:
+        return []
 
 
 def collect_disks():
-    """物理磁盘清单：型号、类型（SSD/HDD）、温度、容量。
-
-    型号来源 /sys/block/<dev>/device/model（virtio/USB 桥接设备可能没有）。
-    温度来源 /sys/block/<dev>/device/hwmon/hwmon*/temp1_input。
-    """
-    disks = []
-    devs = sorted(glob.glob("/sys/block/sd*[a-z]") +
-                  glob.glob("/sys/block/nvme[0-9]*n[0-9]*") +
-                  glob.glob("/sys/block/vd*[a-z]"))
-    for blk in devs:
-        base = os.path.basename(blk)
-        dev = os.path.join(blk, "device")
-        rot = read_int(os.path.join(blk, "queue", "rotational"))
-        model = read_text(os.path.join(dev, "model"), 256).strip()
-        if not model:
-            model = read_text(os.path.join(dev, "name"), 256).strip()
-        temp = None
-        hw = glob.glob(os.path.join(dev, "hwmon", "hwmon*", "temp*_input"))
-        if hw:
-            t = read_int(hw[0])
-            if t:
-                temp = round(t / 1000.0, 1)
-        size = None
-        try:
-            sectors = read_int(os.path.join(blk, "size"))
-            if sectors:
-                size = sectors * 512
-        except Exception:
-            pass
-        disks.append({
-            "name": base,
-            "model": model or base,
-            "temp": temp,
-            "size": size,
-            "sizeText": _mbf(size) if size else "—",
-            "type": "SSD" if rot == 0 else ("HDD" if rot == 1 else "未知"),
-        })
-    return disks
+    """物理磁盘清单（薄封装，真实实现见 storage_collect.py）。"""
+    sc = _storage_module()
+    if sc is None:
+        return []
+    try:
+        return sc.collect_disks_detail(with_states=False)
+    except Exception:
+        return []
 
 
 # ==================== 2. 处理器 / 内存 / 显卡 ====================
@@ -696,9 +717,17 @@ class MonitorCollector(object):
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
+        # 启动硬盘巡检线程（定时全盘扫 SMART，独立于 3 秒采集循环）
+        _storage_monitor()
 
     def stop(self):
         self._stop.set()
+        m = _storage_monitor()
+        if m:
+            try:
+                m.stop()
+            except Exception:
+                pass
 
     def _loop(self):
         while not self._stop.is_set():
