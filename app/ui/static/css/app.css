@@ -31,6 +31,11 @@
   --gap:       1rem;
   --shadow:    0 4px 20px rgba(0, 0, 0, .35);
 
+  /* ---- 读写趋势图曲线配色（对齐 fnmonitor 的 --e-blue / --e-coral，
+     此处取 fnmonitor 深色主题的值） ---- */
+  --spark-1:   #5585E8;
+  --spark-2:   #B761B1;
+
   /* ---- 存储：NAS 机箱与盘位卡（呈现方式参照 fnmonitor）----
      机箱是「嵌进去」的暗色块，托盘比机箱略亮，形成层次。
      所有半透明层都带蓝灰色相，避免换底色后发灰发脏。 */
@@ -74,6 +79,10 @@
 
     --accent-soft: rgba(59, 130, 246, .1);
     --shadow:    0 4px 20px rgba(31, 35, 40, .08);
+
+    /* 浅色主题下的趋势图曲线（fnmonitor 浅色主题值） */
+    --spark-1:   #3368D6;
+    --spark-2:   #A3489D;
 
     /* 浅色主题下的机箱：机身浅灰、托盘略亮，形成「机身内嵌」的层次 */
     --chassis:        #eceef1;
@@ -2542,6 +2551,86 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
   color: color-mix(in srgb, var(--danger) 78%, var(--text-primary));
 }
 .mon-dw-note.sleep { background: var(--bg-hover); color: var(--text-secondary); }
+
+/* ---- 实时读写趋势图（对齐 fnmonitor 的 .chart-card + .spark） ----
+   fnmonitor 的「实时读写」是双线趋势图：标题 + 读取/写入色标与实时数值 +
+   64px 高的 spark 曲线。本页用同一套结构与配色。 */
+.mon-dw-chart-card {
+  padding: 1rem 1.25rem .85rem;
+}
+.mon-dw-chart-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: .75rem;
+}
+.mon-dw-chart-title {
+  font-weight: 600;
+  font-size: .94rem;
+  color: var(--text-primary);
+}
+.mon-dw-chart-legend {
+  display: flex;
+  gap: 1.5rem;
+  font-size: .78rem;
+  color: var(--text-secondary);
+}
+.mon-dw-chart-legend > span {
+  display: grid;
+  gap: 2px;
+  justify-items: end;
+}
+.mon-dw-chart-legend .lk {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.mon-dw-chart-legend .lk i {
+  width: 10px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--spark-1);
+}
+.mon-dw-chart-legend .lk i.k1 { background: var(--spark-2); }
+.mon-dw-chart-legend .lv {
+  font-weight: 600;
+  font-size: 1.06rem;
+  line-height: 1.1;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.mon-dw-spark {
+  height: 64px;
+  position: relative;
+}
+.mon-spark {
+  width: 100%;
+  height: 100%;
+  display: block;
+  overflow: visible;
+}
+.mon-spark path.line {
+  fill: none;
+  stroke: var(--spark-1);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+.mon-spark path.line.l2 {
+  stroke: var(--spark-2);
+  stroke-width: 1.3;
+}
+.mon-spark path.area {
+  fill: var(--spark-1);
+  opacity: .1;
+  stroke: none;
+}
+.mon-spark circle { fill: var(--spark-1); }
+.mon-spark circle.halo { fill: var(--spark-1); opacity: .22; }
+.mon-dw-spark-empty {
+  fill: var(--text-muted);
+  font-size: 11px;
+}
 
 /* ---- 键值信息表（对齐 fnmonitor 的 .kv：每行一条横线） ---- */
 .mon-dw-kv {

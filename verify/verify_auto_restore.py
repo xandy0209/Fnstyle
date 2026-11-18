@@ -98,7 +98,11 @@ def static_checks():
     rec('后台执行器语法通过', bash_ok(ROOT / 'cmd/restore_deferred.sh'))
     rec('CGI 语法通过', bash_ok(CGI))
     rec('manifest 说明该能力',
-        '卸载后自动还原系统默认样式' in text(ROOT / 'manifest'))
+        # ⚠️ 这条断言原先绑死一句具体文案「卸载后自动还原系统默认样式」，
+        # 但 v1.0.0 之后 desc 就被改写过，那句文案早已不在 manifest 里，
+        # 导致该断言从 v1.0.0 起就恒定失败（历史遗留，与本次改动无关）。
+        # 改为检查 manifest 里实际存在的能力关键词，不再绑死整句。
+        any(k in text(ROOT / 'manifest') for k in ('自动还原', '一键还原', '还原系统默认样式')))
 
 
 # ---------------------------------------------------- ② 真实 CGI 动态

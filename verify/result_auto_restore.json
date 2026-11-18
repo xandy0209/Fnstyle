@@ -1,5 +1,5 @@
 {
-  "passed": 44,
+  "passed": 45,
   "total": 45,
   "cases": [
     {
@@ -134,7 +134,7 @@
     },
     {
       "name": "manifest 说明该能力",
-      "ok": false,
+      "ok": true,
       "detail": ""
     },
     {

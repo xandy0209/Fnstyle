@@ -22,9 +22,9 @@ function mkEl(id) {
   };
 }
 ['monStorage', 'monStoreCount', 'monStatus', 'monUpdated', 'monCore', 'monCoreCount',
- 'monTemp', 'monTempCount', 'monPower', 'monPowerSource', 'btnMonRefresh', 'monAuto',
- 'btnMonScan', 'monDrawerOverlay', 'monDrawerTitle', 'monDrawerSub', 'monDrawerBody',
- 'btnCloseMonDrawer']
+  'monTemp', 'monTempCount', 'monPower', 'monPowerSource', 'btnMonRefresh', 'monAuto',
+  'btnMonScan', 'monDrawerOverlay', 'monDrawerTitle', 'monDrawerSub', 'monDrawerBody',
+  'btnCloseMonDrawer', 'monDwSpark']
   .forEach(id => { els[id] = mkEl(id); });
 
 /* 抽屉的 overlay 需要 classList / hidden / 事件钩子 */
@@ -35,6 +35,9 @@ els.monDrawerOverlay.classList = {
   contains: function (c) { return !!this._s[c]; },
 };
 els.monDrawerOverlay.hidden = true;
+/* spark 画布：需要尺寸才能算出曲线坐标 */
+els.monDwSpark.clientWidth = 320;
+els.monDwSpark.clientHeight = 64;
 els.monDrawerOverlay.__listeners = {};
 els.monDrawerOverlay.addEventListener = function (t, fn) {
   (this.__listeners[t] = this.__listeners[t] || []).push(fn);
@@ -235,6 +238,12 @@ const patched2 = patched.replace(
   '  window.__tempLevel = tempLevel;\n' +
   '  window.__TH_DISK_TEMP_WARN = TH_DISK_TEMP_WARN;\n' +
   '  window.__TH_DISK_TEMP_CRIT = TH_DISK_TEMP_CRIT;\n' +
+  '  window.__feedDiskBuf = feedDiskBuf;\n' +
+  '  window.__monoPath = monoPath;\n' +
+  '  window.__drawSpark = drawSpark;\n' +
+  '  window.__drawDrawerSpark = drawDrawerSpark;\n' +
+  '  window.__getDiskBuf = function (n) { return diskBuf[n] || null; };\n' +
+  '  window.__fmtRate = fmtRate;\n' +
   '  window.__setLastData = function (d) { lastData = d; };\n' +
   '  window.FnStyleMonitor = {'
 );
@@ -264,6 +273,12 @@ const tempLevel = global.__tempLevel;
 const TH_DISK_TEMP_WARN = global.__TH_DISK_TEMP_WARN;
 const TH_DISK_TEMP_CRIT = global.__TH_DISK_TEMP_CRIT;
 const setLastData = global.__setLastData;
+const feedDiskBuf = global.__feedDiskBuf;
+const monoPath = global.__monoPath;
+const drawSpark = global.__drawSpark;
+const drawDrawerSpark = global.__drawDrawerSpark;
+const getDiskBuf = global.__getDiskBuf;
+const fmtRate = global.__fmtRate;
 if (typeof bayLedState !== 'function' || typeof smartAlertsText !== 'function') {
   console.error('❌ SMART 测试钩子未就绪');
   process.exit(1);
@@ -276,6 +291,15 @@ if (typeof openDiskDrawer !== 'function' || typeof dwSmartTable !== 'function'
 if (typeof diskTempLevel !== 'function' || typeof tempExceed !== 'function'
     || typeof dwKvRow !== 'function') {
   console.error('❌ 温度阈值测试钩子未就绪');
+  process.exit(1);
+}
+if (typeof feedDiskBuf !== 'function' || typeof monoPath !== 'function'
+    || typeof drawSpark !== 'function' || typeof getDiskBuf !== 'function') {
+  console.error('❌ 趋势图测试钩子未就绪');
+  process.exit(1);
+}
+if (typeof drawDrawerSpark !== 'function') {
+  console.error('❌ 趋势图绘制钩子未就绪');
   process.exit(1);
 }
 
@@ -711,8 +735,8 @@ if (html) {
   openDiskDrawer('sdt');
   const styleBody = els.monDrawerBody.innerHTML;
   const styleRules = [
-    ['键值行用 <div> 包裹 dt/dd（fnmonitor .kv 结构）',
-      /<div><dt>读取速率<\/dt><dd>/.test(styleBody)],
+    ['信息表键值行用 <div> 包裹 dt/dd（fnmonitor .kv 结构）',
+      /<div><dt>型号<\/dt><dd>/.test(styleBody)],
     ['容量条为 40 段格条（fnmonitor .dbar）',
       (styleBody.match(/mon-dw-bar">(<i[^>]*><\/i>)+/g) || []).length === 1
         && (styleBody.match(/<i class="on"|<i class="" style="background|<i><\/i>/g) || []).length >= 0
@@ -725,7 +749,25 @@ if (html) {
     if (!ok) bad++;
   });
 
-  /* 7. CSS 层面的结构校验（读样式表源码） */
+  /* 7b. 实时读写趋势图（对齐 fnmonitor 的 .chart-card + .spark） */
+  console.log('\n--- 实时读写趋势图（对齐 fnmonitor）---');
+  const chartRules = [
+    ['实时读写改为趋势图卡片（不再是键值表）',
+      /mon-dw-chart-card/.test(styleBody) && !/<dt>读取速率<\/dt>/.test(styleBody)],
+    ['有图表标题「读写速率」', /mon-dw-chart-title">读写速率/.test(styleBody)],
+    ['图例含「读取」色标', /<i class="k0"><\/i>读取/.test(styleBody)],
+    ['图例含「写入」色标', /<i class="k1"><\/i>写入/.test(styleBody)],
+    ['图例显示实时速率数值', /class="lv">/.test(styleBody)],
+    ['有 spark 容器（64px 高）', /mon-dw-spark/.test(styleBody)],
+    ['有 svg 画布', /<svg class="mon-spark"/.test(styleBody)],
+    ['「硬盘状态」移到信息表（信息不丢）', /<dt>硬盘状态<\/dt>/.test(styleBody)],
+  ];
+  chartRules.forEach(function ([label, ok]) {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* 7c. CSS 层面的结构校验（读样式表源码） */
   const CSS = path.join(__dirname, '..', 'app', 'ui', 'static', 'css', 'app.css');
   const css = fs.readFileSync(CSS, 'utf8');
   const cssRules = [
@@ -743,6 +785,17 @@ if (html) {
       /\.mon-dw-eyebrow \{[^}]*text-transform: uppercase/.test(css)],
     ['.mon-dw-card 有卡片底色与描边（fnmonitor .card）',
       /\.mon-dw-card \{[^}]*background: var\(--bg-card\)/.test(css)],
+    // 趋势图
+    ['.mon-dw-spark 高度 64px（fnmonitor .chart-card spark）', /\.mon-dw-spark \{[^}]*height: 64px/.test(css)],
+    ['.mon-dw-chart-head 为 flex 布局（fnmonitor .chart-head）',
+      /\.mon-dw-chart-head \{[^}]*display: flex/.test(css)],
+    ['.mon-dw-chart-legend 两条图例间距 1.5rem',
+      /\.mon-dw-chart-legend \{[^}]*gap: 1\.5rem/.test(css)],
+    ['.mon-spark 第一条线用 --spark-1', /\.mon-spark path\.line \{[^}]*stroke: var\(--spark-1\)/.test(css)],
+    ['.mon-spark 第二条线用 --spark-2', /\.mon-spark path\.line\.l2 \{[^}]*stroke: var\(--spark-2\)/.test(css)],
+    ['.mon-spark 面积填充在 --spark-1 上', /\.mon-spark path\.area \{[^}]*fill: var\(--spark-1\)/.test(css)],
+    ['定义了 --spark-1 / --spark-2 曲线色',
+      /--spark-1:\s*#/.test(css) && /--spark-2:\s*#/.test(css)],
   ];
   cssRules.forEach(function ([label, ok]) {
     console.log((ok ? '  ✓ ' : '  ✗ ') + label);
@@ -750,6 +803,138 @@ if (html) {
   });
 
   if (bad) { console.error('❌ 温度阈值/抽屉样式断言失败 ' + bad + ' 项'); process.exitCode = 1; }
+})();
+
+/* ---------- v1.1.28：实时读写趋势图（缓冲 + 平滑曲线 + 双线渲染） ---------- */
+(function checkReadWriteTrendChart() {
+  console.log('\n--- 实时读写趋势图 ---');
+  let bad = 0;
+  const check = function (label, ok) {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  };
+
+  /* 1. 缓冲：每次 feed 推进一次读写速率 */
+  feedDiskBuf({ diskio: [{ name: 'sdz', read_rate: 100, write_rate: 50 }] });
+  feedDiskBuf({ diskio: [{ name: 'sdz', read_rate: 200, write_rate: 80 }] });
+  feedDiskBuf({ diskio: [{ name: 'sdz', read_rate: 300, write_rate: 120 }] });
+  const buf = getDiskBuf('sdz');
+  check('缓冲已建立', !!buf);
+  check('读取速率累积 3 点', buf && buf.r.length === 3);
+  check('写入速率累积 3 点', buf && buf.w.length === 3);
+  check('读取速率按顺序累积', buf && buf.r[0] === 100 && buf.r[1] === 200 && buf.r[2] === 300);
+  check('写入速率按顺序累积', buf && buf.w[0] === 50 && buf.w[2] === 120);
+
+  /* 2. 缓冲上限 100 点（3s × 100 = 5 分钟窗口，与 fnmonitor 的 5s×60 等长） */
+  for (let i = 0; i < 120; i++) {
+    feedDiskBuf({ diskio: [{ name: 'sdz', read_rate: i, write_rate: i }] });
+  }
+  const buf2 = getDiskBuf('sdz');
+  check('缓冲上限 100 点（超出后丢最旧）', buf2 && buf2.r.length === 100);
+  check('超出后保留最新值', buf2 && buf2.r[buf2.r.length - 1] === 119);
+
+  /* 3. monoPath：单调三次插值，输出合法 SVG path */
+  const d = monoPath([0, 10, 20, 30], [5, 20, 10, 25]);
+  check('monoPath 返回 M 起始', /^M[\d.]+,[\d.]+/.test(d));
+  check('monoPath 含贝塞尔段 C', d.indexOf('C') > 0);
+  check('monoPath 段数 = 点数-1', (d.match(/C/g) || []).length === 3);
+  check('monoPath 单点也能输出', monoPath([0], [1]) === 'M0,1');
+  check('monoPath 空数组返回空串', monoPath([], []) === '');
+
+  /* 4. monoPath 不过冲：单调上升的数据不应出现中间凹陷 */
+  const rising = monoPath([0, 1, 2, 3], [0, 1, 2, 3]);
+  const ys = (rising.match(/[\d.]+,([\d.]+)/g) || []).map(s => parseFloat(s.split(',')[1]));
+  let monotone = true;
+  for (let i = 1; i < ys.length; i++) if (ys[i] < ys[i - 1] - 0.01) monotone = false;
+  check('单调数据的曲线不回落（单调插值不过冲）', monotone);
+
+  /* 5. drawSpark：两条线 + 面积填充 + 末端光点 */
+  const fakeSvg = { innerHTML: '', clientWidth: 300, clientHeight: 64 };
+  drawSpark(fakeSvg, [{ values: [1, 2, 3, 4] }, { values: [4, 3, 2, 1] }]);
+  const out = fakeSvg.innerHTML;
+  check('drawSpark 渲染出内容', out.length > 0);
+  check('含面积填充 path.area', /class="area"/.test(out));
+  check('含第一条线 path.line', /class="line"/.test(out));
+  check('含第二条线 path.line l2', /class="line l2"/.test(out));
+  check('含末端 halo 光点', /class="halo"/.test(out));
+  check('含末端实心点', /<circle cx="/.test(out));
+
+  /* 6. 数据不足 2 点时不画曲线（显示占位） */
+  const svg2 = { innerHTML: 'OLD', clientWidth: 300, clientHeight: 64 };
+  drawSpark(svg2, [{ values: [1] }, { values: [] }]);
+  check('数据不足 2 点时清空画布', svg2.innerHTML === '');
+
+  /* 7. 全 0 速率不会除零崩溃 */
+  const svg3 = { innerHTML: '', clientWidth: 300, clientHeight: 64 };
+  let crashed = false;
+  try { drawSpark(svg3, [{ values: [0, 0, 0] }, { values: [0, 0, 0] }]); }
+  catch (e) { crashed = true; }
+  check('全 0 速率不崩溃', !crashed && svg3.innerHTML.length > 0);
+
+  /* 8. 抽屉打开且缓冲有数据时，spark 真被绘制到 #monDwSpark */
+  feedDiskBuf({ diskio: [{ name: 'sdy', read_rate: 1024, write_rate: 512 }] });
+  feedDiskBuf({ diskio: [{ name: 'sdy', read_rate: 2048, write_rate: 256 }] });
+  const sdy = {
+    name: 'sdy', model: 'WDC WD40EFZX-68AWUN0', vendor: 'ATA', type: 'disk',
+    size: 4000653453312, sizeText: '4.00 TB', serial: 'TREND-001',
+    temp: 30, rpm: '5400 rpm', health: 'PASSED', grade: 'ok', gradeLabel: '正常',
+    detail: '未发现异常计数', mounts: ['/vol1'], vol: 1,
+    used: 100 * 1073741824, total: 4000653453312, percent: 25,
+    usedText: '100 GB', totalText: '4.00 TB', state: 'active/idle',
+    standby: false, proto: 'SATA',
+    reallocated_sectors: 0, reallocated_events: 0, pending_sectors: 0,
+    offline_uncorrectable: 0, uncorrectable: 0, udma_crc: 0,
+  };
+  setLastData({ storage: { disks: [sdy], scan: {}, summary: {} } });
+  openDiskDrawer('sdy');
+  drawDrawerSpark();   // 同步调用（真实运行时在 rAF 里调）
+  check('抽屉内 spark 画布已被填充',
+    /class="area"/.test(els.monDwSpark.innerHTML)
+    && /class="line l2"/.test(els.monDwSpark.innerHTML));
+  check('抽屉内图例显示实时速率',
+    /class="lv">/.test(els.monDrawerBody.innerHTML));
+
+  /* 6. fmtRate：速率格式化对齐 fnmonitor 的 F.rateStr */
+  console.log('--- 速率格式化（fnmonitor F.rateStr 对齐）---');
+  const rateRules = [
+    ['0 → 0 B/s', fmtRate(0) === '0 B/s'],
+    ['512 → 512 B/s', fmtRate(512) === '512 B/s'],
+    ['1024 → 1.0 KB/s', fmtRate(1024) === '1.0 KB/s'],
+    ['1536 → 1.5 KB/s', fmtRate(1536) === '1.5 KB/s'],
+    ['102400 → 100 KB/s（≥100 取整）', fmtRate(102400) === '100 KB/s'],
+    ['1048576 → 1.0 MB/s', fmtRate(1048576) === '1.0 MB/s'],
+    ['非数字 → --', fmtRate(null) === '--' && fmtRate(undefined) === '--' && fmtRate(NaN) === '--'],
+    ['负数按 0 处理', fmtRate(-5) === '0 B/s'],
+  ];
+  rateRules.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* 7. 图例数值与曲线同源：都用 read_rate 前端格式化，不依赖后端 readText */
+  const srcText = fs.readFileSync(SRC, 'utf8');
+  const sameSource = [
+    ['抽屉图例用 fmtRate(io.read_rate)', /var rTxt = io \? fmtRate\(io\.read_rate\)/.test(srcText)],
+    ['抽屉图例用 fmtRate(io.write_rate)', /var wTxt = io \? fmtRate\(io\.write_rate\)/.test(srcText)],
+    ['刷新图例同样用 fmtRate', /lvs\[0\]\.textContent = io \? fmtRate\(io\.read_rate\)/.test(srcText)],
+    ['趋势图数值不再用后端 readText', !/io\.readText \? io\.readText/.test(srcText)],
+  ];
+  sameSource.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* 8. 时间窗口文案：3s × 100 点 = 5 分钟 */
+  const winRules = [
+    ['缓冲点数为 100', /var BUF_N = 100/.test(srcText)],
+    ['窗口文案按 BUF_N × REFRESH_MS 计算', /Math\.round\(BUF_N \* REFRESH_MS \/ 60000\)/.test(srcText)],
+  ];
+  winRules.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  if (bad) { console.error('❌ 趋势图断言失败 ' + bad + ' 项'); process.exitCode = 1; }
 })();
 
 /* ---------- 源码级断言：容量单位进制不能被改回去 ---------- */

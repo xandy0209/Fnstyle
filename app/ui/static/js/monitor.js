@@ -33,6 +33,21 @@
     return (i === 0 ? v.toFixed(0) : v.toFixed(1)) + ' ' + units[i];
   }
 
+  /* 速率格式化（字节/秒 → 人类可读），对齐 fnmonitor 的 F.rateStr。
+     趋势图的图例数值与曲线必须同源：都从 read_rate / write_rate 现算，
+     不能一个用后端下发的 readText、另一个用 read_rate —— 两者可能不同步
+     （后端 readText 由上一轮采集算好，前端 read_rate 是本次原始值）。 */
+  function fmtRate(bps) {
+    if (bps === null || bps === undefined || isNaN(bps)) return '--';
+    var v = Number(bps);
+    if (v < 0) v = 0;
+    var units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+    var i = 0;
+    while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+    var num = i === 0 ? String(Math.round(v)) : (v >= 100 ? String(Math.round(v)) : v.toFixed(1));
+    return num + ' ' + units[i] + '/s';
+  }
+
   /* 硬盘 / 存储池容量格式化（十进制，与 fnmonitor F.dsize 和 fnOS 存储页一致）。
      磁盘厂商标称 1 TB = 10^12 字节，若用 1024 进制会显示成 0.91 TB，
      与系统存储页、fnmonitor 的数字都对不上。
@@ -383,11 +398,107 @@
   /* ==========================================================================
      硬盘详情抽屉（点击盘位卡片从右侧滑出）
      呈现内容对齐 fnmonitor 的「硬盘」详情面板（.sheet disk/<dev>）：
-     容量大数字 → 容量条 → 告警/休眠提示 → 实时读写 → SMART 表 → 信息表。
+     容量大数字 → 容量条 → 告警/休眠提示 → 实时读写趋势图 → SMART 表 → 信息表。
      ========================================================================== */
 
   var drawerOpen = false;
   var drawerDev = null;
+
+  /* --------------------------------------------------------------------------
+     实时读写趋势图（对齐 fnmonitor 的 .chart-card + .spark）
+     fnmonitor 的「实时读写」不是键值表，而是一张带图例的双线趋势图：
+       标题「读写速率」 + 读取/写入两条线色标 + 实时速率数字 + 64px 高的 spark。
+     数据来自前端内存里的滑动缓冲 S.diskBuf（每次轮询 push 一次读写速率）。
+     窗口长度对齐 fnmonitor 的「近 5 分钟」：fnmonitor 是 5s×60 点，
+     FnStyle 轮询 3s，所以取 100 点同样是 5 分钟（见 BUF_N）。
+     -------------------------------------------------------------------------- */
+  var BUF_N = 100;                      // 缓冲点数：3s × 100 = 5 分钟窗口
+  var diskBuf = {};                     // { dev: { r: [], w: [] } }
+
+  function bufPush(arr, v) {
+    arr.push(Number(v) || 0);
+    if (arr.length > BUF_N) arr.shift();
+  }
+
+  /* 每次刷新把当前读写速率推进缓冲（fnmonitor 的 feed() 同款位置） */
+  function feedDiskBuf(st) {
+    var io = st && st.diskio;
+    if (!io || !io.length) return;
+    io.forEach(function (z) {
+      var b = diskBuf[z.name];
+      if (!b) { b = diskBuf[z.name] = { r: [], w: [] }; }
+      bufPush(b.r, z.read_rate);
+      bufPush(b.w, z.write_rate);
+    });
+  }
+
+  /* 平滑曲线：单调三次插值（monotone cubic），避免普通样条在极值处过冲。
+     实现同 fnmonitor 的 monoPath()。 */
+  function monoPath(xs, ys) {
+    var n = xs.length;
+    if (!n) return '';
+    var f = function (v) { return Math.round(v * 10) / 10; };
+    if (n === 1) return 'M' + f(xs[0]) + ',' + f(ys[0]);
+    var dx = [], m = [], t = new Array(n), i;
+    for (i = 0; i < n - 1; i++) {
+      dx[i] = xs[i + 1] - xs[i] || 1e-6;
+      m[i] = (ys[i + 1] - ys[i]) / dx[i];
+    }
+    t[0] = m[0];
+    t[n - 1] = m[n - 2];
+    for (i = 1; i < n - 1; i++) {
+      t[i] = (m[i - 1] * m[i] <= 0) ? 0
+        : 3 * (dx[i - 1] + dx[i]) / ((2 * dx[i] + dx[i - 1]) / m[i - 1] + (dx[i] + 2 * dx[i - 1]) / m[i]);
+    }
+    var d = 'M' + f(xs[0]) + ',' + f(ys[0]);
+    for (i = 0; i < n - 1; i++) {
+      var h = dx[i] / 3;
+      d += 'C' + f(xs[i] + h) + ',' + f(ys[i] + t[i] * h) + ' '
+        + f(xs[i + 1] - h) + ',' + f(ys[i + 1] - t[i + 1] * h) + ' '
+        + f(xs[i + 1]) + ',' + f(ys[i + 1]);
+    }
+    return d;
+  }
+
+  /* 渲染双线 spark 图到指定的 <svg> 元素。
+     series: [{values:[...]}, {values:[...]}]，对齐 fnmonitor 的 spark.set()。
+     min 固定 0（速率没有负值），max 自适应并留 18% 余量。 */
+  function drawSpark(svg, series) {
+    if (!svg) return;
+    var w = svg.clientWidth || 320;
+    var h = svg.clientHeight || 64;
+    if (!w || !h) return;
+    var all = [];
+    series.forEach(function (s) { all = all.concat(s.values); });
+    if (all.length < 2) {
+      svg.innerHTML = '';
+      return;
+    }
+    var lo = 0;
+    var hi = Math.max.apply(null, all);
+    if (hi - lo < 1e-9) hi = lo + 1;
+    hi += (hi - lo) * 0.18;              // 顶部留白，避免贴边
+    var pad = 3;
+    var html = '';
+    series.forEach(function (s, si) {
+      var vals = s.values;
+      var n = vals.length;
+      if (n < 2) return;
+      var xs = vals.map(function (_, i) { return i / (n - 1) * w; });
+      var ys = vals.map(function (v) {
+        var c = Math.max(lo, Math.min(hi, v));
+        return pad + (1 - (c - lo) / (hi - lo)) * (h - pad * 2);
+      });
+      var d = monoPath(xs, ys);
+      // 第一条线带面积填充（fnmonitor 同款）
+      if (si === 0) html += '<path class="area" d="' + d + 'L' + w + ',' + h + 'L0,' + h + 'Z"/>';
+      html += '<path class="line' + (si ? ' l2' : '') + '" d="' + d + '"/>';
+      // 末端活动光点
+      html += '<circle class="halo" cx="' + w + '" cy="' + ys[n - 1].toFixed(1) + '" r="5"/>'
+        + '<circle cx="' + w + '" cy="' + ys[n - 1].toFixed(1) + '" r="2.5"/>';
+    });
+    svg.innerHTML = html;
+  }
 
   function monDrawerOverlay() { return $('#monDrawerOverlay'); }
 
@@ -488,7 +599,9 @@
     return '<div><dt>' + esc(k) + '</dt><dd>' + (v === undefined || v === null ? '' : v) + '</dd></div>';
   }
 
-  /* 信息表（型号 / 序列号 / 类型 / 容量 / 挂载点 / 所属空间） */
+  /* 信息表（型号 / 序列号 / 类型 / 容量 / 挂载点 / 所属空间）
+     注：「硬盘状态」原本挂在实时读写的键值表里；改成趋势图后那一栏没了，
+     这里补回信息表，信息不丢。 */
   function dwInfoKv(d) {
     var mounts = (d && d.mounts) || [];
     var kv = [
@@ -496,6 +609,7 @@
       ['序列号', d && d.serial ? '<span class="mono">' + esc(d.serial) + '</span>' : '<span class="faint">—</span>'],
       ['类型', esc(d && d.type ? d.type : '未知')],
       ['硬盘容量', esc(d && d.sizeText ? d.sizeText : fmtDisk((d && d.size) || 0))],
+      ['硬盘状态', d && d.state === 'standby' ? '休眠' : esc(d && d.state ? d.state : '—')],
       ['挂载点', mounts.length
         ? '<span class="mono">' + esc(mounts.join('、')) + '</span>'
         : '<span class="faint">未挂载</span>'],
@@ -599,15 +713,23 @@
     }
     if (notes) html += notes;
 
-    /* --- 实时读写 --- */
+    /* --- 实时读写：对齐 fnmonitor —— 趋势图卡片，不是键值表 ---
+       fnmonitor 的结构是 .chart-card：标题「读写速率」+ 读取/写入色标与实时数值
+       + 64px 高的双线 spark。曲线数据来自前端滑动缓冲 diskBuf。 */
     if (!d.standby) {
-      html += '<div class="mon-dw-sec">实时读写<span class="faint">近 5 分钟</span></div>';
-      html += '<div class="mon-dw-card">' +
-        '<dl class="mon-dw-kv">' +
-        dwKvRow('读取速率', io && io.readText ? esc(io.readText) : '<span class="faint">无 IO 数据</span>') +
-        dwKvRow('写入速率', io && io.writeText ? esc(io.writeText) : '<span class="faint">无 IO 数据</span>') +
-        dwKvRow('硬盘状态', d.state === 'standby' ? '休眠' : esc(d.state || '—')) +
-        '</dl></div>';
+      var rTxt = io ? fmtRate(io.read_rate) : '--';
+      var wTxt = io ? fmtRate(io.write_rate) : '--';
+      html += '<div class="mon-dw-sec">实时读写<span class="faint">近 ' +
+        Math.round(BUF_N * REFRESH_MS / 60000) + ' 分钟</span></div>';
+      html += '<div class="mon-dw-card mon-dw-chart-card">' +
+        '<div class="mon-dw-chart-head">' +
+        '<div class="mon-dw-chart-title">读写速率</div>' +
+        '<div class="mon-dw-chart-legend">' +
+        '<span><span class="lk"><i class="k0"></i>读取</span><span class="lv">' + esc(rTxt) + '</span></span>' +
+        '<span><span class="lk"><i class="k1"></i>写入</span><span class="lv">' + esc(wTxt) + '</span></span>' +
+        '</div></div>' +
+        '<div class="mon-dw-spark"><svg class="mon-spark" id="monDwSpark" aria-hidden="true"></svg></div>' +
+        '</div>';
     }
 
     /* --- SMART --- */
@@ -631,6 +753,22 @@
     body.innerHTML = html;
     drawerDev = dev;
     showDrawer();
+    // 抽屉滑入后再画 spark：此时容器已有实际宽度，画出来的曲线才准
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () { drawDrawerSpark(); });
+    });
+  }
+
+  /* 绘制抽屉内的读写趋势图（数据来自 diskBuf 滑动缓冲） */
+  function drawDrawerSpark() {
+    var svg = $('#monDwSpark');
+    if (!svg || !drawerDev) return;
+    var buf = diskBuf[drawerDev];
+    if (!buf || buf.r.length < 2) {
+      svg.innerHTML = '<text class="mon-dw-spark-empty">正在积累读写速率数据…</text>';
+      return;
+    }
+    drawSpark(svg, [{ values: buf.r }, { values: buf.w }]);
   }
 
   function showDrawer() {
@@ -1271,9 +1409,34 @@
   function refresh() {
     return fetchMonitor().then(function (d) {
       lastData = d;
+      // 把本次采样的读写速率推进趋势图缓冲（fnmonitor 的 feed() 同款位置）
+      feedDiskBuf(d && d.storage);
       render(d);
+      // 抽屉开着时同步刷新趋势图与实时速率数字
+      if (drawerOpen) refreshDrawerLive();
       return d;
     });
+  }
+
+  /* 抽屉开着时，只更新「实时读写」这一段（趋势图 + 实时速率），不重建整个抽屉
+     —— 重建会把滚动位置和动画都打断，体验很差。 */
+  function refreshDrawerLive() {
+    var body = $('#monDrawerBody');
+    if (!body || !drawerDev) return;
+    var st = lastData && lastData.storage ? lastData.storage : null;
+    var disks = (st && st.disks) || [];
+    var d = null;
+    for (var i = 0; i < disks.length; i++) {
+      if (disks[i].name === drawerDev) { d = disks[i]; break; }
+    }
+    if (!d) return;
+    var io = d._io;
+    var lvs = $$('.mon-dw-chart-legend .lv');
+    if (lvs.length >= 2) {
+      lvs[0].textContent = io ? fmtRate(io.read_rate) : '--';
+      lvs[1].textContent = io ? fmtRate(io.write_rate) : '--';
+    }
+    drawDrawerSpark();
   }
 
   /* 手动触发硬盘巡检：POST /api/storage/scan
