@@ -417,15 +417,26 @@
      -------------------------------------------------------------------------- */
   var BUF_N = 100;                      // 缓冲点数：3s × 100 = 5 分钟窗口
   var diskBuf = {};                     // { dev: { r: [], w: [], t: [] } }
+  var diskBufTs = 0;                    // 上次采纳的后端快照时间戳（秒）
 
   function bufPush(arr, v) {
     arr.push(Number(v) || 0);
     if (arr.length > BUF_N) arr.shift();
   }
 
-  /* 每次刷新把当前读写速率推进缓冲（fnmonitor 的 feed() 同款位置） */
-  function feedDiskBuf(st) {
-    var io = st && st.diskio;
+  /* 每次刷新把当前读写速率推进缓冲（fnmonitor 的 feed() 同款位置）
+     ⚠️ 必须做 ts 去重（对齐 fnmonitor feed() 的 `if (S._lastTs === ts) return`）：
+     前端每 3s 拉一次、后端每 3s 采一次，两个时钟异步，实测约 15% 的请求
+     拿到的是同一份后端缓存（ts 未变）。不去重就会往曲线上灌重复值，
+     表现为「平台 + 突然跳变」的锯齿，还把有效窗口挤短。
+     ⚠️ ts 在快照顶层（monitor_collect 的 data["ts"]）或 storage 子对象
+     （storage_collect 采集时刻的浮点时间戳，唯一性更强），必须由调用方传进来。 */
+  function feedDiskBuf(st, ts) {
+    if (!st) return;
+    ts = ts ? Number(ts) : 0;
+    if (ts && diskBufTs && ts === diskBufTs) return;   // 同一份快照，不重复采纳
+    if (ts) diskBufTs = ts;
+    var io = st.diskio;
     if (!io || !io.length) return;
     var now = Date.now();
     io.forEach(function (z) {
@@ -633,6 +644,16 @@
     }).join('') + '</dl>';
   }
 
+  /* 分节标题（FnStyle 自有风格）：左侧 accent 竖条 + 标题文字，
+     右侧可挂一行淡色补充说明（如「近 5 分钟」）。
+     与主题库分组标题（.fgroup-title）同一套语言：竖条 + 字重 + 字距。 */
+  function dwSec(title, extra) {
+    return '<div class="mon-dw-sec">' +
+      '<span class="mon-dw-sec-main"><i class="mon-dw-sec-bar"></i>' + esc(title) + '</span>' +
+      (extra ? '<span class="faint">' + extra + '</span>' : '') +
+      '</div>';
+  }
+
   /* 打开抽屉：dev = 设备名（sda / sdc …） */
   function openDiskDrawer(dev) {
     var ov = monDrawerOverlay();
@@ -724,7 +745,7 @@
         '℃，已超过' + (tEx === 'high' ? '严重' : '警告') + '阈值（' +
         (tEx === 'high' ? TH_DISK_TEMP_CRIT : TH_DISK_TEMP_WARN) + '℃）。</span></div>';
     }
-    if (notes) html += notes;
+    if (notes) html += '<div class="mon-dw-stack">' + notes + '</div>';
 
     /* --- 实时读写：对齐 fnmonitor —— 趋势图卡片，不是键值表 ---
        fnmonitor 的结构是 .chart-card：标题「读写速率」+ 读取/写入色标与实时数值
@@ -734,8 +755,8 @@
     if (!d.standby) {
       var rTxt = io ? fmtRate(io.read_rate) : '--';
       var wTxt = io ? fmtRate(io.write_rate) : '--';
-      html += '<div class="mon-dw-sec">实时读写<span class="faint">近 ' +
-        Math.round(BUF_N * REFRESH_MS / 60000) + ' 分钟</span></div>';
+      html += dwSec('实时读写', '近 ' +
+        Math.round(BUF_N * REFRESH_MS / 60000) + ' 分钟');
       html += '<div class="mon-dw-card mon-dw-chart-card">' +
         '<div class="mon-dw-chart-head">' +
         '<div class="mon-dw-chart-title">读写速率</div>' +
@@ -753,17 +774,17 @@
     }
 
     /* --- SMART --- */
-    html += '<div class="mon-dw-sec">SMART</div>' +
+    html += dwSec('SMART') +
       '<div class="mon-dw-card">' + dwSmartTable(d) + '</div>';
 
     /* --- 信息 --- */
-    html += '<div class="mon-dw-sec">信息</div>' +
+    html += dwSec('信息') +
       '<div class="mon-dw-card">' + dwInfoKv(d) + '</div>';
 
     /* --- 巡检 --- */
     var scan = (st && st.scan) || {};
     var ago = scanAgo(scan.last_ts || 0);
-    html += '<div class="mon-dw-sec">巡检</div>' +
+    html += dwSec('巡检') +
       '<div class="mon-dw-card"><dl class="mon-dw-kv">' +
       dwKvRow('巡检分级', gradeBadge(led.scanLv)) +
       dwKvRow('巡检时间', ago ? esc(ago) : '<span class="faint">未巡检</span>') +
@@ -1449,7 +1470,9 @@
     return fetchMonitor().then(function (d) {
       lastData = d;
       // 把本次采样的读写速率推进趋势图缓冲（fnmonitor 的 feed() 同款位置）
-      feedDiskBuf(d && d.storage);
+      // 去重时间戳优先用 storage.ts（采集时刻的浮点值，唯一性最强），
+      // 顶层 ts（整秒）作兜底
+      feedDiskBuf(d && d.storage, (d && d.storage && d.storage.ts) || (d && d.ts));
       render(d);
       // 抽屉开着时同步刷新趋势图与实时速率数字
       if (drawerOpen) refreshDrawerLive();

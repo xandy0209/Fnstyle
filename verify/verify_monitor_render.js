@@ -525,10 +525,13 @@ if (html) {
     ['有容量大数字区', /mon-dw-hero/.test(body)],
     ['有容量条', /mon-dw-bar/.test(body)],
     ['有容量图例（已用/可用/文件系统容量）', /已用/.test(body) && /可用/.test(body) && /文件系统容量/.test(body)],
-    ['有 SMART 分节', /mon-dw-sec">SMART/.test(body)],
-    ['有信息分节', /mon-dw-sec">信息/.test(body)],
-    ['有巡检分节', /mon-dw-sec">巡检/.test(body)],
-    ['有实时读写分节', /mon-dw-sec">实时读写/.test(body)],
+    /* 分节标题改为 dwSec() 输出：.mon-dw-sec > .mon-dw-sec-main > 竖条 + 文字 */
+    ['有 SMART 分节', /mon-dw-sec-main[^>]*>.*SMART/.test(body)],
+    ['有信息分节', /mon-dw-sec-main[^>]*>.*信息/.test(body)],
+    ['有巡检分节', /mon-dw-sec-main[^>]*>.*巡检/.test(body)],
+    ['有实时读写分节', /mon-dw-sec-main[^>]*>.*实时读写/.test(body)],
+    ['分节标题带左侧竖条', /mon-dw-sec-bar/.test(body)],
+    ['实时读写分节右侧带「近 5 分钟」补充', /mon-dw-sec[\s\S]*?近 5 分钟/.test(body)],
     ['SMART 表含「整体评估」', /整体评估/.test(body)],
     ['SMART 表含「UDMA CRC 错误」', /UDMA CRC 错误/.test(body)],
     ['SMART 表含「通电时间」', /通电时间/.test(body)],
@@ -837,6 +840,26 @@ if (html) {
   check('缓冲上限 100 点（超出后丢最旧）', buf2 && buf2.r.length === 100);
   check('超出后保留最新值', buf2 && buf2.r[buf2.r.length - 1] === 119);
 
+  /* 2b. v1.1.30：ts 去重守卫（对齐 fnmonitor feed 的 `if (S._lastTs === ts) return`）
+     前端 3s 拉一次、后端 3s 采一次，两个时钟异步，约 15% 的请求拿到同一份
+     缓存快照（ts 未变）→ 不去重就会往曲线上灌重复值，出现「平台 + 跳变」。 */
+  console.log('\n--- ts 去重守卫 ---');
+  const devDedup = 'sdd';
+  const snap = (ts, v) => ({ diskio: [{ name: devDedup, read_rate: v, write_rate: v }] });
+  feedDiskBuf(snap(1000, 10), 1000);
+  check('首次快照推进 1 点', getDiskBuf(devDedup).r.length === 1);
+  feedDiskBuf(snap(1000, 20), 1000);
+  check('同 ts 重复快照不再推进', getDiskBuf(devDedup).r.length === 1);
+  check('同 ts 重复快照不覆盖原值', getDiskBuf(devDedup).r[0] === 10);
+  feedDiskBuf(snap(1003, 30), 1003);
+  check('ts 变化后推进新点', getDiskBuf(devDedup).r.length === 2);
+  check('新点写入新值', getDiskBuf(devDedup).r[1] === 30);
+  check('时间戳同步推进', getDiskBuf(devDedup).t.length === 2);
+  // 无 ts 时（老接口/异常）退化为每次都采纳，不能卡住曲线
+  feedDiskBuf({ diskio: [{ name: 'sde', read_rate: 5, write_rate: 5 }] });
+  feedDiskBuf({ diskio: [{ name: 'sde', read_rate: 6, write_rate: 6 }] });
+  check('无 ts 时仍正常累积', getDiskBuf('sde').r.length === 2);
+
   /* 3. monoPath：单调三次插值，输出合法 SVG path */
   const d = monoPath([0, 10, 20, 30], [5, 20, 10, 25]);
   check('monoPath 返回 M 起始', /^M[\d.]+,[\d.]+/.test(d));
@@ -935,6 +958,27 @@ if (html) {
     if (!ok) bad++;
   });
 
+  /* 11. v1.1.30：抽屉分节标题（FnStyle 自有风格）+ 间距节奏 */
+  console.log('\n--- 抽屉分节标题与间距（FnStyle 自有风格）---');
+  const cssRules3 = [
+    ['抽屉定义间距变量 --dw-sec-gap', /\.mon-drawer-body \{[^}]*--dw-sec-gap:/.test(cssTxt2)],
+    ['抽屉定义间距变量 --dw-sec-lead', /\.mon-drawer-body \{[^}]*--dw-sec-lead:/.test(cssTxt2)],
+    ['分节标题用 --dw-sec-gap / --dw-sec-lead', /\.mon-dw-sec \{[^}]*margin: var\(--dw-sec-gap\) 0 var\(--dw-sec-lead\)/.test(cssTxt2)],
+    ['分节标题是 flex 两端对齐', /\.mon-dw-sec \{[^}]*display: flex[\s\S]*?justify-content: space-between/.test(cssTxt2)],
+    ['分节标题带字距（自有语言）', /\.mon-dw-sec \{[^}]*letter-spacing:/.test(cssTxt2)],
+    ['分节标题带竖条 .mon-dw-sec-bar', /\.mon-dw-sec-bar \{[^}]*width: 3px/.test(cssTxt2)],
+    ['竖条用 accent 主题色', /\.mon-dw-sec-bar \{[^}]*background: var\(--accent\)/.test(cssTxt2)],
+    ['竖条有圆角', /\.mon-dw-sec-bar \{[^}]*border-radius:/.test(cssTxt2)],
+    ['标题主体与竖条 inline-flex 对齐', /\.mon-dw-sec-main \{[^}]*display: inline-flex/.test(cssTxt2)],
+    ['提示条有独立容器 .mon-dw-stack', /\.mon-dw-stack \{[^}]*display: grid/.test(cssTxt2)],
+    ['提示条与上方卡片留出间距', /\.mon-dw-stack \{[^}]*margin-top:/.test(cssTxt2)],
+    ['提示条后的分节回到统一间距', /\.mon-dw-stack \+ \.mon-dw-sec \{[^}]*margin-top: var\(--dw-sec-gap\)/.test(cssTxt2)],
+  ];
+  cssRules3.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
   /* 6. fmtRate：速率格式化对齐 fnmonitor 的 F.rateStr */
   console.log('--- 速率格式化（fnmonitor F.rateStr 对齐）---');
   const rateRules = [
@@ -992,8 +1036,7 @@ if (html) {
     ['显存仍用 fmtBytes', /fmtBytes\(g\.memTotal\)/],
     // fmtBytes 不能被改成十进制
     ['fmtBytes 仍按 1024 递减', /while \(v >= 1024 && i < units\.length - 1\)/],
-  ];
-  let bad = 0;
+  ];  let bad = 0;
   rules.forEach(([label, re]) => {
     const ok = re.test(src);
     console.log((ok ? '  ✓ ' : '  ✗ ') + label);
@@ -1018,5 +1061,33 @@ renderCase('raidcard none', { storage: { available: true, volumes: FULL.storage.
 renderCase('scan 有错误', { storage: { available: true, volumes: FULL.storage.volumes, disks: FULL.storage.disks,
   scan: { last_ts: 0, running: true, summary: {}, error: 'smartctl 未找到' }, scanLog: [] } });
 renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disks: [{ name: 'sdx' }] } });
+
+/* ---------- 源码级断言：v1.1.30 ts 去重接线 + dwSec 分节 ---------- */
+(function checkTsDedupWiring() {
+  console.log('\n--- ts 去重接线与分节标题（源码级）---');
+  const src = fs.readFileSync(SRC, 'utf8');
+  const rules = [
+    // feedDiskBuf 必须带 ts 参数，否则去重守卫拿不到时间戳
+    ['feedDiskBuf 签名带 ts 参数', /function feedDiskBuf\s*\(st,\s*ts\)/],
+    // 调用点必须把快照时间戳传进去（storage.ts 优先，顶层 ts 兜底）
+    ['调用点传入快照 ts', /feedDiskBuf\(d && d\.storage,\s*\(d && d\.storage && d\.storage\.ts\) \|\| \(d && d\.ts\)\)/],
+    // 去重守卫本身
+    ['存在同 ts 提前返回', /ts === diskBufTs\) return/],
+    ['记录上次采纳的 ts', /diskBufTs = ts/],
+    // dwSec 分节标题
+    ['存在 dwSec 辅助函数', /function dwSec\s*\(/],
+    ['dwSec 输出竖条', /mon-dw-sec-bar/],
+    ['dwSec 输出右侧补充说明', /class="faint"/],
+    // 提示条包进容器
+    ['提示条包进 .mon-dw-stack', /<div class="mon-dw-stack">/],
+  ];
+  let bad = 0;
+  rules.forEach(([label, re]) => {
+    const ok = re.test(src);
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+  if (bad) { console.error('❌ 接线断言失败 ' + bad + ' 项'); process.exitCode = 1; }
+})();
 
 console.log(process.exitCode ? '\n❌ 测试未全部通过' : '\n🎉 全部测试通过');

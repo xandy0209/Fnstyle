@@ -2425,6 +2425,13 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 0 1.35rem 1.6rem;
+  /* ---- 抽屉内部的间距节奏（集中定义，各区块不再各写一遍） ----
+     --dw-sec-gap  分节标题与上方内容的间距（把内容切成块）
+     --dw-sec-lead 分节标题与其下方卡片的间距（标题紧贴所属内容）
+     实测节奏：上 20px / 下 9px —— 标题离上方内容远、离所属卡片近，
+     形成清晰的「块边界」，又不让标题和卡片脱节。 */
+  --dw-sec-gap: 1.45rem;
+  --dw-sec-lead: .62rem;
 }
 /* 分节之间的间距交给分节标题自身的 margin-top，
    避免每个块都加一遍外边距导致节奏不齐。 */
@@ -2510,21 +2517,55 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
   font-variant-numeric: tabular-nums;
 }
 
-/* ---- 分节标题（对齐 fnmonitor 的 .sheet-sec） ---- */
+/* ---- 分节标题（FnStyle 自有风格） ----
+   与主题库分组标题（.fgroup-title）同一套语言：
+   左侧 accent 竖条 + 字重 600 + 轻微字距，右侧挂淡色补充说明。
+   间距节奏：标题与上方内容拉开（--dw-sec-gap），与下方卡片收紧（--dw-sec-lead）。 */
 .mon-dw-sec {
-  margin: 1.4rem 0 -.35rem;
-  font-size: .84rem;
-  font-weight: 600;
-  color: var(--text-secondary);
+  margin: var(--dw-sec-gap) 0 var(--dw-sec-lead);
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  gap: .5rem;
+  justify-content: space-between;
+  gap: .6rem;
+  font-size: .82rem;
+  font-weight: 600;
+  letter-spacing: .04em;
+  color: var(--text-secondary);
+}
+.mon-dw-sec-main {
+  display: inline-flex;
+  align-items: center;
+  gap: .55rem;
+  min-width: 0;
+}
+.mon-dw-sec-bar {
+  width: 3px;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--accent);
+  flex-shrink: 0;
 }
 .mon-dw-sec .faint {
+  flex-shrink: 0;
   font-weight: 400;
+  letter-spacing: 0;
   color: var(--text-muted);
-  font-size: .78rem;
+  font-size: .76rem;
+}
+
+/* ---- 提示条容器：与上方卡片留出呼吸空间 ----
+   原来提示条是裸 div，紧贴容量卡片显得粘连；单独包一层容器
+   统一控制它与上下内容的间距。
+   ⚠️ 这里的间距不能小于分节标题的上间距（--dw-sec-gap）：
+   之前用 .9rem（≈12.6px）实测只有 13px，比分节的 20px 还小，
+   反而显得提示条「粘」在容量卡片上。现在与分节标题对齐。 */
+.mon-dw-stack {
+  display: grid;
+  gap: .5rem;
+  margin-top: var(--dw-sec-gap);
+}
+.mon-dw-stack + .mon-dw-sec {
+  margin-top: var(--dw-sec-gap);
 }
 
 /* ---- 提示条（对齐 fnmonitor 的 .note：无边框、纯底色） ---- */
