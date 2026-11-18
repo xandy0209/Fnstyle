@@ -229,6 +229,12 @@ const patched2 = patched.replace(
   '  window.__dwSmartTable = dwSmartTable;\n' +
   '  window.__dwInfoKv = dwInfoKv;\n' +
   '  window.__dwSmartRows = dwSmartRows;\n' +
+  '  window.__dwKvRow = dwKvRow;\n' +
+  '  window.__diskTempLevel = diskTempLevel;\n' +
+  '  window.__tempExceed = tempExceed;\n' +
+  '  window.__tempLevel = tempLevel;\n' +
+  '  window.__TH_DISK_TEMP_WARN = TH_DISK_TEMP_WARN;\n' +
+  '  window.__TH_DISK_TEMP_CRIT = TH_DISK_TEMP_CRIT;\n' +
   '  window.__setLastData = function (d) { lastData = d; };\n' +
   '  window.FnStyleMonitor = {'
 );
@@ -251,6 +257,12 @@ const openDiskDrawer = global.__openDiskDrawer;
 const dwSmartTable = global.__dwSmartTable;
 const dwInfoKv = global.__dwInfoKv;
 const dwSmartRows = global.__dwSmartRows;
+const dwKvRow = global.__dwKvRow;
+const diskTempLevel = global.__diskTempLevel;
+const tempExceed = global.__tempExceed;
+const tempLevel = global.__tempLevel;
+const TH_DISK_TEMP_WARN = global.__TH_DISK_TEMP_WARN;
+const TH_DISK_TEMP_CRIT = global.__TH_DISK_TEMP_CRIT;
 const setLastData = global.__setLastData;
 if (typeof bayLedState !== 'function' || typeof smartAlertsText !== 'function') {
   console.error('❌ SMART 测试钩子未就绪');
@@ -259,6 +271,11 @@ if (typeof bayLedState !== 'function' || typeof smartAlertsText !== 'function') 
 if (typeof openDiskDrawer !== 'function' || typeof dwSmartTable !== 'function'
     || typeof dwInfoKv !== 'function' || typeof setLastData !== 'function') {
   console.error('❌ 抽屉测试钩子未就绪');
+  process.exit(1);
+}
+if (typeof diskTempLevel !== 'function' || typeof tempExceed !== 'function'
+    || typeof dwKvRow !== 'function') {
+  console.error('❌ 温度阈值测试钩子未就绪');
   process.exit(1);
 }
 
@@ -576,6 +593,163 @@ if (html) {
   }, 30);
 
   if (bad) { console.error('❌ 抽屉断言失败 ' + bad + ' 项'); process.exitCode = 1; }
+})();
+
+/* ---------- v1.1.27：硬盘温度阈值口径 + 抽屉样式对齐 fnmonitor ---------- */
+(function checkDiskTempThresholdAndDrawerStyle() {
+  console.log('\n--- 硬盘温度阈值（对齐 fnmonitor 50/58℃）---');
+  let bad = 0;
+
+  /* 1. 阈值常量必须是 fnmonitor 的 diskTempWarn / diskTempCrit */
+  const thRules = [
+    ['警告阈值 = 50℃（fnmonitor diskTempWarn）', TH_DISK_TEMP_WARN === 50],
+    ['严重阈值 = 58℃（fnmonitor diskTempCrit）', TH_DISK_TEMP_CRIT === 58],
+  ];
+  thRules.forEach(function ([label, ok]) {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* 2. 分级边界：<50 ok / >=50 warn / >=58 high
+        注意 tempLevel() 正常时返回 'ok'（真值），
+        所以判「是否超阈」必须用 tempExceed() 而不是 if (lv)。 */
+  const lvRules = [
+    ['29℃ → ok', diskTempLevel(29) === 'ok'],
+    ['49℃ → ok', diskTempLevel(49) === 'ok'],
+    ['50℃ → warn（边界含等号）', diskTempLevel(50) === 'warn'],
+    ['57℃ → warn', diskTempLevel(57) === 'warn'],
+    ['58℃ → high（边界含等号）', diskTempLevel(58) === 'high'],
+    ['60℃ → high', diskTempLevel(60) === 'high'],
+    ['null → ok', diskTempLevel(null) === 'ok'],
+    ['undefined → ok', diskTempLevel(undefined) === 'ok'],
+    ['NaN → ok', diskTempLevel(NaN) === 'ok'],
+  ];
+  lvRules.forEach(function ([label, ok]) {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* 3. tempExceed()：未超阈返回空串，超阈才返回等级
+        —— 这是修掉「29℃ 也弹告警条」的关键。 */
+  const exRules = [
+    ['29℃ 不超阈（返回空串）', tempExceed(29) === ''],
+    ['34℃ 不超阈（返回空串）', tempExceed(34) === ''],
+    ['49℃ 不超阈（返回空串）', tempExceed(49) === ''],
+    ['50℃ → warn', tempExceed(50) === 'warn'],
+    ['58℃ → high', tempExceed(58) === 'high'],
+    ['null 不超阈', tempExceed(null) === ''],
+  ];
+  exRules.forEach(function ([label, ok]) {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* 4. tempLevel() 仍可用于通用传感器（CPU / 风扇位），口径 60/75 */
+  const genRules = [
+    ['通用传感器 59℃ → ok', tempLevel(59) === 'ok'],
+    ['通用传感器 60℃ → warn', tempLevel(60) === 'warn'],
+    ['通用传感器 75℃ → high', tempLevel(75) === 'high'],
+  ];
+  genRules.forEach(function ([label, ok]) {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* 5. 抽屉渲染：29℃ 的盘不能出现温度告警条；50℃ 的盘必须出现 */
+  const mkDisk = function (temp) {
+    return {
+      name: 'sdt', model: 'WDC WD40EFZX-68AWUN0', vendor: 'ATA', type: 'disk',
+      size: 4000653453312, sizeText: '4.00 TB', serial: 'TEMP-TEST-001',
+      temp: temp, rpm: '5400 rpm', health: 'PASSED', grade: 'ok', gradeLabel: '正常',
+      detail: '未发现异常计数', mounts: ['/vol1'], vol: 1,
+      used: 100 * 1073741824, total: 4000653453312, percent: 25,
+      usedText: '100 GB', totalText: '4.00 TB',
+      standby: false, proto: 'SATA',
+      reallocated_sectors: 0, reallocated_events: 0, pending_sectors: 0,
+      offline_uncorrectable: 0, uncorrectable: 0, udma_crc: 0,
+    };
+  };
+  setLastData({ storage: { disks: [mkDisk(29)], scan: {}, summary: {} } });
+  openDiskDrawer('sdt');
+  const coolBody = els.monDrawerBody.innerHTML;
+  const coolRules = [
+    ['29℃ 不弹温度告警条', !/已超过/.test(coolBody)],
+    ['29℃ 无温度提示条', !/mon-dw-note/.test(coolBody) || !/温度/.test(coolBody)],
+  ];
+  coolRules.forEach(function ([label, ok]) {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  setLastData({ storage: { disks: [mkDisk(52)], scan: {}, summary: {} } });
+  openDiskDrawer('sdt');
+  const warmBody = els.monDrawerBody.innerHTML;
+  const warmRules = [
+    ['52℃ 弹温度告警条', /已超过警告阈值/.test(warmBody)],
+    ['告警条显示触发阈值 50℃', /50℃/.test(warmBody)],
+  ];
+  warmRules.forEach(function ([label, ok]) {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  setLastData({ storage: { disks: [mkDisk(61)], scan: {}, summary: {} } });
+  openDiskDrawer('sdt');
+  const hotBody = els.monDrawerBody.innerHTML;
+  const hotRules = [
+    ['61℃ 弹严重阈值告警条', /已超过严重阈值/.test(hotBody)],
+    ['告警条显示触发阈值 58℃', /58℃/.test(hotBody)],
+  ];
+  hotRules.forEach(function ([label, ok]) {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* 6. 抽屉样式结构对齐 fnmonitor */
+  console.log('\n--- 抽屉样式结构（对齐 fnmonitor）---');
+  setLastData({ storage: { disks: [mkDisk(29)], scan: {}, summary: {} } });
+  openDiskDrawer('sdt');
+  const styleBody = els.monDrawerBody.innerHTML;
+  const styleRules = [
+    ['键值行用 <div> 包裹 dt/dd（fnmonitor .kv 结构）',
+      /<div><dt>读取速率<\/dt><dd>/.test(styleBody)],
+    ['容量条为 40 段格条（fnmonitor .dbar）',
+      (styleBody.match(/mon-dw-bar">(<i[^>]*><\/i>)+/g) || []).length === 1
+        && (styleBody.match(/<i class="on"|<i class="" style="background|<i><\/i>/g) || []).length >= 0
+        && (styleBody.split('mon-dw-bar">')[1] || '').split('</div>')[0].split('<i').length - 1 === 40],
+    ['有 card 包裹（fnmonitor .card.pad）', /<div class="mon-dw-card">/.test(styleBody)],
+    ['分节标题对齐 .sheet-sec', /<div class="mon-dw-sec">/.test(styleBody)],
+  ];
+  styleRules.forEach(function ([label, ok]) {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* 7. CSS 层面的结构校验（读样式表源码） */
+  const CSS = path.join(__dirname, '..', 'app', 'ui', 'static', 'css', 'app.css');
+  const css = fs.readFileSync(CSS, 'utf8');
+  const cssRules = [
+    ['.mon-dw-kv > div 用 display:contents（fnmonitor .kv 写法）',
+      /\.mon-dw-kv > div \{ display: contents; \}/.test(css)],
+    ['.mon-dw-kv 每行有上边框线', /\.mon-dw-kv dt,\s*\.mon-dw-kv dd \{[^}]*border-top: 1px solid var\(--border\)/.test(css)],
+    ['.mon-dw-kv 首行无上边框线', /\.mon-dw-kv > div:first-child dt/.test(css)],
+    ['.mon-dw-note 无边框（fnmonitor .note 纯底色）',
+      /\.mon-dw-note \{[^}]*\}/.test(css) && !/\.mon-dw-note \{[^}]*border:/.test(css)],
+    ['.mon-dw-bar 为分段格条（gap 2px）', /\.mon-dw-bar \{[^}]*gap: 2px/.test(css)],
+    ['.mon-dw-bar 段高 9px', /\.mon-dw-bar > i \{[^}]*height: 9px/.test(css)],
+    ['.mon-dw-table 单元格有上边框线（fnmonitor .tbl）',
+      /\.mon-dw-table td \{[^}]*border-top: 1px solid var\(--border\)/.test(css)],
+    ['.mon-dw-eyebrow 用等宽大写（fnmonitor .eyebrow）',
+      /\.mon-dw-eyebrow \{[^}]*text-transform: uppercase/.test(css)],
+    ['.mon-dw-card 有卡片底色与描边（fnmonitor .card）',
+      /\.mon-dw-card \{[^}]*background: var\(--bg-card\)/.test(css)],
+  ];
+  cssRules.forEach(function ([label, ok]) {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  if (bad) { console.error('❌ 温度阈值/抽屉样式断言失败 ' + bad + ' 项'); process.exitCode = 1; }
 })();
 
 /* ---------- 源码级断言：容量单位进制不能被改回去 ---------- */

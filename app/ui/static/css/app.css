@@ -2415,9 +2415,20 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
   flex: 1;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 1rem 1.1rem 1.4rem;
+  padding: 0 1.35rem 1.6rem;
 }
-.mon-drawer-body > * + * { margin-top: .85rem; }
+/* 分节之间的间距交给分节标题自身的 margin-top，
+   避免每个块都加一遍外边距导致节奏不齐。 */
+.mon-drawer-body > * + * { margin-top: 0; }
+
+/* ---- 卡片容器（对齐 fnmonitor 的 .card.pad）---- */
+.mon-dw-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: .95rem 1.05rem;
+}
+.mon-dw-card + .mon-dw-card { margin-top: .6rem; }
 
 /* ---- 容量大数字区（fnmonitor 的 sheet-hero） ---- */
 .mon-dw-hero {
@@ -2425,150 +2436,184 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
   align-items: flex-end;
   justify-content: space-between;
   gap: .8rem;
+  padding: 1.25rem 0 .9rem;
 }
 .mon-dw-eyebrow {
-  font-size: .72rem;
+  font-size: .68rem;
+  font-weight: 500;
+  letter-spacing: .08em;
+  text-transform: uppercase;
   color: var(--text-muted);
-  letter-spacing: .04em;
-  margin-bottom: .1rem;
+  margin-bottom: .12rem;
 }
 .mon-dw-big {
-  font-size: 2.6rem;
+  font-size: 3rem;
   font-weight: 700;
-  line-height: 1.05;
-  letter-spacing: -.02em;
+  line-height: 1;
+  letter-spacing: -.03em;
   font-variant-numeric: tabular-nums;
+  display: inline-flex;
+  align-items: flex-end;
+  gap: .3rem;
 }
 .mon-dw-big .unit {
-  font-size: 1rem;
-  font-weight: 500;
+  font-size: 1.05rem;
+  font-weight: 600;
   color: var(--text-secondary);
-  margin-left: .12rem;
+  margin-bottom: .18rem;
 }
-.mon-dw-right { text-align: right; }
+.mon-dw-right { text-align: right; padding-bottom: .2rem; }
 .mon-dw-right b {
   display: block;
-  font-size: 1.05rem;
+  font-size: 1.1rem;
+  font-weight: 650;
   font-variant-numeric: tabular-nums;
-  margin-top: .1rem;
+  margin-top: .12rem;
 }
 
-/* ---- 容量条 ---- */
+/* ---- 容量条：分段格条（对齐 fnmonitor 的 .dbar） ---- */
 .mon-dw-bar {
-  height: 8px;
-  border-radius: 5px;
-  background: var(--bg-hover);
-  overflow: hidden;
+  display: flex;
+  gap: 2px;
+  align-items: center;
 }
 .mon-dw-bar > i {
-  display: block;
-  height: 100%;
-  border-radius: 5px;
-  transition: width .5s ease;
+  flex: 1;
+  height: 9px;
+  min-width: 2px;
+  border-radius: 2px;
+  background: var(--bg-hover);
+  transition: background-color .3s ease;
 }
+.mon-dw-bar > i.on { background: var(--dw-bar-color, var(--accent)); }
 .mon-dw-legend {
   display: flex;
   flex-wrap: wrap;
-  gap: .2rem 1rem;
-  margin-top: .5rem;
-  font-size: .78rem;
+  gap: .35rem 1.1rem;
+  margin-top: .7rem;
+  font-size: .82rem;
   color: var(--text-secondary);
 }
-.mon-dw-legend b { color: var(--text-primary); font-variant-numeric: tabular-nums; }
-
-/* ---- 分节标题 ---- */
-.mon-dw-sec {
-  margin-top: 1.15rem !important;
-  margin-bottom: -.35rem !important;
-  font-size: .78rem;
+.mon-dw-legend span { display: inline-flex; align-items: center; gap: .4rem; }
+.mon-dw-legend b {
+  color: var(--text-primary);
   font-weight: 600;
-  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- 分节标题（对齐 fnmonitor 的 .sheet-sec） ---- */
+.mon-dw-sec {
+  margin: 1.4rem 0 -.35rem;
+  font-size: .84rem;
+  font-weight: 600;
+  color: var(--text-secondary);
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: .5rem;
 }
-.mon-dw-sec .faint { font-weight: 400; }
+.mon-dw-sec .faint {
+  font-weight: 400;
+  color: var(--text-muted);
+  font-size: .78rem;
+}
 
-/* ---- 提示条 ---- */
+/* ---- 提示条（对齐 fnmonitor 的 .note：无边框、纯底色） ---- */
 .mon-dw-note {
   display: flex;
   align-items: flex-start;
-  gap: .5rem;
-  padding: .6rem .7rem;
-  border-radius: 8px;
-  font-size: .82rem;
-  line-height: 1.55;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
+  gap: .7rem;
+  padding: .8rem .95rem;
+  border-radius: var(--radius);
+  font-size: .84rem;
+  line-height: 1.6;
+  background: var(--bg-hover);
   color: var(--text-secondary);
 }
+.mon-dw-note + .mon-dw-note { margin-top: .5rem; }
 .mon-dw-note .ico { flex: none; margin-top: .1rem; }
+.mon-dw-note b { color: var(--text-primary); font-weight: 650; }
 .mon-dw-note.warn {
   background: var(--warning-soft);
-  border-color: color-mix(in srgb, var(--warning) 35%, transparent);
-  color: var(--text-primary);
+  color: color-mix(in srgb, var(--warning) 78%, var(--text-primary));
 }
 .mon-dw-note.crit {
   background: var(--danger-soft);
-  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
-  color: var(--text-primary);
+  color: color-mix(in srgb, var(--danger) 78%, var(--text-primary));
 }
-.mon-dw-note.sleep {
-  background: var(--bg-card);
-  color: var(--text-secondary);
-}
+.mon-dw-note.sleep { background: var(--bg-hover); color: var(--text-secondary); }
 
-/* ---- 键值信息表 ---- */
+/* ---- 键值信息表（对齐 fnmonitor 的 .kv：每行一条横线） ---- */
 .mon-dw-kv {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: .45rem .9rem;
+  grid-template-columns: auto 1fr;
+  gap: 0;
   margin: 0;
   font-size: .84rem;
 }
-.mon-dw-kv dt { color: var(--text-secondary); white-space: nowrap; }
+.mon-dw-kv > div { display: contents; }
+.mon-dw-kv dt,
 .mon-dw-kv dd {
+  padding: .62rem 0;
+  border-top: 1px solid var(--border);
   margin: 0;
+  font-size: .84rem;
+}
+.mon-dw-kv > div:first-child dt,
+.mon-dw-kv > div:first-child dd { border-top: 0; }
+.mon-dw-kv dt {
+  color: var(--text-secondary);
+  padding-right: 1.2rem;
+  white-space: nowrap;
+}
+.mon-dw-kv dd {
   text-align: right;
   font-variant-numeric: tabular-nums;
+  min-width: 0;
   overflow-wrap: anywhere;
   color: var(--text-primary);
 }
 .mon-dw-kv dd .faint { color: var(--text-muted); }
 
-/* ---- SMART 表 ---- */
+/* ---- SMART 表（对齐 fnmonitor 的 .tbl） ---- */
 .mon-dw-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: .82rem;
+  font-size: .84rem;
 }
 .mon-dw-table th {
   text-align: left;
   font-weight: 500;
   color: var(--text-muted);
-  padding: .3rem .4rem;
-  border-bottom: 1px solid var(--border);
-  font-size: .75rem;
+  font-size: .78rem;
+  padding: 0 .75rem .5rem;
+  white-space: nowrap;
 }
-.mon-dw-table th.r, .mon-dw-table td.r { text-align: right; }
 .mon-dw-table td {
-  padding: .42rem .4rem;
-  border-bottom: 1px solid var(--border);
-  color: var(--text-primary);
+  padding: .68rem .75rem;
+  border-top: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
-.mon-dw-table tr:last-child td { border-bottom: none; }
+.mon-dw-table th:first-child,
+.mon-dw-table td:first-child { padding-left: 0; }
+.mon-dw-table th:last-child,
+.mon-dw-table td:last-child { padding-right: 0; }
+.mon-dw-table th.r, .mon-dw-table td.r { text-align: right; }
 .mon-dw-table .num { font-variant-numeric: tabular-nums; }
-.mon-dw-table .st-warn { color: var(--warning); }
-.mon-dw-table .st-crit { color: var(--danger); }
+.mon-dw-table .st-warn { color: var(--warning); font-weight: 600; }
+.mon-dw-table .st-crit { color: var(--danger); font-weight: 600; }
 .mon-dw-table .st-ok { color: var(--success); }
 .mon-dw-table .faint { color: var(--text-muted); }
 .mon-dw-table .pill {
-  display: inline-block;
-  padding: .05rem .45rem;
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 .6rem;
   border-radius: 999px;
-  font-size: .72rem;
-  line-height: 1.5;
+  font-size: .75rem;
+  font-weight: 550;
+  white-space: nowrap;
 }
 .mon-dw-table .pill.warn {
   background: var(--warning-soft);
@@ -2579,9 +2624,9 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
   color: var(--danger);
 }
 .mon-dw-hint {
-  font-size: .76rem;
+  font-size: .78rem;
   color: var(--text-muted);
-  padding: .5rem .4rem 0;
+  padding: .65rem 0 0;
   line-height: 1.6;
 }
 

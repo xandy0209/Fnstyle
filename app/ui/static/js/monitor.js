@@ -61,12 +61,40 @@
     return 'ok';
   }
 
-  /* 温度等级：<60 正常，60~75 偏高，>=75 过高（家用/服务器通用阈值） */
+  /* 温度阈值。
+     ⚠️ 口径与 fnmonitor 对齐（ui-src/33-state.js 的 TH_SPEC）：
+       diskTempWarn 50℃ / diskTempCrit 58℃ —— 硬盘的温度余量比 CPU 小得多，
+       50℃ 就该留意了；早先这里写死 60/75，与 fnmonitor 差一大截。
+       通用传感器（CPU / 风扇位）沿用 60/75 的家用口径。 */
+  var TH_DISK_TEMP_WARN = 50;
+  var TH_DISK_TEMP_CRIT = 58;
+  var TH_TEMP_WARN = 60;
+  var TH_TEMP_CRIT = 75;
+
+  /* 温度等级：返回 'ok' / 'warn' / 'high'。
+     ⚠️ 注意 'ok' 也是真值 —— 判「是否超阈值」必须显式比较，
+        不能写成 if (lv)，否则任何温度都会被当成超阈。
+        要判是否超阈请用 tempExceed() 。 */
   function tempLevel(t) {
     if (t === null || t === undefined || isNaN(t)) return 'ok';
-    if (t >= 75) return 'high';
-    if (t >= 60) return 'warn';
+    if (t >= TH_TEMP_CRIT) return 'high';
+    if (t >= TH_TEMP_WARN) return 'warn';
     return 'ok';
+  }
+
+  /* 硬盘温度等级：fnmonitor 的 LV.dtemp 口径（50 / 58） */
+  function diskTempLevel(t) {
+    if (t === null || t === undefined || isNaN(t)) return 'ok';
+    if (t >= TH_DISK_TEMP_CRIT) return 'high';
+    if (t >= TH_DISK_TEMP_WARN) return 'warn';
+    return 'ok';
+  }
+
+  /* 是否真的超过硬盘温度阈值（返回 '' / 'warn' / 'high'）。
+     这是判「要不要弹温度告警条」的唯一依据。 */
+  function tempExceed(t) {
+    var lv = diskTempLevel(t);
+    return (lv === 'warn' || lv === 'high') ? lv : '';
   }
 
   /* ---------------- 通用块渲染 ---------------- */
@@ -407,7 +435,7 @@
     rows.push({
       k: '温度',
       v: (t === null) ? '<span class="faint">—</span>' : (esc(String(t)) + '℃'),
-      st: (t === null || !d || d.standby) ? '' : (tempLevel(t) || 'ok'),
+      st: (t === null || !d || d.standby) ? '' : diskTempLevel(t),
       note: ''
     });
     rows.push({
@@ -454,6 +482,12 @@
       '</tbody></table>';
   }
 
+  /* 键值行：fnmonitor 的 .kv 用 <div> 包裹一对 dt/dd（CSS 里 display:contents），
+     这样「每行一条上边框、首行无线」的规则才能正确命中第一行。 */
+  function dwKvRow(k, v) {
+    return '<div><dt>' + esc(k) + '</dt><dd>' + (v === undefined || v === null ? '' : v) + '</dd></div>';
+  }
+
   /* 信息表（型号 / 序列号 / 类型 / 容量 / 挂载点 / 所属空间） */
   function dwInfoKv(d) {
     var mounts = (d && d.mounts) || [];
@@ -468,7 +502,7 @@
       ['所属存储空间', d && volOf(d) ? '存储空间 vol' + esc(volOf(d)) : '<span class="faint">—</span>']
     ];
     return '<dl class="mon-dw-kv">' + kv.map(function (p) {
-      return '<dt>' + p[0] + '</dt><dd>' + p[1] + '</dd>';
+      return dwKvRow(p[0], p[1]);
     }).join('') + '</dl>';
   }
 
@@ -506,7 +540,7 @@
 
     var html = '';
 
-    /* --- 容量大数字 + 状态徽标 --- */
+    /* --- 容量大数字（fnmonitor 的 sheet-hero） --- */
     html += '<div class="mon-dw-hero"><div>' +
       '<div class="mon-dw-eyebrow">已用</div>' +
       '<div class="mon-dw-big"' +
@@ -518,18 +552,29 @@
       '<b>' + (hasCap ? esc(fmtDisk(Math.max(0, (Number(d.total) || 0) - (Number(d.used) || 0)))) : '—') + '</b>' +
       '</div></div>';
 
-    /* --- 容量条 + 图例 --- */
-    var barW = hasCap ? Math.max(0, Math.min(100, pct)) : 0;
-    var barColor = d.standby ? 'var(--led-off)' : (hasCap ? rampInk(pct) : 'var(--led-off)');
-    html += '<div class="mon-dw-bar"><i style="width:' + barW.toFixed(1) + '%;background:' + barColor + '"></i></div>';
-    html += '<div class="mon-dw-legend">' + (hasCap
-      ? '<span>已用 <b>' + esc(d.usedText || fmtDisk(d.used || 0)) + '</b></span>' +
-        '<span>可用 <b>' + esc(fmtDisk(Math.max(0, (Number(d.total) || 0) - (Number(d.used) || 0)))) + '</b></span>' +
-        '<span>文件系统容量 <b>' + esc(d.totalText || fmtDisk(d.total || 0)) + '</b></span>'
-      : '<span>未挂载或无用量数据</span><span>硬盘容量 <b>' + esc(d.sizeText || fmtDisk(d.size || 0)) + '</b></span>') +
-      '</div>';
+    /* --- 容量条：分段格条，每段按容量色阶单独着色（fnmonitor 的 .dbar） --- */
+    var BAR_N = 40;
+    var barHtml = '<div class="mon-dw-bar">';
+    var lit = hasCap ? Math.round(Math.max(0, Math.min(1, pct / 100)) * BAR_N) : 0;
+    for (var bi = 0; bi < BAR_N; bi++) {
+      var on = bi < lit;
+      var col = '';
+      if (on) {
+        col = d.standby ? 'var(--led-off)' : rampAt(((bi + .5) / BAR_N) * 100, capRampStops());
+      }
+      barHtml += '<i class="' + (on ? 'on' : '') + '"' +
+        (col ? ' style="background:' + col + '"' : '') + '></i>';
+    }
+    barHtml += '</div>';
+    html += '<div class="mon-dw-card">' + barHtml +
+      '<div class="mon-dw-legend">' + (hasCap
+        ? '<span>已用 <b>' + esc(d.usedText || fmtDisk(d.used || 0)) + '</b></span>' +
+          '<span>可用 <b>' + esc(fmtDisk(Math.max(0, (Number(d.total) || 0) - (Number(d.used) || 0)))) + '</b></span>' +
+          '<span>文件系统容量 <b>' + esc(d.totalText || fmtDisk(d.total || 0)) + '</b></span>'
+        : '<span>未挂载或无用量数据</span><span>硬盘容量 <b>' + esc(d.sizeText || fmtDisk(d.size || 0)) + '</b></span>') +
+      '</div></div>';
 
-    /* --- 提示条：休眠 / 故障 / 留意 / 温度 --- */
+    /* --- 提示条：休眠 / 告警 / 温度（fnmonitor 的 .note，无边框纯底色） --- */
     var notes = '';
     if (d.standby) {
       notes += '<div class="mon-dw-note sleep">💤 <span>这块硬盘已停转休眠。' +
@@ -543,39 +588,45 @@
         '建议确认 ' + esc(((d.mounts || []).join('、')) || '该盘上的数据') +
         ' 有备份，并留意数值是否继续增长。</span></div>';
     }
+    /* 温度告警：必须用 tempExceed() 判定 —— tempLevel() 正常时返回 'ok'，
+       而 'ok' 是真值，直接用 if (lv) 判断会让任何温度都弹这条提示。 */
     var t = (d.temp !== null && d.temp !== undefined && d.temp !== '') ? Number(d.temp) : null;
-    var tLv = (d.standby || t === null) ? '' : tempLevel(t);
-    if (tLv) {
+    var tEx = (d.standby || t === null) ? '' : tempExceed(t);
+    if (tEx) {
       notes += '<div class="mon-dw-note warn">🌡 <span>温度 ' + esc(String(t)) +
-        '℃，已超过' + (tLv === 'crit' ? '严重' : '警告') + '阈值。</span></div>';
+        '℃，已超过' + (tEx === 'high' ? '严重' : '警告') + '阈值（' +
+        (tEx === 'high' ? TH_DISK_TEMP_CRIT : TH_DISK_TEMP_WARN) + '℃）。</span></div>';
     }
     if (notes) html += notes;
 
     /* --- 实时读写 --- */
     if (!d.standby) {
       html += '<div class="mon-dw-sec">实时读写<span class="faint">近 5 分钟</span></div>';
-      html += '<dl class="mon-dw-kv">' +
-        '<dt>读取速率</dt><dd>' + (io && io.readText ? esc(io.readText) : '<span class="faint">无 IO 数据</span>') + '</dd>' +
-        '<dt>写入速率</dt><dd>' + (io && io.writeText ? esc(io.writeText) : '<span class="faint">无 IO 数据</span>') + '</dd>' +
-        '<dt>硬盘状态</dt><dd>' + (d.state === 'standby' ? '休眠' : esc(d.state || '—')) + '</dd>' +
-        '</dl>';
+      html += '<div class="mon-dw-card">' +
+        '<dl class="mon-dw-kv">' +
+        dwKvRow('读取速率', io && io.readText ? esc(io.readText) : '<span class="faint">无 IO 数据</span>') +
+        dwKvRow('写入速率', io && io.writeText ? esc(io.writeText) : '<span class="faint">无 IO 数据</span>') +
+        dwKvRow('硬盘状态', d.state === 'standby' ? '休眠' : esc(d.state || '—')) +
+        '</dl></div>';
     }
 
     /* --- SMART --- */
-    html += '<div class="mon-dw-sec">SMART</div>' + dwSmartTable(d);
+    html += '<div class="mon-dw-sec">SMART</div>' +
+      '<div class="mon-dw-card">' + dwSmartTable(d) + '</div>';
 
     /* --- 信息 --- */
-    html += '<div class="mon-dw-sec">信息</div>' + dwInfoKv(d);
+    html += '<div class="mon-dw-sec">信息</div>' +
+      '<div class="mon-dw-card">' + dwInfoKv(d) + '</div>';
 
     /* --- 巡检 --- */
     var scan = (st && st.scan) || {};
     var ago = scanAgo(scan.last_ts || 0);
     html += '<div class="mon-dw-sec">巡检</div>' +
-      '<dl class="mon-dw-kv">' +
-      '<dt>巡检分级</dt><dd>' + gradeBadge(led.scanLv) + '</dd>' +
-      '<dt>巡检时间</dt><dd>' + (ago ? esc(ago) : '<span class="faint">未巡检</span>') + '</dd>' +
-      (d.detail ? '<dt>巡检说明</dt><dd>' + esc(d.detail) + '</dd>' : '') +
-      '</dl>';
+      '<div class="mon-dw-card"><dl class="mon-dw-kv">' +
+      dwKvRow('巡检分级', gradeBadge(led.scanLv)) +
+      dwKvRow('巡检时间', ago ? esc(ago) : '<span class="faint">未巡检</span>') +
+      (d.detail ? dwKvRow('巡检说明', esc(d.detail)) : '') +
+      '</dl></div>';
 
     body.innerHTML = html;
     drawerDev = dev;
@@ -727,7 +778,7 @@
 
         var t = d.temp;
         var tTxt = (d.standby || t === null || t === undefined || t === '') ? '--' : t;
-        var tLv = (d.standby || t === null || t === undefined) ? '' : tempLevel(t);
+        var tLv = (d.standby || t === null || t === undefined) ? '' : diskTempLevel(t);
 
         // 容量行：已挂载显示占用率 + 已用/总量；未挂载显示裸容量
         var capTxt = hasCap
@@ -1084,7 +1135,7 @@
         var drows = withTemp.map(function (x) {
           return '<div class="mon-row">' +
             '<span class="mon-row-name">' + esc(x.name) + '</span>' +
-            '<span class="mon-temp"><span class="mon-temp-dot lv-' + tempLevel(x.temp) + '"></span>' +
+            '<span class="mon-temp"><span class="mon-temp-dot lv-' + diskTempLevel(x.temp) + '"></span>' +
             '<span class="mon-row-val">' + x.temp + '°C</span></span>' +
           '</div>';
         }).join('');
