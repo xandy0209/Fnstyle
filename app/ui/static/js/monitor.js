@@ -429,7 +429,7 @@
       html += '<div class="mon-nas">' +
         '<div class="mon-chassis">' +
           '<div class="mon-ch-top">' +
-            '<span class="pwr" title="电源"><i></i></span>' +
+            '<span class="pwr" title="机箱电源灯（装饰标识，非状态指示）"><i></i></span>' +
             '<span>' + esc(chName) + '</span>' +
             '<span class="vent"></span>' +
             '<span>' + esc(chModel) + ' · ' + esc(st.disks.length) + ' 盘</span>' +
@@ -443,7 +443,10 @@
           '<span><i class="led-key warn"></i>留意</span>' +
           '<span><i class="led-key crit"></i>故障</span>' +
           '<span><i class="led-key off"></i>休眠 / 未巡检</span>' +
-          '<span class="hint">LED 为硬盘健康状态</span>' +
+          '<span class="hint">盘位 LED 为硬盘健康状态</span>' +
+          /* 机箱顶栏的电源灯是机箱外观元素（fnmonitor 同款），不是状态指示，
+             用蓝色与盘位 LED 区分；这里单列一项说明，避免与盘位 LED 混淆。 */
+          '<span class="hint"><i class="pwr-key"></i>机箱电源灯</span>' +
           /* 点阵色阶图例：绿 → 黄绿 → 橙 → 红，与容量占用率一一对应 */
           '<span class="ramp-key"><i class="ramp-bar"></i>点阵与容量行颜色 = 空间占用（绿 → 红）</span>' +
           '<span class="scan-ago">' +

@@ -1,5 +1,5 @@
 appname               = fnstyle
-version               = 1.1.22
+version               = 1.1.23
 display_name          = FnStyle
 desc                  = 集中管理飞牛个性化设置与丰富主题库：网站标题、登录框、LOGO、壁纸、毛玻璃、任务栏等独立配置，内置多源主题库，支持一键应用到 fnOS 系统。
 platform              = all
@@ -15,5 +15,5 @@ desktop_applaunchname = fnstyle.main
 service_port          = 9910
 checkport             = false
 ctl_stop              = true
-changelog             = 1.1.22：盘位容量告警角标改为纯颜色 + 图例表达 —— 移除盘位右上角的橙色感叹号角标（紧挨健康指示灯容易被误读），容量告警统一由点阵渐变与容量行颜色承担；图例区新增绿→黄绿→橙→红的色阶条，说明点阵与容量行颜色对应空间占用率
-checksum              = 141a450de7930c46217bd43257798fcc
+changelog             = 1.1.23：机箱电源灯改为蓝色并补入图例 —— 顶栏电源灯原为绿色，与盘位「正常」LED 撞色易被误读成健康状态，现改为蓝色（与 fnmonitor 一致）以区分；图例区新增「机箱电源灯」项并复刻其样式，说明文字改为「盘位 LED 为硬盘健康状态」，两类指示语义彻底分开；电源灯 tooltip 补充「装饰标识，非状态指示」
+checksum              = 92aa76fb6787d02399b1b5ed2c63d4b0
