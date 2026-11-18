@@ -411,9 +411,12 @@
      数据来自前端内存里的滑动缓冲 S.diskBuf（每次轮询 push 一次读写速率）。
      窗口长度对齐 fnmonitor 的「近 5 分钟」：fnmonitor 是 5s×60 点，
      FnStyle 轮询 3s，所以取 100 点同样是 5 分钟（见 BUF_N）。
+
+     缓冲区额外记一路时间戳（t），用于在曲线下方标出时间锚点
+     （窗口起止两端），让用户知道这条曲线对应哪段时间。
      -------------------------------------------------------------------------- */
   var BUF_N = 100;                      // 缓冲点数：3s × 100 = 5 分钟窗口
-  var diskBuf = {};                     // { dev: { r: [], w: [] } }
+  var diskBuf = {};                     // { dev: { r: [], w: [], t: [] } }
 
   function bufPush(arr, v) {
     arr.push(Number(v) || 0);
@@ -424,12 +427,22 @@
   function feedDiskBuf(st) {
     var io = st && st.diskio;
     if (!io || !io.length) return;
+    var now = Date.now();
     io.forEach(function (z) {
       var b = diskBuf[z.name];
-      if (!b) { b = diskBuf[z.name] = { r: [], w: [] }; }
+      if (!b) { b = diskBuf[z.name] = { r: [], w: [], t: [] }; }
       bufPush(b.r, z.read_rate);
       bufPush(b.w, z.write_rate);
+      bufPush(b.t, now);
     });
+  }
+
+  /* 本地时间 HH:MM（对齐 fnmonitor 的 F.hm：零填充小时分钟） */
+  function fmtHM(ts) {
+    if (!ts) return '';
+    var d = new Date(ts);
+    var hh = d.getHours(), mm = d.getMinutes();
+    return (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm;
   }
 
   /* 平滑曲线：单调三次插值（monotone cubic），避免普通样条在极值处过冲。
@@ -715,7 +728,9 @@
 
     /* --- 实时读写：对齐 fnmonitor —— 趋势图卡片，不是键值表 ---
        fnmonitor 的结构是 .chart-card：标题「读写速率」+ 读取/写入色标与实时数值
-       + 64px 高的双线 spark。曲线数据来自前端滑动缓冲 diskBuf。 */
+       + 64px 高的双线 spark。曲线数据来自前端滑动缓冲 diskBuf。
+       底部时间锚点标出窗口起止（方案 A）：只占一行，不改 spark 高度，
+       既能回答「这条曲线对应哪段时间」，又不破坏 fnmonitor 的 spark 观感。 */
     if (!d.standby) {
       var rTxt = io ? fmtRate(io.read_rate) : '--';
       var wTxt = io ? fmtRate(io.write_rate) : '--';
@@ -729,6 +744,11 @@
         '<span><span class="lk"><i class="k1"></i>写入</span><span class="lv">' + esc(wTxt) + '</span></span>' +
         '</div></div>' +
         '<div class="mon-dw-spark"><svg class="mon-spark" id="monDwSpark" aria-hidden="true"></svg></div>' +
+        '<div class="mon-dw-timeaxis">' +
+        '<span id="monDwTimeFrom">--</span>' +
+        '<span class="mon-dw-timearrow" aria-hidden="true">→</span>' +
+        '<span id="monDwTimeTo">--</span>' +
+        '</div>' +
         '</div>';
     }
 
@@ -759,16 +779,35 @@
     });
   }
 
-  /* 绘制抽屉内的读写趋势图（数据来自 diskBuf 滑动缓冲） */
+  /* 绘制抽屉内的读写趋势图（数据来自 diskBuf 滑动缓冲）
+     同时更新底部的时间锚点（窗口起止两端）。 */
   function drawDrawerSpark() {
     var svg = $('#monDwSpark');
     if (!svg || !drawerDev) return;
     var buf = diskBuf[drawerDev];
     if (!buf || buf.r.length < 2) {
       svg.innerHTML = '<text class="mon-dw-spark-empty">正在积累读写速率数据…</text>';
+      drawDrawerTimeAxis(buf);
       return;
     }
     drawSpark(svg, [{ values: buf.r }, { values: buf.w }]);
+    drawDrawerTimeAxis(buf);
+  }
+
+  /* 时间锚点：标出曲线窗口的起止时刻。
+     只有两个刻度（左端起点、右端终点），避免在 64px 高的 spark 下方
+     塞满刻度导致拥挤 —— 这也正是 fnmonitor 带轴图表用 180px 的原因。 */
+  function drawDrawerTimeAxis(buf) {
+    var fromEl = $('#monDwTimeFrom');
+    var toEl = $('#monDwTimeTo');
+    if (!fromEl || !toEl) return;
+    if (!buf || !buf.t || !buf.t.length) {
+      fromEl.textContent = '--';
+      toEl.textContent = '--';
+      return;
+    }
+    fromEl.textContent = fmtHM(buf.t[0]);
+    toEl.textContent = fmtHM(buf.t[buf.t.length - 1]);
   }
 
   function showDrawer() {

@@ -24,7 +24,7 @@ function mkEl(id) {
 ['monStorage', 'monStoreCount', 'monStatus', 'monUpdated', 'monCore', 'monCoreCount',
   'monTemp', 'monTempCount', 'monPower', 'monPowerSource', 'btnMonRefresh', 'monAuto',
   'btnMonScan', 'monDrawerOverlay', 'monDrawerTitle', 'monDrawerSub', 'monDrawerBody',
-  'btnCloseMonDrawer', 'monDwSpark']
+  'btnCloseMonDrawer', 'monDwSpark', 'monDwTimeFrom', 'monDwTimeTo']
   .forEach(id => { els[id] = mkEl(id); });
 
 /* 抽屉的 overlay 需要 classList / hidden / 事件钩子 */
@@ -244,6 +244,8 @@ const patched2 = patched.replace(
   '  window.__drawDrawerSpark = drawDrawerSpark;\n' +
   '  window.__getDiskBuf = function (n) { return diskBuf[n] || null; };\n' +
   '  window.__fmtRate = fmtRate;\n' +
+  '  window.__fmtHM = fmtHM;\n' +
+  '  window.__drawDrawerTimeAxis = drawDrawerTimeAxis;\n' +
   '  window.__setLastData = function (d) { lastData = d; };\n' +
   '  window.FnStyleMonitor = {'
 );
@@ -279,6 +281,8 @@ const drawSpark = global.__drawSpark;
 const drawDrawerSpark = global.__drawDrawerSpark;
 const getDiskBuf = global.__getDiskBuf;
 const fmtRate = global.__fmtRate;
+const fmtHM = global.__fmtHM;
+const drawDrawerTimeAxis = global.__drawDrawerTimeAxis;
 if (typeof bayLedState !== 'function' || typeof smartAlertsText !== 'function') {
   console.error('❌ SMART 测试钩子未就绪');
   process.exit(1);
@@ -893,6 +897,43 @@ if (html) {
     && /class="line l2"/.test(els.monDwSpark.innerHTML));
   check('抽屉内图例显示实时速率',
     /class="lv">/.test(els.monDrawerBody.innerHTML));
+
+  /* 9. 时间锚点（方案 A）：曲线窗口的起止时刻 */
+  console.log('--- 时间锚点（方案 A）---');
+  const axisRules = [
+    ['缓冲里记了时间戳', !!(getDiskBuf('sdy') && getDiskBuf('sdy').t
+      && getDiskBuf('sdy').t.length === 2)],
+    ['抽屉里有时间锚点容器',
+      /class="mon-dw-timeaxis"/.test(els.monDrawerBody.innerHTML)],
+    ['锚点含起止两个占位',
+      /id="monDwTimeFrom"/.test(els.monDrawerBody.innerHTML)
+      && /id="monDwTimeTo"/.test(els.monDrawerBody.innerHTML)],
+    ['锚点已填入起止时刻',
+      /^\d\d:\d\d$/.test(els.monDwTimeFrom.textContent)
+      && /^\d\d:\d\d$/.test(els.monDwTimeTo.textContent)],
+    ['fmtHM 零填充小时分钟',
+      fmtHM(new Date(2026, 0, 1, 9, 5).getTime()) === '09:05'],
+    ['fmtHM 23 点 59 分',
+      fmtHM(new Date(2026, 0, 1, 23, 59).getTime()) === '23:59'],
+    ['fmtHM 空值返回空串', fmtHM(0) === ''],
+  ];
+  axisRules.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* 10. 时间锚点不改变 spark 高度（仍为 64px，只多一行标注） */
+  const cssTxt2 = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'css', 'app.css'), 'utf8');
+  const cssRules2 = [
+    ['.mon-dw-spark 高度仍是 64px', /\.mon-dw-spark \{[^}]*height: 64px/.test(cssTxt2)],
+    ['时间锚点是 flex 一行排布', /\.mon-dw-timeaxis \{[^}]*display: flex/.test(cssTxt2)],
+    ['时间锚点用最淡的文字色', /\.mon-dw-timeaxis \{[^}]*color: var\(--text-muted\)/.test(cssTxt2)],
+    ['时间锚点用等宽数字', /\.mon-dw-timeaxis \{[^}]*font-variant-numeric: tabular-nums/.test(cssTxt2)],
+  ];
+  cssRules2.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
 
   /* 6. fmtRate：速率格式化对齐 fnmonitor 的 F.rateStr */
   console.log('--- 速率格式化（fnmonitor F.rateStr 对齐）---');

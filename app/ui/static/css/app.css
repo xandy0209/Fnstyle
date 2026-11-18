@@ -2632,6 +2632,25 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
   font-size: 11px;
 }
 
+/* ---- 时间锚点（方案 A）：曲线窗口的起止时刻 ----
+   只在曲线下方一行标出起点与终点两个时刻，不画完整刻度轴 ——
+   64px 高的 spark 塞满刻度会拥挤（fnmonitor 的带轴图表用的是 180px）。
+   文字层级对齐 fnmonitor 的 .chart .axis-t（第三级灰）。 */
+.mon-dw-timeaxis {
+  display: flex;
+  align-items: center;
+  gap: .35rem;
+  margin-top: .35rem;
+  font-size: .72rem;
+  line-height: 1;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.mon-dw-timeaxis .mon-dw-timearrow {
+  opacity: .6;
+  font-size: .68rem;
+}
+
 /* ---- 键值信息表（对齐 fnmonitor 的 .kv：每行一条横线） ---- */
 .mon-dw-kv {
   display: grid;
