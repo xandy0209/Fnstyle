@@ -4650,6 +4650,15 @@ html.mon-scroll-lock body {
 .ov-bar-col:hover .ov-bar { opacity: 1; }
 /* 最后一天（今天）高亮 */
 .ov-bar-col.last .ov-bar { background: var(--spark-2); opacity: 1; }
+/* ⚠️ v1.1.52：无数据的天（补齐出来的空天）——不画实心柱，
+   改成一条淡色基线，避免和真实数据混淆 */
+.ov-bar-col.nodata .ov-bar {
+  background: var(--border);
+  opacity: .5;
+  min-height: 2px;
+}
+.ov-bar-col.nodata.last .ov-bar { background: var(--border); opacity: .5; }
+.ov-bar-col.nodata .ov-bar-lb { color: var(--text-muted); opacity: .6; }
 .ov-bar-lb {
   margin-top: 6px;
   font-size: 10.5px;

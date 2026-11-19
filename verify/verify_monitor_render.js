@@ -3561,7 +3561,7 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     ['power/stats 用相对路径 BASE + power/stats',
       /fetch\s*\(\s*BASE\s*\+\s*['"]power\/stats['"]/.test(src51)],
     ['power/daily 用相对路径 BASE + power/daily',
-      /fetch\s*\(\s*BASE\s*\+\s*['"]power\/daily\?days=30['"]/.test(src51)],
+      /fetch\s*\(\s*BASE\s*\+\s*['"]power\/daily\?days=6['"]/.test(src51)],
     ['index.cgi 有 /api/power/stats 路由（转发 9910）',
       /\/api\/power\/stats\)/.test(cgi51) &&
       /127\.0\.0\.1:9910\/api\/power\/stats/.test(cgi51)],
@@ -3585,6 +3585,67 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
 
   if (bad51) {
     console.error('❌ v1.1.51 断言失败 ' + bad51 + ' 项');
+    process.exitCode = 1;
+  }
+})();
+
+/* ===========================================================================
+   v1.1.52：每日用电卡片「近 2 天」→ 「近 6 天」
+   ---------------------------------------------------------------------------
+   用户要求把「近 2 天用电」卡片调整为「近 6 天用电」。
+   ⚠️ 坑：原标题是按 days.length 动态拼的 —— 历史库里只有 2 天数据时，
+        标题就显示「近 2 天用电」。光改文字会变成「标题写 6 天、只画 2 根柱」，
+        是假数据。
+   修法：① 后端 daily_energy 增加 fill_days 参数，把无数据的天补齐成空天
+            （kwh=0、has_data=False），返回长度恒等于请求天数；
+        ② 前端请求 days=6，标题固定写「近 6 天用电」；
+        ③ 无数据的天画成淡色基线（.ov-bar-col.nodata），与真实数据区分。
+   =========================================================================== */
+(function () {
+  const src52 = fs.readFileSync(SRC, 'utf8');
+  const hist52 = fs.readFileSync(
+    path.join(__dirname, '..', 'app', 'ui', 'history_collect.py'), 'utf8');
+  const srv52 = fs.readFileSync(
+    path.join(__dirname, '..', 'app', 'ui', 'fnstyle_server.py'), 'utf8');
+  const css52 = fs.readFileSync(
+    path.join(__dirname, '..', 'app', 'ui', 'static', 'css', 'app.css'), 'utf8');
+  let bad52 = 0;
+
+  const rules52 = [
+    ['前端声明了 PDaily_DAYS = 6（窗口天数常量）',
+      /var\s+PDaily_DAYS\s*=\s*6\b/.test(src52)],
+    ['请求用 days=6',
+      /power\/daily\?days=6/.test(src52)],
+    ['标题固定写「近 N 天用电」，不再按 days.length 动态拼',
+      /['"]近 ['"]\s*\+\s*PDaily_DAYS\s*\+\s*['"] 天用电/.test(src52) &&
+      !/days\.length\s*\?\s*['"]近 /.test(src52)],
+    ['空态标题也是「近 N 天用电」（不是近 30 天）',
+      !/近 30 天用电/.test(src52)],
+    ['后端 daily_energy 有 fill_days 参数',
+      /def daily_energy\([^)]*fill_days\s*=\s*0/.test(hist52)],
+    ['后端有补齐函数 _fill_missing_days',
+      /def _fill_missing_days/.test(hist52)],
+    ['补齐的天标记 has_data=False 且 kwh=0',
+      /"has_data":\s*False/.test(hist52) && /"kwh":\s*0\.0/.test(hist52)],
+    ['服务端调用时传了 fill_days',
+      /daily_energy\([^)]*fill_days\s*=\s*days/.test(srv52)],
+    ['前端对无数据的天加 nodata 标记',
+      /has_data\s*===\s*false/.test(src52) && /nodata/.test(src52)],
+    ['CSS 有 .ov-bar-col.nodata 样式（淡色基线）',
+      /\.ov-bar-col\.nodata/.test(css52)],
+    ['avg_power 未传 fill_days（不能被补齐的 0 天稀释平均值）',
+      /daily_energy\(\s*\)/.test(hist52)],
+    ['avg_power 仍用 power_h > 0 过滤空天',
+      /power_h["\']?\s*,\s*0\s*\)\s*>\s*0/.test(hist52)],
+  ];
+
+  rules52.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad52++;
+  });
+
+  if (bad52) {
+    console.error('❌ v1.1.52 断言失败 ' + bad52 + ' 项');
     process.exitCode = 1;
   }
 })();

@@ -1,5 +1,5 @@
 appname               = fnstyle
-version               = 1.1.51
+version               = 1.1.52
 display_name          = FnStyle
 desc                  = 集中管理飞牛个性化设置与丰富主题库：网站标题、登录框、LOGO、壁纸、毛玻璃、任务栏等独立配置，内置多源主题库，支持一键应用到 fnOS 系统，卸载后自动还原系统默认样式。
 platform              = all
@@ -15,5 +15,5 @@ desktop_applaunchname = fnstyle.main
 service_port          = 9910
 checkport             = false
 ctl_stop              = true
-changelog             = 1.1.51：修复**能耗卡片统计全为空**的致命 bug（用户实机截图反馈「还是没有值」）。**根因**：前端 fetch('/api/power/stats') 与 fetch('/api/power/daily?days=30') 用了**绝对路径**，在 fnOS 的 iframe 嵌入场景下会打到 fnOS 主站根路径（302/404），而不是本应用的服务；同时 index.cgi 的路由表里当时也没有 /api/power/* 分支 —— 两条路都断。表现为：右栏四格全是「--」、标题栏「本月预估电费」也是「--」、每日用电显示「暂不可用」，但直接 curl 9910 端口数据完全正常（典型的「后端没问题、前端 URL 写错」假象）。**修法**：① monitor.js 全部 3 处改为相对路径 BASE + 'power/stats' / BASE + 'power/daily?days=30'（BASE='api/'，与既有的 monitor / storage 接口一致）；② index.cgi 补上 /api/power/stats 与 /api/power/daily 两条路由，转发给本机 9910 采集服务（历史库与功耗采样在那边，CGI 进程不持有连接），转发失败返回 503 而不是静默空。**附带收益**：修完后 CGI 直连路径与网关前缀路径（/app/fnstyle/）都能取到数据，双入口一致。verify 新增 v1.1.51 断言 10 项（绝对路径回归防护 + CGI 路由存在性 + fetch 全走 BASE 校验），前端 865 项全通过。
-checksum              = 0f817ca4b9295d38ffb3b76b78ed18d4
+changelog             = 1.1.52：每日用电卡片「近 2 天」调整为「近 6 天」。⚠️ 坑：原标题按 days.length 动态拼接 —— 历史库里只有 2 天数据时标题就写成「近 2 天用电」；光改文字会变成「标题写 6 天、只画 2 根柱」属于假数据。**修法**：① 后端 history_collect.daily_energy 新增 fill_days 参数，把无数据的天补齐成空天（kwh=0、power_h=0、has_data=False），返回长度恒等于请求天数；② 前端请求 days=6（新增常量 PDaily_DAYS），标题固定写「近 6 天用电」，不再随数据量变化；③ 无数据的天画成淡色基线（.ov-bar-col.nodata，app.css），与真实数据柱区分，悬停提示显示「无数据」；④ avg_power 仍不传 fill_days 且按 power_h>0 过滤，避免补齐的 0 天稀释平均功耗。verify 新增 v1.1.52 断言 12 项，前端 877 项全通过。
+checksum              = c30459e5b4e0f2be6633d6f96fa2dcf4

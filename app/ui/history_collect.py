@@ -180,7 +180,7 @@ def _day_key(ts):
     return "%04d-%02d-%02d" % (lt.tm_year, lt.tm_mon, lt.tm_mday)
 
 
-def daily_energy(rate_yuan_per_kwh=0.6, max_days=30):
+def daily_energy(rate_yuan_per_kwh=0.6, max_days=30, fill_days=0):
     """按天聚合用电量（1:1 对齐 fnmonitor 的 /api/daily 口径）。
 
     fnmonitor 的每日用电柱状图是把 power 历史按自然日分桶、
@@ -193,6 +193,9 @@ def daily_energy(rate_yuan_per_kwh=0.6, max_days=30):
       "success": True,
     }
     days 按日期升序；只包含有功率数据的天。
+    ⚠️ v1.1.52：传入 fill_days=n 时，会把序列补齐成最近 n 天
+       （无数据的天 kwh=0、has_data=False），使前端「近 n 天用电」
+       的标题与柱子数量保持一致。
     """
     rate = float(rate_yuan_per_kwh or 0.6)
     pts = query_history("power", "all")
@@ -225,7 +228,47 @@ def daily_energy(rate_yuan_per_kwh=0.6, max_days=30):
     # 只保留最近 max_days 天
     if max_days and len(days) > max_days:
         days = days[-max_days:]
+    # ⚠️ v1.1.52：可选补齐「无数据的天」——
+    #   历史上只返回有功率数据的天，导致前端标题「近 N 天用电」的 N
+    #   实际等于「有数据的天数」（应用刚启用时是 2，标题就写「近 2 天」）。
+    #   补齐后标题与柱子数一致：没有数据的天 kwh=0、has_data=False，
+    #   前端画成空柱并淡化显示，随着历史积累自然填满。
+    if fill_days and fill_days > 0:
+        days = _fill_missing_days(days, fill_days, rate)
     return {"days": days, "rate_yuan_per_kwh": rate, "success": True}
+
+
+def _fill_missing_days(days, n, rate):
+    """把每日用电序列补齐成最近 n 天（含无数据的空天）。
+
+    days: 已按日期升序排列的每日记录
+    n:    目标天数（向前补齐到今天为止）
+    返回: 长度恰好 n 的序列，按日期升序，末尾是今天
+    """
+    import datetime
+    today = datetime.date.today()
+    # 建立 date -> record 的映射
+    by_day = {}
+    for d in days:
+        try:
+            by_day[datetime.date.fromisoformat(d["day"])] = d
+        except Exception:
+            continue
+    out = []
+    for i in range(n - 1, -1, -1):
+        dt = today - datetime.timedelta(days=i)
+        key = dt.isoformat()
+        if dt in by_day:
+            out.append(by_day[dt])
+        else:
+            out.append({
+                "day": key,
+                "kwh": 0.0,
+                "cost": 0.0,
+                "power_h": 0.0,
+                "has_data": False,
+            })
+    return out
 
 
 def avg_power():

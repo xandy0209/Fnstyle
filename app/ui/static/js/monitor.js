@@ -26,6 +26,9 @@
   var pdailyFailAt = 0;
   var PSTAT_TTL = 60000;       // 60 秒刷新一次即可（能耗是慢变量）
   var PDaily_TTL = 600000;     // 10 分钟刷新一次（每日用电只按天变）
+  /* ⚠️ v1.1.52：每日用电图的窗口天数（用户要求「近 2 天」→ 改为「近 6 天」）。
+     后端会把无数据的天补齐成空天，所以标题固定写「近 6 天用电」。 */
+  var PDaily_DAYS = 6;
 
   function $(sel) { return document.querySelector(sel); }
   function $$(sel) { return Array.prototype.slice.call(document.querySelectorAll(sel)); }
@@ -1906,13 +1909,19 @@
        · X 轴标签：n>14 每 7 个一标、n>7 每 3 个一标、否则每个都标；
          最后一个固定写「今天」
        · 最后一天（今天）高亮，其余半透明
-       · 无数据时显示 .chart-empty-s 空态 */
+       · 无数据时显示 .chart-empty-s 空态
+     ⚠️ v1.1.52：按用户要求改为「近 6 天」——
+       ① 请求天数从 30 改为 6（PDaily_DAYS 常量）；
+     ② 后端会把无数据的天补齐成空天（kwh=0、has_data=false），
+        所以标题固定写「近 6 天用电」，不再按 days.length 动态变；
+        否则应用刚启用时历史只有 2 天，标题会写成「近 2 天用电」，
+        与用户期望的固定窗口不符。 */
   function renderPowerDaily(res) {
     var box = $('#monPowerDaily');
     if (!box) return;
     var days = (res && res.days) || [];
     var html = '<div class="chart-head"><div class="chart-title">' +
-      (days.length ? '近 ' + days.length + ' 天用电' : '近 30 天用电') + '</div>' +
+      '近 ' + PDaily_DAYS + ' 天用电</div>' +
       '<div class="chart-legend"><span><span class="lk"><i class="kb0"></i></span>' +
       '<span>每日 kWh · 按功率历史积分</span></span></div></div>';
     if (!days.length) {
@@ -1927,18 +1936,24 @@
     html += '<div class="ov-bars">' + days.map(function (d, i) {
       var h = Math.max(1, (d.kwh || 0) / max * 100);
       var last = i === n - 1;
+      /* ⚠️ v1.1.52：无数据的天（补齐出来的空天）→ 标 nodata，走淡色基线样式 */
+      var nodata = d.has_data === false;
       var parts = String(d.day || '').split('-');
       var shortLabel = parts.length === 3
         ? (Number(parts[1]) + '/' + Number(parts[2])) : (d.day || '');
       /* X 轴标签：末位固定「今天」，其余按 step 间隔 */
       var lb = last ? '今天'
         : (((n - 1 - i) % step === 0) ? shortLabel : '');
-      var tip = shortLabel + (last ? ' · 今天' : '') + ' · ' + fmtKwh(d.kwh) + ' kWh';
-      var cost = (d.cost !== null && d.cost !== undefined) ? (' · ' + fmtYuan(d.cost) + ' 元') : '';
-      var hrs = (d.power_h !== null && d.power_h !== undefined && d.power_h < 23.5)
-        ? (' · 数据 ' + fmt1(d.power_h) + ' 小时') : '';
-      return '<div class="ov-bar-col' + (last ? ' last' : '') + '" title="' +
-        esc(tip + cost + hrs) + '">' +
+      var tip = shortLabel + (last ? ' · 今天' : '') + (nodata ? ' · 无数据' : '');
+      if (!nodata) {
+        tip += ' · ' + fmtKwh(d.kwh) + ' kWh';
+        var cost = (d.cost !== null && d.cost !== undefined) ? (' · ' + fmtYuan(d.cost) + ' 元') : '';
+        var hrs = (d.power_h !== null && d.power_h !== undefined && d.power_h < 23.5)
+          ? (' · 数据 ' + fmt1(d.power_h) + ' 小时') : '';
+        tip += cost + hrs;
+      }
+      return '<div class="ov-bar-col' + (last ? ' last' : '') + (nodata ? ' nodata' : '') +
+        '" title="' + esc(tip) + '">' +
         '<div class="ov-bar" style="height:' + h.toFixed(1) + '%"></div>' +
         '<div class="ov-bar-lb">' + esc(lb) + '</div></div>';
     }).join('') + '</div>';
@@ -2443,7 +2458,7 @@
     /* 冷却期内不再重试（v1.1.50） */
     if (pdailyFailAt && now - pdailyFailAt < PFAIL_BACKOFF) return pdaily;
     if (!window.fetch) return pdaily;
-    return fetch(BASE + 'power/daily?days=30').then(function (r) {
+    return fetch(BASE + 'power/daily?days=6').then(function (r) {
       return r.ok ? r.json() : null;
     }).then(function (j) {
       if (j && j.success) {
@@ -2476,7 +2491,8 @@
     var box = $('#monPowerDaily');
     if (!box) return;
     if (box.querySelector('.ov-bars')) return;      /* 已有数据就不覆盖 */
-    box.innerHTML = '<div class="chart-head"><div class="chart-title">近 30 天用电</div></div>' +
+    box.innerHTML = '<div class="chart-head"><div class="chart-title">近 ' +
+      PDaily_DAYS + ' 天用电</div></div>' +
       '<div class="chart-empty-s">每日用电数据暂不可用，稍后会自动重试</div>';
   }
 
