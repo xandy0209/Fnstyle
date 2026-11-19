@@ -1538,7 +1538,7 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
   if (!hasState) bad++;
 
   /* 异常位图（带 _）必须用 crit 类着色 */
-  const critBits = /mon-chip crit[^>]*>\[_U\]</.test(raidHtml);
+  const critBits = /mon-raid-member crit[^>]*>\[_U\]</.test(raidHtml);
   console.log((critBits ? '  ✓ ' : '  ✗ ') + '异常健康位图标红');
   if (!critBits) bad++;
 
@@ -1651,7 +1651,7 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     ['monitor.js 暴露 lockScroll', /lockScroll: lockPageScroll/.test(mon)],
     ['monitor.js 暴露 unlockScroll', /unlockScroll: unlockPageScroll/.test(mon)],
     ['renderCore 委托给 FnStyleCompute', /window\.FnStyleCompute && window\.FnStyleCompute\.render/],
-    ['版本号已 bump 到 1.1.39', /v1\.1\.39/.test(html)],
+    ['版本号已 bump 到 1.1.40', /v1\.1\.40/.test(html)],
   ];
   wireRules.forEach(([label, ok]) => {
     console.log((ok ? '  ✓ ' : '  ✗ ') + label);
@@ -1934,7 +1934,7 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
 
     /* ---- ⑦ 版本与接入 ---- */
     ['index.html 引入 chart.js', /<script src="static\/js\/chart\.js"><\/script>/],
-    ['版本号已 bump 到 1.1.39', /v1\.1\.39/.test(html)],
+    ['版本号已 bump 到 1.1.40', /v1\.1\.40/.test(html)],
   ];
 
   rules.forEach(([label, ok]) => {
@@ -1963,8 +1963,8 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
 
   /* ---- ⑨ app.js 版本号（单独读文件） ---- */
   const appjs = fs3.readFileSync(path3.join(base, 'static', 'js', 'app.js'), 'utf8');
-  const appOk = /APP_VERSION = '1\.1\.39'/.test(appjs);
-  console.log((appOk ? '  ✓ ' : '  ✗ ') + 'app.js 版本号 1.1.39');
+  const appOk = /APP_VERSION = '1\.1\.40'/.test(appjs);
+  console.log((appOk ? '  ✓ ' : '  ✗ ') + 'app.js 版本号 1.1.40');
   if (!appOk) bad++;
 
   /* ---- ⑩ v1.1.37：CPU 采样窗口 0.25s → 10s（与 fnmonitor 对齐） ---- */
@@ -2036,10 +2036,15 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
         && !/<div class="mon-cmp-chart-card">[\s\S]{0,300}mon-cmp-chart-seg/.test(cmp3)],
     ['段控件样式为居中（justify-content:center）',
       /\.mon-cmp-chart-seg\s*\{[^}]*justify-content:\s*center/.test(css3)],
-    ['段控件与下方卡片保留间距（margin-bottom）',
-      /\.mon-cmp-chart-seg\s*\{[^}]*margin-bottom:\s*\.1rem/.test(css3)],
-    ['段控件不再用 margin-top 外挂',
-      !/\.mon-cmp-chart-seg\s*\{[^}]*margin-top/.test(css3)],
+    ['段控件下留白交给网格 gap（margin 简写底部为 0）',
+      /\.mon-cmp-chart-seg\s*\{[^}]*margin:\s*\.85rem 0 0/.test(css3)],
+    ['段控件上方留白用 margin-top 下移（v1.1.40）',
+      /\.mon-cmp-chart-seg\s*\{[^}]*margin:\s*\.85rem 0 0/.test(css3)],
+    ['段控件上下留白对称（上下各 .85rem）',
+      /\.mon-cmp-chart-seg\s*\{[^}]*margin:\s*\.85rem 0 0/.test(css3)
+        && /\.mon-cmp-charts\s*\{[^}]*gap:\s*\.85rem/.test(css3)],
+    ['图表组不再外挂 margin-top（改由段控件 margin-top 承担）',
+      /\.mon-cmp-charts\s*\{[^}]*margin-top:\s*0/.test(css3)],
     ['段控件不再有卡片内部分隔线（border-top）',
       !/\.mon-cmp-chart-seg\s*\{[^}]*border-top/.test(css3)],
     ['段控件收缩到内容宽度（fit-content）',
@@ -2083,7 +2088,102 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     if (!ok) bad++;
   });
 
-  if (bad) { console.error('❌ v1.1.39 断言失败 ' + bad + ' 项'); process.exitCode = 1; }
+  if (bad) { console.error('❌ v1.1.40 断言失败 ' + bad + ' 项'); process.exitCode = 1; }
+})();
+
+/* ---------- v1.1.40：软 RAID 改为通栏区块 + 阵列卡片与盘位卡片等宽 ---------- */
+(function checkRaidWideLayout() {
+  console.log('\n--- 软 RAID 通栏布局（v1.1.40）---');
+  const mon = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'js', 'monitor.js'), 'utf8');
+  const css3 = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'css', 'app.css'), 'utf8');
+  let bad = 0;
+
+  const rules = [
+    /* --- JS：不再用普通 item() 卡片 --- */
+    ['RAID 不再用 item() 渲染',
+      !/item\('软 RAID'/.test(mon)],
+    ['改用 mon-raid 通栏区块',
+      /<div class="mon-raid">/.test(mon)],
+    ['通栏区块内含标题与组数',
+      /mon-raid-title">软 RAID</.test(mon) && /mon-raid-count/.test(mon)],
+    ['每个阵列一张独立卡片',
+      /<div class="mon-raid-card">/.test(mon)],
+    ['阵列网格用 --raid-cols 变量',
+      /mon-raid-grid" style="--raid-cols:/.test(mon)],
+    ['列数规则与盘位一致（1~4）',
+      /raidCols = Math\.min\(Math\.max\(st\.raid\.length, 1\), 4\)/.test(mon)],
+    ['成员盘位用 mon-raid-member',
+      /mon-raid-member/.test(mon)],
+    ['健康位图与成员盘位并排同一行',
+      /mon-raid-members">'\s*\+\s*members\s*\+\s*rs/.test(mon)],
+
+    /* --- CSS：通栏 + 与盘位等宽 --- */
+    ['.mon-raid 通栏（grid-column: 1 / -1）',
+      /\.mon-raid \{[^}]*grid-column:\s*1 \/ -1/.test(css3)],
+    ['.mon-raid-grid 用 repeat(var(--raid-cols), minmax(0, 1fr))',
+      /\.mon-raid-grid \{[^}]*grid-template-columns:\s*repeat\(var\(--raid-cols,\s*4\),\s*minmax\(0,\s*1fr\)\)/.test(css3)],
+    ['阵列网格左右内缩 .9rem 对齐机箱基准线',
+      /\.mon-raid-grid \{[^}]*margin:\s*0 \.9rem/.test(css3)],
+    ['阵列卡有独立卡面样式',
+      /\.mon-raid-card \{[^}]*background: var\(--bg-card\)/.test(css3)],
+    ['成员标签样式存在',
+      /\.mon-raid-member \{/.test(css3)],
+    ['成员标签正常态用 success 底色',
+      /\.mon-raid-member\.ok \{[^}]*background: var\(--success-soft\)/.test(css3)],
+    ['成员标签故障态用 danger 底色',
+      /\.mon-raid-member\.crit \{[^}]*background: var\(--danger-soft\)/.test(css3)],
+    ['软 RAID 不再使用 .mon-row 行式布局',
+      !/mon-row-name">'\s*\+\s*esc\(r\.device/.test(mon)],
+  ];
+  rules.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* --- 渲染级：4 个阵列 → 4 张卡片 --- */
+  const raidData = {
+    storage: {
+      available: true,
+      disks: FULL.storage.disks,
+      volumes: FULL.storage.volumes,
+      raid: [
+        { device: 'md0', state: 'active', layout: 'raid1', active: 1, total: 1,
+          members: ['sda1[0]'], raidState: 'U' },
+        { device: 'md127', state: 'active', layout: 'raid1', active: 1, total: 1,
+          members: ['sdb1[0]'], raidState: 'U' },
+        { device: 'md1', state: 'active', layout: 'raid1', active: 1, total: 1,
+          members: ['sdc3[0]'], raidState: 'U' },
+        { device: 'md2', state: 'inactive', layout: 'raid5', active: 1, total: 2,
+          members: ['sdd1[0]', 'sde1[1](F)'], raidState: '_U' },
+      ],
+    },
+  };
+  setLastData(raidData);
+  let html = '';
+  try {
+    global.window.FnStyleMonitor.__renderForTest(raidData);
+    html = els.monStorage ? els.monStorage.innerHTML : '';
+  } catch (e) {
+    console.error('  ❌ RAID 渲染抛异常:', e.message);
+    bad++;
+  }
+  const cardCount = (html.match(/class="mon-raid-card"/g) || []).length;
+  console.log((cardCount === 4 ? '  ✓ ' : '  ✗ ') + '4 个阵列渲染成 4 张独立卡片（实为 ' + cardCount + '）');
+  if (cardCount !== 4) bad++;
+
+  const gridOk = /class="mon-raid-grid" style="--raid-cols:4"/.test(html);
+  console.log((gridOk ? '  ✓ ' : '  ✗ ') + '阵列网格列数为 4（与盘位列数上限一致）');
+  if (!gridOk) bad++;
+
+  const memberOk = /class="mon-raid-member ok">sda1\[0\]</.test(html);
+  console.log((memberOk ? '  ✓ ' : '  ✗ ') + '成员盘位用 mon-raid-member ok 类');
+  if (!memberOk) bad++;
+
+  const badMember = /class="mon-raid-member crit">sde1\[1\]\(F\)</.test(html);
+  console.log((badMember ? '  ✓ ' : '  ✗ ') + '故障成员盘位标 crit');
+  if (!badMember) bad++;
+
+  if (bad) { console.error('❌ v1.1.40 RAID 布局断言失败 ' + bad + ' 项'); process.exitCode = 1; }
 })();
 
 console.log(process.exitCode ? '\n❌ 测试未全部通过' : '\n🎉 全部测试通过');

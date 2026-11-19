@@ -1,5 +1,5 @@
 appname               = fnstyle
-version               = 1.1.39
+version               = 1.1.40
 display_name          = FnStyle
 desc                  = 集中管理飞牛个性化设置与丰富主题库：网站标题、登录框、LOGO、壁纸、毛玻璃、任务栏等独立配置，内置多源主题库，支持一键应用到 fnOS 系统，卸载后自动还原系统默认样式。
 platform              = all
@@ -15,5 +15,5 @@ desktop_applaunchname = fnstyle.main
 service_port          = 9910
 checkport             = false
 ctl_stop              = true
-changelog             = 1.1.39：趋势图时间范围控件移至图表组顶部居中，处理器板块标题栏移除「N 项可用」 —— ① 时间范围切换控件（10分钟/1小时/6小时/24小时/7天/全部）从上一版的位置（最后一张图表卡片内部底部）移回图表组顶部：处理器抽屉中它正好落在第一张「CPU 使用率」卡片的正上方中间，内存抽屉因只有一张图，同样在该卡片上方居中；控件在图表组内水平居中（实测居中偏移 0.0px），多张图时仍只出现一次；② 配套调整：.mon-cmp-chart-seg 改为 justify-content:center 并显式 width:fit-content 收缩到内容宽度（否则作为 flex item 会被拉伸成整行宽导致居中失效），去掉原先用于卡片内分隔的 border-top 与 margin-top，保留 margin-bottom 作为与下方卡片的间距；移除 .mon-cmp-chart-card:has() 底部留白规则；③ 移除「处理器 / 内存 / 显卡」板块标题栏右侧的「N 项可用」计数标签（index.html 删除 monCoreCount 元素、monitor.js 删除对应的可用项统计与更新逻辑）；④ verify/verify_monitor_render.js 更新 v1.1.38 段控件位置断言为 v1.1.39 新布局（居中 / fit-content / 组顶部），并新增「移除 N 项可用」4 项断言。
-checksum              = e2da7815406763a4f0657668a0e9e7cc
+changelog             = 1.1.40：趋势图时间范围控件上下留白对称 + 软 RAID 改通栏分组呈现 —— ① 修正处理器 / 内存抽屉中段控件「上紧下松」的间距失衡：上一版上方留白仅 .35rem（5.6px，段控件紧贴「每核使用率」点阵区），下方却有 .95rem（15.2px），视觉头重脚轻；改为上下统一 .85rem（.mon-cmp-charts 去掉外挂 margin-top，.mon-cmp-chart-seg 改用 margin: .85rem 0 0，下留白交给网格 gap）；实测处理器与内存两个抽屉上间距 14px / 下间距 14px、差值 0px，水平居中偏移 0.0px；② 软 RAID 卡片重新设计呈现方式：早前用普通 .mon-item 被 .mon-grid 挤进一格、宽度只有 280~320px，与上方通栏的 NAS 机箱图完全不在一个量级；现改为独立的通栏区块（.mon-raid，grid-column: 1/-1），每个阵列一张独立小卡（.mon-raid-card）横向网格排列，列数规则与盘位卡片一致（1~4 列，repeat(var(--raid-cols), minmax(0,1fr)) 等分整行），网格左右内缩 .9rem 对齐机箱基准线 —— 实测阵列卡与盘位卡宽度均为 340px、左边缘对齐；卡内信息重排为「设备名 + RAID 级别 + 状态 + 活动/总数」一行 + 「成员盘位 + 健康位图」一行，健康位图不再单独占行；③ verify/verify_monitor_render.js 同步更新位图断言类名，并新增「软 RAID 通栏布局」20 项断言。
+checksum              = b5afa9dc0fb9b28897627e2a2286ae2f

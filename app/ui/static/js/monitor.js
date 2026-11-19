@@ -1274,13 +1274,22 @@
        这两个字段原先被丢掉了 —— 只显示设备名的话，
        「md0 active 1/1 sda1[0]」既看不出阵列类型，也看不出冗余级别，
        单盘伪 RAID1（raid1 却只有 1 块成员）这种隐患完全看不出来。
-       现在补上：RAID 级别徽章 + 成员健康位图。 */
+       现在补上：RAID 级别徽章 + 成员健康位图。
+
+       呈现方式：早前用普通 .mon-item 卡片，被 .mon-grid 挤进一格，
+       宽度只有 280~320px，与上方通栏的 NAS 机箱图完全不在一个量级，
+       看起来像「半张卡」。现在改成独立的通栏区块，
+       每个阵列一张小卡横向排列，宽度与盘位卡片一致。 */
     if (st.raid && st.raid.length) {
-      var rrows = st.raid.map(function (r) {
+      /* 列数规则与上方盘位卡片完全一致（都是 1~4 列、上限 4），
+         两套网格用同样的 minmax(0,1fr) 等分整行，
+         所以阵列卡与盘位卡的宽度、间距完全对齐。 */
+      var raidCols = Math.min(Math.max(st.raid.length, 1), 4);
+      var rcards = st.raid.map(function (r) {
         var cls = (r.state && r.state.indexOf('active') === 0) ? 'ok' : 'warn';
         var members = (r.members || []).map(function (m) {
           var bad = m.indexOf('(F)') >= 0;
-          return '<span class="mon-chip ' + (bad ? 'crit' : 'ok') + '">' + esc(m) + '</span>';
+          return '<span class="mon-raid-member ' + (bad ? 'crit' : 'ok') + '">' + esc(m) + '</span>';
         }).join('');
         /* RAID 级别（raid0/1/5/6/10…）—— 后端已采集，前端原先没渲染 */
         var layout = r.layout ? '<span class="mon-chip mon-raid-lvl">' + esc(r.layout) + '</span>' : '';
@@ -1289,19 +1298,26 @@
         if (r.raidState) {
           var bits = String(r.raidState);
           var unhealthy = bits.indexOf('_') >= 0 || bits.indexOf('F') >= 0;
-          rs = '<span class="mon-chip ' + (unhealthy ? 'crit' : 'ok') + '">[' + esc(bits) + ']</span>';
+          rs = '<span class="mon-raid-member ' + (unhealthy ? 'crit' : 'ok') + '">[' + esc(bits) + ']</span>';
         }
-        return '<div class="mon-row">' +
-          '<span class="mon-row-name">' + esc(r.device || r.name || 'md') + '</span>' +
-          layout +
-          '<span class="mon-badge ' + cls + '">' + esc(r.state || '未知') + '</span>' +
-          '<span class="mon-row-val">' + r.active + '/' + r.total + '</span>' +
-          rs +
-          (members ? '<div class="mon-chips">' + members + '</div>' : '') +
+        return '<div class="mon-raid-card">' +
+          '<div class="mon-raid-card-head">' +
+            '<span class="mon-raid-dev">' + esc(r.device || r.name || 'md') + '</span>' +
+            layout +
+            '<span class="mon-badge ' + cls + '">' + esc(r.state || '未知') + '</span>' +
+            '<span class="mon-raid-ratio">' + r.active + '/' + r.total + '</span>' +
+          '</div>' +
+          /* 成员盘位与健康位图并排一行，不再让 [U] 单独占一行 */
+          ((members || rs) ? '<div class="mon-raid-members">' + members + rs + '</div>' : '') +
         '</div>';
       }).join('');
-      html += item('软 RAID', st.raid.length + ' 组',
-        '<div class="mon-list">' + rrows + '</div>');
+      html += '<div class="mon-raid">' +
+        '<div class="mon-raid-head">' +
+          '<span class="mon-raid-title">软 RAID</span>' +
+          '<span class="mon-raid-count">' + st.raid.length + ' 组</span>' +
+        '</div>' +
+        '<div class="mon-raid-grid" style="--raid-cols:' + raidCols + '">' + rcards + '</div>' +
+      '</div>';
     }
 
     /* --- 硬 RAID 卡（storcli） --- */
