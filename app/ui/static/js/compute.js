@@ -717,10 +717,14 @@
     }
   }
 
-  /* 初始化某个板块内的趋势图（box = 板块容器，groupKey = temp / power） */
+  /* 初始化某个板块内的趋势图（box = 板块容器，groupKey = temp / power）
+     注意：panelChartsHtml() 返回的根元素自身就带 data-pcharts 属性，
+     querySelector 只搜索后代、查不到自身，所以这里要一并判断 box 本身。 */
   function initPanelCharts(box, groupKey) {
     if (!box) return;
-    var wrap = box.querySelector('[data-pcharts="' + groupKey + '"]');
+    var wrap = (box.getAttribute && box.getAttribute('data-pcharts') === groupKey)
+      ? box
+      : box.querySelector('[data-pcharts="' + groupKey + '"]');
     if (!wrap || !window.FnStyleChart) return;
 
     var grp = CHART_GROUPS[groupKey] || CHART_GROUPS.cpu;
@@ -903,10 +907,10 @@
   }
 
   function kvHtml(rows) {
-    return '<div class="mon-kv">' + rows.map(function (r) {
+    return '<div class="mon-dkv">' + rows.map(function (r) {
       var v = r[1];
       var dim = (v === '<span class="dim">—</span>') ? ' dim' : '';
-      return '<div class="mon-kv-row"><span class="k">' + esc(r[0]) + '</span>' +
+      return '<div class="mon-dkv-row"><span class="k">' + esc(r[0]) + '</span>' +
         '<span class="v' + dim + '">' + v + '</span></div>';
     }).join('') + '</div>';
   }
@@ -1101,7 +1105,7 @@
       secHtml('每核使用率') + cores +
       chartsHtml('cpu') +
       secHtml('占用最高的进程', '每 15 秒刷新') +
-      '<div class="mon-kv" data-procs>' +
+      '<div class="mon-dkv" data-procs>' +
       procRowsHtml((d && d.procs) || [], 'cpu') + '</div>' +
       secHtml('规格') +
       kvHtml([
@@ -1124,7 +1128,7 @@
     var b = T ? mp.buf / T : 0;
     var f = T ? mp.free / T : 0;
 
-    var stack = '<div class="mon-stack">' +
+    var stack = '<div class="mon-dstack">' +
       '<i style="width:' + (a * 100).toFixed(1) + '%;background:' + rampAt(mem.percent, 'mem') + '"></i>' +
       '<i class="hatch" style="width:' + (c * 100).toFixed(1) + '%"></i>' +
       '<i style="width:' + (b * 100).toFixed(1) + '%;background:var(--text-muted)"></i>' +
@@ -1178,7 +1182,7 @@
       '“缓存”是 Linux 用空闲内存加速读盘的部分，应用需要时会立即让出。</p>' +
       chartsHtml('mem') +
       secHtml('内存占用较多的进程', '取自 CPU 前 20 的进程') +
-      '<div class="mon-kv">' + procRowsHtml(memProcTop(d), 'mem') + '</div>' +
+      '<div class="mon-dkv">' + procRowsHtml(memProcTop(d), 'mem') + '</div>' +
       secHtml('交换分区') + swapHtml +
       secHtml('内存插槽') + slotsHtml;
   }

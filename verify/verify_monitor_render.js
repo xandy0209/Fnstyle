@@ -7,6 +7,16 @@ const path = require('path');
 
 const SRC = path.join(__dirname, '..', 'app', 'ui', 'static', 'js', 'monitor.js');
 
+/* 当前版本号：直接从 manifest 读取，避免每版都要改断言里的硬编码版本 */
+function currentVersion() {
+  try {
+    const mf = fs.readFileSync(path.join(__dirname, '..', 'manifest'), 'utf8');
+    const m = mf.match(/^version\s*=\s*(\S+)/m);
+    return m ? m[1] : '';
+  } catch (e) { return ''; }
+}
+const CUR_VER = currentVersion();
+
 /* ---------- 最小 DOM stub ---------- */
 const els = {};
 function mkEl(id) {
@@ -1658,7 +1668,8 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     ['monitor.js 暴露 lockScroll', /lockScroll: lockPageScroll/.test(mon)],
     ['monitor.js 暴露 unlockScroll', /unlockScroll: unlockPageScroll/.test(mon)],
     ['renderCore 委托给 FnStyleCompute', /window\.FnStyleCompute && window\.FnStyleCompute\.render/],
-    ['版本号已 bump 到 1.1.40', /v1\.1\.40/.test(html)],
+    ['版本号与 manifest 一致（v' + CUR_VER + '）',
+      CUR_VER !== '' && html.indexOf('v' + CUR_VER) >= 0],
   ];
   wireRules.forEach(([label, ok]) => {
     console.log((ok ? '  ✓ ' : '  ✗ ') + label);
@@ -1942,7 +1953,8 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
 
     /* ---- ⑦ 版本与接入 ---- */
     ['index.html 引入 chart.js', /<script src="static\/js\/chart\.js"><\/script>/],
-    ['版本号已 bump 到 1.1.40', /v1\.1\.40/.test(html)],
+    ['版本号与 manifest 一致（v' + CUR_VER + '）',
+      CUR_VER !== '' && html.indexOf('v' + CUR_VER) >= 0],
   ];
 
   rules.forEach(([label, ok]) => {
@@ -1971,8 +1983,8 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
 
   /* ---- ⑨ app.js 版本号（单独读文件） ---- */
   const appjs = fs3.readFileSync(path3.join(base, 'static', 'js', 'app.js'), 'utf8');
-  const appOk = /APP_VERSION = '1\.1\.40'/.test(appjs);
-  console.log((appOk ? '  ✓ ' : '  ✗ ') + 'app.js 版本号 1.1.40');
+  const appOk = CUR_VER !== '' && appjs.indexOf("APP_VERSION = '" + CUR_VER + "'") >= 0;
+  console.log((appOk ? '  ✓ ' : '  ✗ ') + 'app.js 版本号 ' + CUR_VER);
   if (!appOk) bad++;
 
   /* ---- ⑩ v1.1.37：CPU 采样窗口 0.25s → 10s（与 fnmonitor 对齐） ---- */
@@ -2343,8 +2355,8 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
   const cssRules = [
     ['.mon-hero 通栏大数字区样式存在',
       /\.mon-hero \{[^}]*grid-column:\s*1 \/ -1/.test(cssSrc)],
-    ['.mon-cells 四格统计样式存在',
-      /\.mon-cells \{[^}]*grid-template-columns:\s*repeat\(4,\s*1fr\)/.test(cssSrc)],
+    ['.mon-cells 四格统计样式存在（2 列 2×2，对齐 fnmonitor .stat-cells）',
+      /\.mon-cells \{[^}]*grid-template-columns:\s*repeat\(2,\s*1fr\)/.test(cssSrc)],
     ['.mon-thermo 温度计容器样式存在',
       /\.mon-thermo \{/.test(cssSrc)],
     ['.mon-thermo-row 三列栅格（标签/条/值）',
@@ -2472,12 +2484,15 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       /mon-thermo-mark/.test(tempHtml)],
     ['温度计刻度尺 20°~100°',
       /20°/.test(tempHtml) && /100°/.test(tempHtml)],
-    ['风扇分节渲染',
+    ['风扇分节渲染（图标条目 + 名称 + 大号 RPM）',
       /<span>风扇<\/span>/.test(tempHtml) &&
-      /1420 RPM/.test(tempHtml)],
-    ['电压分节渲染',
+      /class="mon-fan-ico"/.test(tempHtml) &&
+      /class="mon-fan-rpm">1420<span>RPM<\/span>/.test(tempHtml)],
+    ['电压分节渲染（2 列卡片）',
       /<span>电压<\/span>/.test(tempHtml) &&
-      /1\.28 V/.test(tempHtml)],
+      /class="mon-volts"/.test(tempHtml) &&
+      /class="mon-volt"/.test(tempHtml) &&
+      /1\.28<span> V<\/span>/.test(tempHtml)],
     ['全部传感器分节渲染',
       /<span>全部传感器<\/span>/.test(tempHtml)],
     ['传感器带类型标签',
@@ -2516,6 +2531,189 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
 
   if (bad) {
     console.error('❌ v1.1.41 温度/能耗对齐断言失败 ' + bad + ' 项');
+    process.exitCode = 1;
+  }
+})();
+
+/* =====================================================================
+   v1.1.42：真正的 1:1 还原（逐项对照 fnmonitor 真实 CSS / DOM）
+   ---------------------------------------------------------------------
+   v1.1.41 只是「结构类似」，在布局、字号、容器形态上有多处实质偏差。
+   v1.1.42 从 fnmonitor 源码（/tmp/fnm_ref/app/www/index.html）扒出权威值，
+   逐项对齐：
+     .sheet-hero   → .mon-hero       无边框无背景 / padding 8px 0 0 / 64px / 22px
+     .stat-cells   → .mon-cells      2 列 2×2 / padding 20px 24px / 数字 32px
+     .card.pad     → .mon-thermo     容器内缩 24px / 行 padding 10px / 条高 6px
+     .volts/.volt  → .mon-volts      2 列网格 / card-sunk 底 + inset 1px 描边 / 20px
+     .fan          → .mon-fan        40px 圆形图标 + 名称 + 24px RPM
+     .stack        → .mon-stack      gap 2px / 高 12px / min-width 2px / 首尾圆角
+     .legend       → .mon-legend     gap 6px 18px / 色块 8px
+     .kv           → .mon-kv         dl 语义 / border-top 分隔
+     .sheet-sec    → .mon-sub-sec    3px 竖条 + 负 margin
+     .sheet-seg    → 段控件          板块级右对齐（抽屉级仍居中）
+   ===================================================================== */
+(function () {
+  let bad = 0;
+  console.log('\n--- 温度和散热 / 能耗 真正 1:1 还原（v1.1.42）---');
+
+  const monSrc = fs.readFileSync(SRC, 'utf8');
+  const compSrc = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui',
+    'static', 'js', 'compute.js'), 'utf8');
+  const cssSrc = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui',
+    'static', 'css', 'app.css'), 'utf8');
+
+  /* ---------- CSS 级：hero（对齐 fnmonitor .sheet-hero）---------- */
+  const heroRules = [
+    ['.mon-hero 无边框（fnmonitor .sheet-hero 不画盒子）',
+      /\.mon-hero \{[^}]*border[^}]*\}/.test(cssSrc) === false &&
+      /\.mon-hero \{[^}]*\}\s*\n?/.test(cssSrc)],
+    ['.mon-hero 用 padding .5rem 0 0（= 8px 0 0）',
+      /\.mon-hero \{[^}]*padding:\s*\.5rem 0 0/.test(cssSrc)],
+    ['.mon-hero 底部对齐 + 两端对齐（align-items:flex-end）',
+      /\.mon-hero \{[^}]*align-items:\s*flex-end[^}]*justify-content:\s*space-between/.test(cssSrc)],
+    ['.mon-hero 大数字 4rem = 64px（fnmonitor .sheet-hero .num）',
+      /\.mon-hero-num b \{[^}]*font-size:\s*4rem/.test(cssSrc)],
+    ['.mon-hero 单位 1.375rem = 22px（fnmonitor .unit）',
+      /\.mon-hero-num span \{[^}]*font-size:\s*1\.375rem/.test(cssSrc)],
+    ['.mon-hero 右侧区块右对齐',
+      /\.mon-hero-right \{[^}]*text-align:\s*right/.test(cssSrc)],
+  ];
+  heroRules.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* ---------- CSS 级：统计格（对齐 fnmonitor .stat-cells）---------- */
+  const cellRules = [
+    ['.mon-cells 为 2 列（fnmonitor repeat(2,1fr)）',
+      /\.mon-cells \{[^}]*grid-template-columns:\s*repeat\(2,\s*1fr\)/.test(cssSrc)],
+    ['.mon-cells 用 1px gap + 边框底色做分隔线（fnmonitor 手法）',
+      /\.mon-cells \{[^}]*gap:\s*1px[^}]*background:\s*var\(--border\)/.test(cssSrc)],
+    ['.mon-cell padding 1.25rem 1.5rem（= 20px 24px）',
+      /\.mon-cell \{[^}]*padding:\s*1\.25rem 1\.5rem/.test(cssSrc)],
+    ['.mon-cell 数字 2rem = 32px（fnmonitor .stat-cell .num）',
+      /\.mon-cell b \{[^}]*font-size:\s*2rem/.test(cssSrc)],
+    ['.mon-cell 数字 tabular-nums 等宽',
+      /\.mon-cell b \{[^}]*font-variant-numeric:\s*tabular-nums/.test(cssSrc)],
+  ];
+  cellRules.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* ---------- CSS 级：温度计 / 电压 / 风扇 ---------- */
+  const bodyRules = [
+    ['.mon-thermo 容器内缩 1.5rem = 24px（fnmonitor .card.pad）',
+      /\.mon-thermo \{[^}]*padding:\s*1\.5rem/.test(cssSrc)],
+    ['.mon-thermo-row 三列栅格 112px 1fr 64px',
+      /\.mon-thermo-row \{[^}]*grid-template-columns:\s*112px 1fr 64px/.test(cssSrc)],
+    ['.mon-thermo-row 行距 .625rem = 10px（fnmonitor padding:10px 0）',
+      /\.mon-thermo-row \{[^}]*padding:\s*\.625rem 0/.test(cssSrc)],
+    ['.mon-thermo-row 字号 .8125rem = 13px（fnmonitor --fs-sm）',
+      /\.mon-thermo-row \{[^}]*font-size:\s*\.8125rem/.test(cssSrc)],
+    ['温度条高度 6px（fnmonitor .thermo height:6px）',
+      /\.mon-thermo-fill \{[^}]*height:\s*6px/.test(cssSrc) ||
+      /\.mon-thermo-bar \{[^}]*height:\s*6px/.test(cssSrc)],
+    ['.mon-volts 为 2 列网格（fnmonitor .volts repeat(2,1fr)）',
+      /\.mon-volts \{[^}]*grid-template-columns:\s*repeat\(2,\s*1fr\)/.test(cssSrc)],
+    ['.mon-volt 用 inset 描边（fnmonitor box-shadow:inset 0 0 0 1px）',
+      /\.mon-volt \{[^}]*box-shadow:\s*inset 0 0 0 1px/.test(cssSrc)],
+    ['.mon-volt 数字 1.25rem = 20px（fnmonitor .volt .num）',
+      /\.mon-volt b \{[^}]*font-size:\s*1\.25rem/.test(cssSrc)],
+    ['.mon-fan-ico 为 40px 圆形（fnmonitor .fan-ico）',
+      /\.mon-fan-ico \{[^}]*width:\s*40px[^}]*height:\s*40px[^}]*border-radius:\s*50%/.test(cssSrc)],
+    ['.mon-fan-ico svg 24px + 旋转动画（fnmonitor animation:spin）',
+      /\.mon-fan-ico svg \{[^}]*width:\s*24px[^}]*animation:\s*mon-fan-spin linear infinite/.test(cssSrc)],
+    ['风扇转速 1.5rem = 24px（fnmonitor .fan .num）',
+      /\.mon-fan-rpm \{[^}]*font-size:\s*1\.5rem/.test(cssSrc)],
+    ['风扇动画尊重 prefers-reduced-motion',
+      /@media \(prefers-reduced-motion: reduce\)[^{]*\{\s*\.mon-fan-ico svg \{ animation: none/.test(cssSrc)],
+  ];
+  bodyRules.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* ---------- CSS 级：堆叠条 / 图例 / 分节 / 明细 ---------- */
+  const tailRules = [
+    ['.mon-stack gap 2px（fnmonitor .stack gap:2px）',
+      /\.mon-stack \{[^}]*gap:\s*2px/.test(cssSrc)],
+    ['.mon-stack 高 12px（fnmonitor 能耗板块 stack height:12px）',
+      /\.mon-stack \{[^}]*height:\s*12px/.test(cssSrc)],
+    ['.mon-stack > i 最小宽 2px（fnmonitor min-width:2px）',
+      /\.mon-stack > i \{[^}]*min-width:\s*2px/.test(cssSrc)],
+    ['.mon-stack 首尾圆角（fnmonitor :first-child/:last-child）',
+      /\.mon-stack > i:first-child \{ border-radius: 6px 0 0 6px; \}/.test(cssSrc) &&
+      /\.mon-stack > i:last-child \{ border-radius: 0 6px 6px 0; \}/.test(cssSrc)],
+    ['.mon-stack-wrap 为卡片容器（堆叠条与图例同卡，fnmonitor .card.pad）',
+      /\.mon-stack-wrap \{[^}]*background:\s*var\(--bg-card\)[^}]*padding:\s*1\.5rem/.test(cssSrc)],
+    ['.mon-legend gap 6px 18px（fnmonitor .legend）',
+      /\.mon-legend \{[^}]*gap:\s*6px 18px/.test(cssSrc)],
+    ['.mon-legend 色块 8px（fnmonitor .legend i 8px）',
+      /\.mon-legend > span > i \{[^}]*width:\s*8px[^}]*height:\s*8px/.test(cssSrc)],
+    ['.mon-sub-sec 3px 竖条（fnmonitor .sheet-sec::before）',
+      /\.mon-sub-sec::before \{[^}]*width:\s*3px[^}]*height:\s*13px/.test(cssSrc)],
+    ['.mon-sub-sec 负 margin 让内容贴近标题（fnmonitor margin-bottom:-12px）',
+      /\.mon-sub-sec \{[^}]*margin-bottom:\s*-\.75rem/.test(cssSrc)],
+    ['.mon-kv 行分隔用 border-top（fnmonitor .kv dt/dd border-top）',
+      /\.mon-kv-row \+ \.mon-kv-row \{\s*border-top:/.test(cssSrc)],
+    ['.mon-kv 栅格 auto 1fr（fnmonitor .kv grid-template-columns:auto 1fr）',
+      /\.mon-kv-row \{[^}]*grid-template-columns:\s*minmax\(0,\s*auto\)\s+minmax\(0,\s*1fr\)/.test(cssSrc)],
+    ['.mon-kv 右侧值 tabular-nums 右对齐',
+      /\.mon-kv-row > span:last-child \{[^}]*text-align:\s*right[^}]*font-variant-numeric:\s*tabular-nums/.test(cssSrc)],
+    ['.mon-info 对齐 fnmonitor .note.info（fill-1 底 + ink-2 字）',
+      /\.mon-info \{[^}]*background:\s*var\(--bg-hover\)/.test(cssSrc)],
+    ['.mon-sensor-tag 对齐 fnmonitor .pill（24px 高 + 999px 圆角）',
+      /\.mon-sensor-tag \{[^}]*height:\s*24px[^}]*border-radius:\s*999px/.test(cssSrc)],
+    ['板块级段控件右对齐（fnmonitor .sheet-seg justify-content:flex-end）',
+      /\.mon-panel-charts \.mon-cmp-chart-seg \{[^}]*justify-content:\s*flex-end/.test(cssSrc)],
+  ];
+  tailRules.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* ---------- 源码级：类名冲突隔离 ---------- */
+  const isoRules = [
+    ['抽屉堆叠条改用 .mon-dstack（避免与板块 .mon-stack 冲突）',
+      /class="mon-dstack"/.test(compSrc) && /\.mon-dstack \{/.test(cssSrc)],
+    ['抽屉键值表改用 .mon-dkv（避免与板块 .mon-kv 冲突）',
+      /class="mon-dkv"/.test(compSrc) && /\.mon-dkv \{/.test(cssSrc)],
+    ['CSS 中不再存在会覆盖板块样式的旧 .mon-stack 定义',
+      /\.mon-stack \{[^}]*height:\s*14px/.test(cssSrc) === false],
+    ['CSS 中不再存在会覆盖板块样式的旧 .mon-kv 定义',
+      /\.mon-kv \{ display: flex;/.test(cssSrc) === false],
+  ];
+  isoRules.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* ---------- 源码级：JS 结构 ---------- */
+  const jsRules = [
+    ['风扇图标用函数 fanIcon 输出单个 svg（不再嵌套两层 svg）',
+      /function fanIcon\(period\)/.test(monSrc) &&
+      /<span class="mon-fan-ico">' \+ fanIcon\(spin\)/.test(monSrc)],
+    ['风扇转速换算动画周期 2400/max(300,rpm)',
+      /2400 \/ Math\.max\(300, rpm\)/.test(monSrc)],
+    ['风扇条目结构 mon-fan > mon-fan-ico + mon-fan-body',
+      /class="mon-fan"/.test(monSrc) &&
+      /class="mon-fan-ico"/.test(monSrc) &&
+      /class="mon-fan-body"/.test(monSrc)],
+    ['电压结构 mon-volts > mon-volt（2 列卡片）',
+      /class="mon-volts"/.test(monSrc) && /class="mon-volt"/.test(monSrc)],
+    ['堆叠条与图例同在 .mon-stack-wrap 卡片内',
+      /class="mon-stack-wrap"/.test(monSrc)],
+    ['板块级趋势图初始化兼容宿主自身即带 data-pcharts',
+      /box\.getAttribute\('data-pcharts'\) === groupKey/.test(compSrc)],
+  ];
+  jsRules.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  if (bad) {
+    console.error('❌ v1.1.42 1:1 还原断言失败 ' + bad + ' 项');
     process.exitCode = 1;
   }
 })();

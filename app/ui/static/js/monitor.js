@@ -1451,6 +1451,19 @@
     acpi: 'ACPI', disk: '硬盘', gpu: 'GPU', other: '其它'
   };
 
+  /* 风扇图标（对齐 fnmonitor 的 #i-fan symbol：中心轴 + 三片扇叶）
+     fnmonitor 的 .fan-ico svg{animation:spin linear infinite} 旋转的是整个 svg，
+     所以这里输出一个完整 svg，动画周期通过 --fan-spin 变量传入。 */
+  function fanIcon(period) {
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+      'stroke-linecap="round" style="--fan-spin:' + (period || '0s') + '">' +
+        '<circle cx="12" cy="12" r="1.8" fill="currentColor" stroke="none"/>' +
+        '<path d="M12 10.2C11 7.6 11.4 4 14 3.6c2.4-.4 3.2 2.6 1.4 4.1-1 .9-2.2 1.6-3.4 2.5Z"/>' +
+        '<path d="M12 10.2C11 7.6 11.4 4 14 3.6c2.4-.4 3.2 2.6 1.4 4.1-1 .9-2.2 1.6-3.4 2.5Z" transform="rotate(120 12 12)"/>' +
+        '<path d="M12 10.2C11 7.6 11.4 4 14 3.6c2.4-.4 3.2 2.6 1.4 4.1-1 .9-2.2 1.6-3.4 2.5Z" transform="rotate(240 12 12)"/>' +
+      '</svg>';
+  }
+
   function renderTemp(d) {
     var box = $('#monTemp');
     if (!box) return;
@@ -1575,11 +1588,22 @@
     }
 
     /* --- ④ 分节明细：风扇 / 电压 / 全部传感器 --- */
+    /* 风扇 —— 对齐 fnmonitor 的 .fan（40px 圆形图标 + 名称 + 大号转速） */
     if (fans.length) {
       html += '<div class="mon-sub-sec"><span>风扇</span><span class="faint">' + fans.length + ' 个</span></div>';
-      html += '<div class="mon-kv">' + fans.map(function (f) {
-        return '<div class="mon-kv-row"><span>' + esc(f.name || '风扇') + '</span>' +
-          '<span>' + (f.rpm === null || f.rpm === undefined ? '—' : fmtInt(f.rpm) + ' RPM') + '</span></div>';
+      html += '<div class="mon-fans">' + fans.map(function (f) {
+        var rpm = Number(f.rpm);
+        var has = f.rpm !== null && f.rpm !== undefined && !isNaN(rpm);
+        /* 转速越高转得越快；fnmonitor 用 2400/rpm 换算动画周期 */
+        var spin = has && rpm > 0 ? (2400 / Math.max(300, rpm)).toFixed(2) + 's' : '0s';
+        return '<div class="mon-fan">' +
+          '<span class="mon-fan-ico">' + fanIcon(spin) + '</span>' +
+          '<div class="mon-fan-body">' +
+            '<div class="mon-fan-name">' + esc(f.name || '风扇') + '</div>' +
+            '<div class="mon-fan-rpm">' + (has ? fmtInt(rpm) : '—') +
+              '<span>RPM</span></div>' +
+          '</div>' +
+        '</div>';
       }).join('') + '</div>';
     } else {
       html += '<div class="mon-sub-sec"><span>风扇</span></div>';
@@ -1588,11 +1612,14 @@
         '仍无数值通常表示该机型固件未向系统开放风扇数据）。</div>';
     }
 
+    /* 电压 —— 对齐 fnmonitor 的 .volts（2 列网格卡片，底色 card-sunk） */
     if (volts.length) {
       html += '<div class="mon-sub-sec"><span>电压</span><span class="faint">' + volts.length + ' 个</span></div>';
-      html += '<div class="mon-kv">' + volts.map(function (v) {
-        return '<div class="mon-kv-row"><span>' + esc(v.name) + '</span>' +
-          '<span>' + fmt2(v.value) + ' V</span></div>';
+      html += '<div class="mon-volts">' + volts.map(function (v) {
+        return '<div class="mon-volt">' +
+          '<div class="mon-volt-eyebrow">' + esc(v.name) + '</div>' +
+          '<b>' + fmt2(v.value) + '<span> V</span></b>' +
+        '</div>';
       }).join('') + '</div>';
     } else {
       html += '<div class="mon-sub-sec"><span>电压</span></div>';
@@ -1708,21 +1735,24 @@
       '</div>' +
     '</div>';
 
-    /* --- ② 功耗堆叠条 + 图例 --- */
+    /* --- ② 功耗堆叠条 + 图例 ---
+       对齐 fnmonitor：堆叠条与图例同在一个 .card.pad 卡片里 */
     var parts = powerParts(p);
     if (parts.length) {
-      html += '<div class="mon-stack">' + parts.map(function (q) {
-        var cls = q[2] === 'hatch' ? ' mono-hatch' : '';
-        var style = q[2] === 'hatch' ? '' : ' style="background:' + q[2] + '"';
-        return '<i class="' + (cls || '').trim() + '"' + style +
-          ' data-grow="' + q[1].toFixed(2) + '"></i>';
-      }).join('') + '</div>';
-      html += '<div class="mon-legend">' + parts.map(function (q) {
-        var sw = q[2] === 'hatch'
-          ? '<i class="mono-hatch"></i>'
-          : '<i style="background:' + q[2] + '"></i>';
-        return '<span>' + sw + esc(q[0]) + ' <b>' + fmt1(q[1]) + ' W</b></span>';
-      }).join('') + '</div>';
+      html += '<div class="mon-stack-wrap">' +
+        '<div class="mon-stack">' + parts.map(function (q) {
+          var cls = q[2] === 'hatch' ? ' mono-hatch' : '';
+          var style = q[2] === 'hatch' ? '' : ' style="background:' + q[2] + '"';
+          return '<i class="' + (cls || '').trim() + '"' + style +
+            ' data-grow="' + q[1].toFixed(2) + '"></i>';
+        }).join('') + '</div>' +
+        '<div class="mon-legend">' + parts.map(function (q) {
+          var sw = q[2] === 'hatch'
+            ? '<i class="mono-hatch"></i>'
+            : '<i style="background:' + q[2] + '"></i>';
+          return '<span>' + sw + esc(q[0]) + ' <b>' + fmt1(q[1]) + ' W</b></span>';
+        }).join('') + '</div>' +
+      '</div>';
     }
 
     /* --- ③ 部件明细 --- */
