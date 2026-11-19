@@ -436,6 +436,14 @@ class Handler(BaseHTTPRequestHandler):
         # RAPL 等，采不到真数据，所以给一份结构完全一致的假数据，
         # 用于本地验证前端渲染与排版。
         if name == "monitor":
+            # MON_JSON=<路径>：直接回放实机采集到的真实数据（用于实机数据 + 本地渲染的组合验证）
+            _real = os.environ.get("MON_JSON")
+            if _real and os.path.isfile(_real):
+                try:
+                    with open(_real, "r", encoding="utf-8") as _f:
+                        return self.send_json(json.load(_f))
+                except Exception:
+                    pass
             return self.send_json(mock_monitor()) if os.environ.get("MON_FULL") else self.send_json(mock_monitor_empty())
 
 

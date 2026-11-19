@@ -1141,12 +1141,16 @@ if (html) {
     ['存储池汇总用 fmtDisk', /totText = fmtDisk\(tSum\)/],
     ['盘位容量行用 fmtDisk', /d\.usedText \|\| fmtDisk\(d\.used \|\| 0\)/],
     // 内存/Swap/显存仍走 1024 进制（fnmonitor 的 F.bytes），不能被一起改成十进制
-    ['Swap 用 1024 进制 gb()（compute.js）', /gb\(mem\.swapTotal\)/.test(cmpSrc)],
-    ['显存仍用 fmtBytes（compute.js）', /fmtBytes\(g\.memTotal\)/.test(cmpSrc)],
+    ['Swap 用 1024 进制 gb()（compute.js）', /gb\(mem\.swapTotal\)/],
+    ['显存仍用 fmtBytes（compute.js）', /fmtBytes\(g\.memTotal\)/],
     ['fmtBytes 仍按 1024 递减', /while \(v >= 1024 && i < units\.length - 1\)/],
-  ];  let bad = 0;
-  rules.forEach(([label, re]) => {
-    const ok = re.test(src);
+  ];
+  // 前 4 条查 src（monitor.js），后 3 条查 cmpSrc（compute.js）
+  const SRC_RULES = 4;
+  let bad = 0;
+  rules.forEach(([label, re], idx) => {
+    const target = idx < SRC_RULES ? src : cmpSrc;
+    const ok = re.test(target);
     console.log((ok ? '  ✓ ' : '  ✗ ') + label);
     if (!ok) bad++;
   });
