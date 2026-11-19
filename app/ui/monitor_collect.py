@@ -719,9 +719,15 @@ def _to_float(s):
 # ==================== 3. 温度和散热 ====================
 
 def _hwmon_sensors():
-    """遍历 /sys/class/hwmon 读取温度与风扇。"""
+    """遍历 /sys/class/hwmon 读取温度、电压与风扇。
+
+    返回 (temps, fans, volts)。
+    温度条目带 type 分类（cpu/pch/board/acpi/gpu/other）与 max/crit 阈值，
+    供前端按 fnmonitor 的口径着色与分组。
+    """
     temps = []
     fans = []
+    volts = []
     for d in sorted(glob.glob("/sys/class/hwmon/hwmon[0-9]*")):
         name = read_text(os.path.join(d, "name"), 128).strip() or os.path.basename(d)
         for tp in sorted(glob.glob(os.path.join(d, "temp[0-9]*_input"))):
@@ -731,12 +737,14 @@ def _hwmon_sensors():
             if val is None or val <= 0:
                 continue
             idx = re.search(r"temp(\d+)_input", tp)
+            tname = label or ("%s %s" % (name, idx.group(1) if idx else ""))
             temps.append({
-                "name": label or ("%s %s" % (name, idx.group(1) if idx else "")),
+                "name": tname,
                 "chip": name,
                 "value": round(val / 1000.0, 1),
                 "max": _hwmon_scale(read_int(base + "_max")),
                 "crit": _hwmon_scale(read_int(base + "_crit")),
+                "type": _sensor_type(tname),
             })
         for fp in sorted(glob.glob(os.path.join(d, "fan[0-9]*_input"))):
             rpm = read_int(fp)
@@ -747,7 +755,38 @@ def _hwmon_sensors():
                 "name": "%s %s" % (name, idx.group(1) if idx else ""),
                 "rpm": rpm,
             })
-    return temps, fans
+        for vp in sorted(glob.glob(os.path.join(d, "in[0-9]*_input"))):
+            base = vp[:-len("_input")]
+            label = read_text(base + "_label", 128).strip()
+            val = read_int(vp)
+            if val is None or val <= 0:
+                continue
+            idx = re.search(r"in(\d+)_input", vp)
+            volts.append({
+                "name": label or ("%s %s" % (name, idx.group(1) if idx else "")),
+                "value": round(val / 1000.0, 2),
+            })
+    return temps, fans, volts
+
+
+def _sensor_type(name):
+    """按传感器名字猜测类型（对齐 fnmonitor 的 TN 分类）。
+
+    fnmonitor 的分类：cpu / pch / board / acpi / disk / gpu
+    前端据此决定阈值口径与标签样式。
+    """
+    n = (name or "").lower()
+    if re.search(r"gpu|core|package|x86_pkg|cpu", n):
+        return "cpu" if re.search(r"cpu|package|core|x86_pkg", n) else "gpu"
+    if re.search(r"pch|chipset|南桥", n):
+        return "pch"
+    if re.search(r"board|mobo|主板", n):
+        return "board"
+    if re.search(r"acpi|thermal", n):
+        return "acpi"
+    if re.search(r"nvme|ssd|hdd|disk|drives?", n):
+        return "disk"
+    return "other"
 
 
 def _hwmon_scale(v):
@@ -757,13 +796,24 @@ def _hwmon_scale(v):
 
 
 def collect_temp_fan():
-    """温度与散热：thermal_zone（CPU）→ hwmon（主板/硬盘/风扇）。"""
+    """温度与散热：thermal_zone（CPU）→ hwmon（主板/硬盘/风扇/电压）。
+
+    返回结构对齐 fnmonitor 的 sensors 口径：
+      temps   温度测点（含 type 分类与 max/crit 阈值）
+      fans    风扇转速
+      volts   电压读数
+      cpuTemp CPU 封装温度
+      mbTemp  主板温度
+      disks   物理磁盘清单（复用存储板块，避免重复读 sysfs）
+    """
     temps = []
     fans = []
+    volts = []
     source = []
 
     # --- CPU 温度优先走 thermal_zone ---
     cpu_temp = None
+    mb_temp = None
     for zone in sorted(glob.glob("/sys/class/thermal/thermal_zone[0-9]*")):
         ztype = read_text(os.path.join(zone, "type"), 128).strip()
         raw = read_int(os.path.join(zone, "temp"))
@@ -772,16 +822,21 @@ def collect_temp_fan():
         val = round(raw / 1000.0, 1)
         label = ztype or os.path.basename(zone)
         temps.append({"name": label, "chip": "thermal", "value": val,
-                      "max": None, "crit": None})
+                      "max": None, "crit": None,
+                      "type": _sensor_type(label)})
         if cpu_temp is None and re.search(r"x86_pkg_temp|cpu|soc|package", label, re.I):
             cpu_temp = val
+        elif mb_temp is None and re.search(r"acpitz|mobo|board|mainboard", label, re.I):
+            mb_temp = val
     if temps:
         source.append("thermal")
 
-    # --- hwmon 补充（主板/网卡/硬盘），并补风扇 ---
-    hw_temps, hw_fans = _hwmon_sensors()
+    # --- hwmon 补充（主板/网卡/硬盘），并补风扇与电压 ---
+    hw_temps, hw_fans, hw_volts = _hwmon_sensors()
     if hw_temps:
         source.append("hwmon")
+    if hw_volts:
+        source.append("volt")
     # 去重：同名同值只留一条
     seen = set()
     for t in temps + hw_temps:
@@ -792,6 +847,8 @@ def collect_temp_fan():
         temps.append(t)
     for f in hw_fans:
         fans.append(f)
+    for v in hw_volts:
+        volts.append(v)
 
     # 硬盘温度：复用存储板块的物理磁盘清单（避免同一批 sysfs 读两遍）
     disks = collect_disks()
@@ -801,13 +858,20 @@ def collect_temp_fan():
             if re.search(r"coretemp|k10temp|cpu|package", t["name"], re.I):
                 cpu_temp = t["value"]
                 break
+    if mb_temp is None:
+        for t in temps:
+            if t.get("type") in ("board", "pch", "acpi") and t["name"] != "acpitz":
+                mb_temp = t["value"]
+                break
 
     return {
         "available": bool(temps or fans),
         "temps": temps,
         "fans": fans,
+        "volts": volts,
         "disks": disks,
         "cpuTemp": cpu_temp,
+        "mbTemp": mb_temp,
         "source": "+".join(source) if source else "none",
     }
 
@@ -850,10 +914,23 @@ def collect_power(cpu_percent, disks_active):
     # 硬盘功耗（SSD 2.5W / HDD 8W）
     disks_w = 0.0
     disk_count = 0
+    disk_typical = 8.0
     for blk in glob.glob("/sys/block/sd*[a-z]") + glob.glob("/sys/block/nvme[0-9]*n[0-9]*"):
         rot = read_int(os.path.join(blk, "queue", "rotational"))
-        disks_w += 2.5 if rot == 0 else 8.0
+        w = 2.5 if rot == 0 else 8.0
+        disks_w += w
         disk_count += 1
+        disk_typical = w
+
+    # 网卡固定功耗（估算用）
+    nics = 0
+    for nic in glob.glob("/sys/class/net/*"):
+        base = os.path.basename(nic)
+        if base == "lo" or base.startswith(("docker", "br-", "veth", "virbr", "bond", "tun")):
+            continue
+        nics += 1
+    nic_fixed = 5.0
+    base_fixed = 8.0
 
     # --- RAPL 实测 ---
     sample = _rapl_sample()
@@ -873,7 +950,7 @@ def collect_power(cpu_percent, disks_active):
                         d += sample[k]["max"]
                     watts[k] = round(d / dt / 1e6, 2)
             if watts.get("package") is not None:
-                base_w = 8.0
+                base_w = base_fixed
                 total = watts["package"] + watts.get("dram", 0.0) + base_w + disks_w
                 out.update({
                     "ok": True, "source": "rapl",
@@ -885,6 +962,11 @@ def collect_power(cpu_percent, disks_active):
                     "base": base_w,
                     "disksW": round(disks_w, 1),
                     "disksActive": disk_count,
+                    "nics": nics,
+                    "estimation_params": {
+                        "tdp_w": 65.0, "disk_typical_w": disk_typical,
+                        "nic_fixed_w": nic_fixed, "base_w": base_fixed,
+                    },
                 })
                 return out
 
@@ -903,15 +985,9 @@ def collect_power(cpu_percent, disks_active):
                     tdp = float(w)
                     break
         cpu_p = float(cpu_percent or 0)
-        nics = 0
-        for nic in glob.glob("/sys/class/net/*"):
-            base = os.path.basename(nic)
-            if base == "lo" or base.startswith(("docker", "br-", "veth", "virbr", "bond", "tun")):
-                continue
-            nics += 1
         disk_w = (disks_w / disk_count) if disk_count else 8.0
         base = tdp * (cpu_p / 100.0 * 0.7 + 0.3)
-        total = base + disk_count * disk_w + nics * 5.0
+        total = base + disk_count * disk_w + nics * nic_fixed
         out.update({
             "ok": True, "source": "estimated",
             "total": round(total, 1),
@@ -922,6 +998,10 @@ def collect_power(cpu_percent, disks_active):
             "disksActive": disk_count,
             "tdp": tdp,
             "nics": nics,
+            "estimation_params": {
+                "tdp_w": tdp, "disk_typical_w": disk_w,
+                "nic_fixed_w": nic_fixed, "base_w": base_fixed,
+            },
         })
     except Exception:
         out = {"ok": False, "source": "unknown"}
@@ -1061,6 +1141,7 @@ class MonitorCollector(object):
             "procs": procs,
             "memory": mem_slots_data,
             "uptime": _uptime_text(),
+            "uptimeSeconds": _uptime_seconds(),
             "ts": int(time.time()),
             "interval": self.interval,
         }
@@ -1189,3 +1270,14 @@ def _uptime_text():
     if h:
         return "%d 小时 %d 分" % (h, m)
     return "%d 分" % m
+
+
+def _uptime_seconds():
+    """系统运行时长（秒）—— 能耗统计用。"""
+    t = read_text("/proc/uptime", 64).strip().split()
+    if not t:
+        return 0
+    try:
+        return int(float(t[0]))
+    except Exception:
+        return 0

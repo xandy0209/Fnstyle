@@ -1,5 +1,5 @@
 appname               = fnstyle
-version               = 1.1.40
+version               = 1.1.41
 display_name          = FnStyle
 desc                  = 集中管理飞牛个性化设置与丰富主题库：网站标题、登录框、LOGO、壁纸、毛玻璃、任务栏等独立配置，内置多源主题库，支持一键应用到 fnOS 系统，卸载后自动还原系统默认样式。
 platform              = all
@@ -15,5 +15,5 @@ desktop_applaunchname = fnstyle.main
 service_port          = 9910
 checkport             = false
 ctl_stop              = true
-changelog             = 1.1.40：趋势图时间范围控件上下留白对称 + 软 RAID 改通栏分组呈现 —— ① 修正处理器 / 内存抽屉中段控件「上紧下松」的间距失衡：上一版上方留白仅 .35rem（5.6px，段控件紧贴「每核使用率」点阵区），下方却有 .95rem（15.2px），视觉头重脚轻；改为上下统一 .85rem（.mon-cmp-charts 去掉外挂 margin-top，.mon-cmp-chart-seg 改用 margin: .85rem 0 0，下留白交给网格 gap）；实测处理器与内存两个抽屉上间距 14px / 下间距 14px、差值 0px，水平居中偏移 0.0px；② 软 RAID 卡片重新设计呈现方式：早前用普通 .mon-item 被 .mon-grid 挤进一格、宽度只有 280~320px，与上方通栏的 NAS 机箱图完全不在一个量级；现改为独立的通栏区块（.mon-raid，grid-column: 1/-1），每个阵列一张独立小卡（.mon-raid-card）横向网格排列，列数规则与盘位卡片一致（1~4 列，repeat(var(--raid-cols), minmax(0,1fr)) 等分整行），网格左右内缩 .9rem 对齐机箱基准线 —— 实测阵列卡与盘位卡宽度均为 340px、左边缘对齐；卡内信息重排为「设备名 + RAID 级别 + 状态 + 活动/总数」一行 + 「成员盘位 + 健康位图」一行，健康位图不再单独占行；③ verify/verify_monitor_render.js 同步更新位图断言类名，并新增「软 RAID 通栏布局」20 项断言。
-checksum              = b5afa9dc0fb9b28897627e2a2286ae2f
+changelog             = 1.1.41：温度和散热 / 能耗两块板块 1:1 对齐 fnmonitor —— ① 温度和散热板块按 fnmonitor 的 SHEETS.temp 重构：大数字区（CPU 温度 + CPU/硬盘阈值）→ 四格统计（CPU / 主板 / 显卡 / 全部测点最高）→ 温度计条形图（20~100℃ 刻度映射，阈值以竖线标注，条形按 CPU / 硬盘 / 传感器自身三级阈值分别着色）→ 分节明细（风扇 / 电压 / 全部传感器，传感器带类型标签）；② 能耗板块按 fnmonitor 的 SHEETS.power 重构：大数字区（实时功耗 + RAPL 实测 / TDP 估算口径）→ 功耗堆叠条 + 图例（CPU 封装 / 内存 / 活动硬盘（斜纹）/ 主板与其他，按占比归一 flex-grow）→ 部件明细（Package / Core / Uncore / DRAM / 底座 / 活动硬盘 / 网卡）→ 分节：用电与电费（今日 / 本月 / 开机以来）与估算参数；③ 采集端补齐电压传感器、传感器类型分类、主板温度 mbTemp、估算参数 estimation_params 与开机时长 uptimeSeconds；历史库新增 temp / temp_mb / power 三个指标并提供 energy_stats() 梯形积分算 kWh；后端白名单放开三个指标并新增 /api/power/stats 接口；④ 两块板块各补趋势图（CPU 温度 / 主板温度；整机功耗 / 累计用电（所选范围）），累计用电用 cumKwh 梯形积分由瓦换算 kWh；⑤ 修复趋势图始终显示「正在加载历史…」的缺陷：趋势图原挂在内容区内，而内容区每 3 秒轮询重建一次，图表 DOM 被反复清空；现改为挂在独立的趋势图宿主容器（#monTempCharts / #monPowerCharts），图表实例按板块分组管理并复用，轮询只刷新数据不重建实例 —— 实测两张温度图与两张功耗图均正常出曲线，累计用电曲线积分正确（0.0664 kWh）；⑥ verify/verify_monitor_render.js 新增「温度和散热 / 能耗 对齐 fnmonitor」78 项断言（源码级 46 + CSS 级 15 + 后端级 14 + 渲染级 21），并同步更新指标名白名单断言。
+checksum              = efc654ce944dac67dd375feb45e4b69c

@@ -1847,6 +1847,296 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
 .mon-temp-dot.lv-warn { background: var(--warning); }
 .mon-temp-dot.lv-high { background: var(--danger); }
 
+/* ============================================================
+   温度和散热 / 能耗 —— 1:1 对齐 fnmonitor 的 SHEETS.temp / SHEETS.power
+   ============================================================
+   fnmonitor 的温度板块是「大数字 + 阈值 + 4 格统计 + 温度计条形图 + 分节明细」，
+   能耗板块是「大数字 + 口径 + 功耗堆叠条 + 部件明细 + 用电与电费」。
+   下面按同一套结构实现，配色沿用本项目的 --spark-* / --success / --warning / --danger。 */
+
+/* ---- 区块大数字（CPU 温度 / 实时功耗）---- */
+.mon-hero {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: .85rem 1rem;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.mon-hero-left { min-width: 0; }
+.mon-hero-eyebrow {
+  font-size: .72rem;
+  color: var(--text-muted);
+  letter-spacing: .04em;
+  margin-bottom: .2rem;
+}
+.mon-hero-num {
+  display: flex;
+  align-items: baseline;
+  gap: .25rem;
+  font-variant-numeric: tabular-nums;
+}
+.mon-hero-num b {
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--text-primary);
+}
+.mon-hero-num span {
+  font-size: .95rem;
+  color: var(--text-secondary);
+}
+.mon-hero-right { text-align: right; flex: 0 0 auto; }
+.mon-hero-side {
+  font-size: .8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ---- 统计格（CPU / 主板 / 显卡 / 全部测点最高）---- */
+.mon-cells {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.mon-cell {
+  background: var(--bg-elevated);
+  padding: .6rem .8rem;
+  min-width: 0;
+}
+.mon-cell-eyebrow {
+  font-size: .72rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mon-cell b {
+  display: block;
+  margin-top: .18rem;
+  font-size: 1.05rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+/* ---- 温度计条形图（对齐 fnmonitor 的 .thermo-row / .thermo）----
+   刻度映射：20℃ → 0%，100℃ → 100%（与 fnmonitor 的 T_MIN/T_MAX 一致），
+   阈值刻度用竖线标记在条上。 */
+.mon-thermo {
+  grid-column: 1 / -1;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: .7rem .9rem .8rem;
+}
+.mon-thermo-row {
+  display: grid;
+  grid-template-columns: 112px 1fr 64px;
+  align-items: center;
+  gap: .8rem;
+  padding: .3rem 0;
+  font-size: .8rem;
+}
+.mon-thermo-label {
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mon-thermo-bar {
+  position: relative;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-hover);
+}
+.mon-thermo-fill {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  border-radius: 3px;
+  background: var(--spark-1);
+  transition: width .35s ease, background .25s ease;
+}
+.mon-thermo-fill.lv-warn { background: var(--warning); }
+.mon-thermo-fill.lv-crit { background: var(--danger); }
+.mon-thermo-fill.lv-sleep { background: var(--text-muted); opacity: .5; }
+.mon-thermo-mark {
+  position: absolute;
+  top: -3px; bottom: -3px;
+  width: 1px;
+  background: var(--border-strong);
+}
+.mon-thermo-val {
+  text-align: right;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.mon-thermo-scale {
+  display: grid;
+  grid-template-columns: 112px 1fr 64px;
+  gap: .8rem;
+  font-size: .68rem;
+  color: var(--text-muted);
+  margin-top: .3rem;
+}
+.mon-thermo-scale > div { position: relative; height: 14px; }
+.mon-thermo-scale > div > span {
+  position: absolute;
+  transform: translateX(-50%);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- 功耗堆叠条（对齐 fnmonitor 的 .stack + .legend）---- */
+.mon-stack {
+  grid-column: 1 / -1;
+  display: flex;
+  height: 12px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg-hover);
+}
+.mon-stack > i {
+  display: block;
+  height: 100%;
+  transition: flex-grow .35s ease;
+}
+.mon-stack > i.mono-hatch {
+  background-image: repeating-linear-gradient(
+    45deg,
+    var(--border-strong) 0 2px,
+    transparent 2px 5px);
+}
+.mon-legend {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: .3rem .9rem;
+  font-size: .76rem;
+  color: var(--text-secondary);
+  margin-top: .35rem;
+}
+.mon-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: .3rem;
+}
+.mon-legend > span > i {
+  width: 9px; height: 9px;
+  border-radius: 2px;
+  display: inline-block;
+  flex: 0 0 auto;
+}
+.mon-legend > span > i.mono-hatch {
+  background-image: repeating-linear-gradient(
+    45deg,
+    var(--border-strong) 0 2px,
+    transparent 2px 5px);
+}
+.mon-legend b {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+/* ---- 分节小标题（用于风扇 / 电压 / 全部传感器 / 部件明细 / 用电与电费）---- */
+.mon-sub-sec {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .6rem;
+  margin-top: .3rem;
+  padding-left: .5rem;
+  border-left: 3px solid var(--accent);
+  font-size: .82rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.mon-sub-sec .faint {
+  font-weight: 400;
+  font-size: .74rem;
+  color: var(--text-muted);
+}
+
+/* ---- 键值明细表（对齐 fnmonitor 的 kvHTML）---- */
+.mon-kv {
+  grid-column: 1 / -1;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.mon-kv-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+  gap: .8rem;
+  padding: .5rem .85rem;
+  border-bottom: 1px solid var(--border);
+  font-size: .8rem;
+}
+.mon-kv-row:last-child { border-bottom: none; }
+.mon-kv-row > span:first-child {
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mon-kv-row > span:last-child {
+  color: var(--text-primary);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  word-break: break-word;
+}
+.mon-kv-row .sub {
+  font-size: .72rem;
+  color: var(--text-muted);
+  margin-top: .12rem;
+}
+
+/* ---- 说明条 ---- */
+.mon-info {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: flex-start;
+  gap: .45rem;
+  font-size: .74rem;
+  line-height: 1.6;
+  color: var(--text-muted);
+  padding: .55rem .75rem;
+  background: var(--bg-card);
+  border-radius: var(--radius-sm);
+}
+
+/* ---- 传感器类型标签（对齐 fnmonitor 的 TN 分类）---- */
+.mon-sensor-tag {
+  display: inline-block;
+  margin-left: .35rem;
+  padding: .05rem .35rem;
+  border-radius: 4px;
+  font-size: .66rem;
+  font-weight: 500;
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  vertical-align: 1px;
+}
+
+/* 窄屏：统计格折成两列 */
+@media (max-width: 760px) {
+  .mon-cells { grid-template-columns: repeat(2, 1fr); }
+  .mon-thermo-row, .mon-thermo-scale { grid-template-columns: 86px 1fr 52px; gap: .6rem; }
+}
+
 /* ---- 温度 / 风扇列表 ---- */
 .mon-list { display: flex; flex-direction: column; gap: .45rem; }
 
@@ -3510,6 +3800,20 @@ html.mon-scroll-lock body {
   display: grid;
   gap: .85rem;
   margin-top: 0;
+}
+/* 板块级图表组（温度和散热 / 能耗）：挂在 .mon-grid-2 里，
+   必须通栏 —— 否则只占一格（minmax(320px,1fr) 的单列宽），
+   图表会被挤成半幅窄条，与上方 hero/统计格的整行宽度不一致。 */
+.mon-panel-charts {
+  grid-column: 1 / -1;
+}
+/* 板块级趋势图宿主：内容区之外的独立容器。
+   放在 .card > .body 里，与内容区同宽（不含额外内缩）。 */
+.mon-panel-chart-host {
+  margin-top: .85rem;
+}
+.mon-panel-chart-host:empty {
+  display: none;
 }
 /* 范围切换段控件：放在**图表组顶部、所有卡片之前**，水平居中。
    处理器抽屉里它落在第一张「CPU 使用率」卡片的上方中间；

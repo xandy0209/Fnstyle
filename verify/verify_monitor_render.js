@@ -19,10 +19,17 @@ function mkEl(id) {
     addEventListener: function () {},
     getAttribute: function () { return null; },
     setAttribute: function () {},
+    /* v1.1.41：板块内容区与趋势图宿主分离，
+       renderTemp/renderPower 会 querySelector 宿主里的图表组 */
+    querySelector: function () { return null; },
+    querySelectorAll: function () { return []; },
+    insertAdjacentHTML: function () {},
   };
 }
 ['monStorage', 'monStoreCount', 'monStatus', 'monUpdated', 'monCore', 'monCoreCount',
   'monTemp', 'monTempCount', 'monPower', 'monPowerSource', 'btnMonRefresh', 'monAuto',
+  /* v1.1.41：趋势图宿主容器（独立于内容区，避免每 3 秒轮询被清空） */
+  'monTempCharts', 'monPowerCharts',
   'btnMonScan', 'monDrawerOverlay', 'monDrawerTitle', 'monDrawerSub', 'monDrawerBody',
   'btnCloseMonDrawer', 'monDwSpark', 'monDwTimeFrom', 'monDwTimeTo',
   /* v1.1.32：抽屉顶部的硬盘切换下拉 + 巡检历史抽屉 */
@@ -1914,7 +1921,8 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     ['fnstyle_server 实现 _handle_monitor_history', /def _handle_monitor_history\(self\)/],
     ['接口支持多指标一次取回', /metrics_raw = \(q\.get\("metrics"/],
     ['非法 range 回落 1h', /if range_ not in _RANGE_SECONDS:/],
-    ['指标名白名单（防注入）', /allowed = \("cpu", "load1", "mem"\)/],
+    ['指标名白名单（防注入）',
+      /allowed = \("cpu", "load1", "mem", "temp", "temp_mb", "power"\)/],
     ['实时值兜底', /def _append_live\(self, pts, metric, snap\)/],
     ['fnstyle_server 范围表与 fnmonitor 一致',
       /"10m": 600, "1h": 3600, "6h": 21600,[\s\S]{0,80}"24h": 86400, "7d": 604800, "all": 0/],
@@ -2184,6 +2192,332 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
   if (!badMember) bad++;
 
   if (bad) { console.error('❌ v1.1.40 RAID 布局断言失败 ' + bad + ' 项'); process.exitCode = 1; }
+})();
+
+/* =====================================================================
+   v1.1.41：温度和散热 / 能耗 板块对齐 fnmonitor
+   ---------------------------------------------------------------------
+   fnmonitor 的 SHEETS.temp 结构：
+     hero（CPU 大数字 + 阈值）→ 4 格统计 → 温度计条形图 → 趋势图
+     → 分节：风扇 / 电压 / 全部传感器
+   fnmonitor 的 SHEETS.power 结构：
+     hero（实时功耗 + 口径）→ 功耗堆叠条 + 图例 → 部件明细 → 趋势图
+     → 分节：用电与电费 / 估算参数
+   ===================================================================== */
+(function () {
+  let bad = 0;
+  console.log('\n--- 温度和散热 / 能耗 对齐 fnmonitor（v1.1.41）---');
+
+  const monSrc = fs.readFileSync(SRC, 'utf8');
+  const compSrc = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui',
+    'static', 'js', 'compute.js'), 'utf8');
+  const cssSrc = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui',
+    'static', 'css', 'app.css'), 'utf8');
+  const srvSrc = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui',
+    'fnstyle_server.py'), 'utf8');
+  const monPy = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui',
+    'monitor_collect.py'), 'utf8');
+  const histPy = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui',
+    'history_collect.py'), 'utf8');
+  const htmlSrc = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui',
+    'index.html'), 'utf8');
+
+  /* ---------- 源码级：温度板块 ---------- */
+  const srcRules = [
+    ['renderTemp 已重写（大数字 + 四格 + 温度计 + 分节）',
+      /function renderTemp\(d\)/.test(monSrc)],
+    ['温度 hero 区使用 mon-hero',
+      /mon-hero/.test(monSrc)],
+    ['四格统计使用 mon-cells',
+      /mon-cells/.test(monSrc)],
+    ['温度计条形图使用 mon-thermo',
+      /mon-thermo/.test(monSrc)],
+    ['阈值刻度使用 mon-thermo-mark',
+      /mon-thermo-mark/.test(monSrc)],
+    ['刻度尺使用 mon-thermo-scale',
+      /mon-thermo-scale/.test(monSrc)],
+    ['分节标题使用 mon-sub-sec',
+      /mon-sub-sec/.test(monSrc)],
+    ['风扇分节存在', /<span>风扇<\/span>/.test(monSrc)],
+    ['电压分节存在', /<span>电压<\/span>/.test(monSrc)],
+    ['全部传感器分节存在', /<span>全部传感器<\/span>/.test(monSrc)],
+    ['传感器类型标签使用 mon-sensor-tag',
+      /mon-sensor-tag/.test(monSrc)],
+    ['温度条刻度范围 20~100℃（对齐 fnmonitor T_MIN/T_MAX）',
+      /T_MIN = 20, T_MAX = 100/.test(monSrc)],
+    ['传感器类型映射含 cpu/pch/board/acpi/disk/gpu',
+      /cpu: 'CPU', pch: '芯片组', board: '主板'/.test(monSrc) &&
+      /acpi: 'ACPI', disk: '硬盘', gpu: 'GPU'/.test(monSrc)],
+    ['四格统计：CPU / 主板 / 显卡 / 全部测点最高',
+      /<div class="mon-cell-eyebrow">全部测点最高<\/div>/.test(monSrc) &&
+      /<div class="mon-cell-eyebrow">显卡<\/div>/.test(monSrc)],
+    ['GPU 温度从 gpu.gpus 数组取（真机结构是对象不是数组）',
+      /d\.gpu\.gpus/.test(monSrc)],
+  ];
+  srcRules.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* ---------- 源码级：能耗板块 ---------- */
+  const pwrRules = [
+    ['renderPower 已重写（hero + 堆叠条 + 明细 + 电费）',
+      /function renderPower\(d\)/.test(monSrc)],
+    ['功耗堆叠条使用 mon-stack',
+      /mon-stack/.test(monSrc)],
+    ['图例使用 mon-legend',
+      /mon-legend/.test(monSrc)],
+    ['部件明细使用 mon-kv',
+      /mon-kv/.test(monSrc)],
+    ['部件分解函数 powerParts 存在',
+      /function powerParts\(p\)/.test(monSrc)],
+    ['部件含 CPU 封装 / 内存 / 硬盘 / 主板与其他',
+      /'CPU 封装'/.test(monSrc) && /'内存'/.test(monSrc) &&
+      /'主板与其他'/.test(monSrc)],
+    ['用电与电费分节存在', /<span>用电与电费<\/span>/.test(monSrc)],
+    ['估算参数分节存在', /<span>估算参数<\/span>/.test(monSrc)],
+    ['用电统计走 /api/power/stats',
+      /\/api\/power\/stats/.test(monSrc)],
+    ['能耗统计有今日 / 本月 / 开机以来三行',
+      /<span>今日<\/span>/.test(monSrc) &&
+      /<span>本月<\/span>/.test(monSrc) &&
+      /开机以来/.test(monSrc)],
+    ['口径区分 RAPL 实测与 TDP 估算',
+      /RAPL 实测/.test(monSrc) && /TDP 估算/.test(monSrc)],
+    ['堆叠条按部件占比归一 flex-grow',
+      /flexGrow/.test(monSrc)],
+  ];
+  pwrRules.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* ---------- 源码级：趋势图 ---------- */
+  const chartRules = [
+    ['定义 TEMP_CHARTS 温度趋势图组',
+      /var TEMP_CHARTS = \[/.test(compSrc)],
+    ['定义 POWER_CHARTS 能耗趋势图组',
+      /var POWER_CHARTS = \[/.test(compSrc)],
+    ['温度趋势图含 CPU 温度与主板温度两张',
+      /title: 'CPU 温度'/.test(compSrc) && /title: '主板温度'/.test(compSrc)],
+    ['能耗趋势图含整机功耗与累计用电两张',
+      /title: '整机功耗'/.test(compSrc) &&
+      /title: '累计用电（所选范围）'/.test(compSrc)],
+    ['累计用电用梯形积分变换 cumKwh',
+      /function cumKwh\(pts\)/.test(compSrc) && /tf: cumKwh/.test(compSrc)],
+    ['chartGroups 登记 temp 与 power',
+      /temp:\s*\{\s*defs: TEMP_CHARTS/.test(compSrc) &&
+      /power:\s*\{\s*defs: POWER_CHARTS/.test(compSrc)],
+    ['板块图表实例按板块分组保存',
+      /var panelChartStates = \{\}/.test(compSrc)],
+    ['提供 refreshPanelCharts 供轮询刷新',
+      /function refreshPanelCharts\(groupKey\)/.test(compSrc)],
+    ['提供 destroyPanelCharts 按板块销毁',
+      /function destroyPanelCharts\(groupKey\)/.test(compSrc)],
+  ];
+  chartRules.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* ---------- 源码级：趋势图宿主与轮询不冲突 ---------- */
+  const hostRules = [
+    ['index.html 有独立的温度趋势图宿主',
+      /id="monTempCharts"/.test(htmlSrc)],
+    ['index.html 有独立的能耗趋势图宿主',
+      /id="monPowerCharts"/.test(htmlSrc)],
+    ['温度板块挂到独立宿主而非内容区',
+      /\$\('#monTempCharts'\)/.test(monSrc)],
+    ['能耗板块挂到独立宿主而非内容区',
+      /\$\('#monPowerCharts'\)/.test(monSrc)],
+    ['宿主已有图表时不重复创建实例',
+      /chartHost\.querySelector\('\[data-pcharts="temp"\]'\)/.test(monSrc) &&
+      /pchartHost\.querySelector\('\[data-pcharts="power"\]'\)/.test(monSrc)],
+  ];
+  hostRules.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* ---------- CSS 级 ---------- */
+  const cssRules = [
+    ['.mon-hero 通栏大数字区样式存在',
+      /\.mon-hero \{[^}]*grid-column:\s*1 \/ -1/.test(cssSrc)],
+    ['.mon-cells 四格统计样式存在',
+      /\.mon-cells \{[^}]*grid-template-columns:\s*repeat\(4,\s*1fr\)/.test(cssSrc)],
+    ['.mon-thermo 温度计容器样式存在',
+      /\.mon-thermo \{/.test(cssSrc)],
+    ['.mon-thermo-row 三列栅格（标签/条/值）',
+      /\.mon-thermo-row \{[^}]*grid-template-columns:\s*112px 1fr 64px/.test(cssSrc)],
+    ['.mon-thermo-fill 条形填充样式存在',
+      /\.mon-thermo-fill \{/.test(cssSrc)],
+    ['阈值刻度线样式存在',
+      /\.mon-thermo-mark \{/.test(cssSrc)],
+    ['刻度尺样式存在',
+      /\.mon-thermo-scale \{/.test(cssSrc)],
+    ['.mon-stack 功耗堆叠条样式存在',
+      /\.mon-stack \{/.test(cssSrc)],
+    ['.mon-legend 图例样式存在',
+      /\.mon-legend \{/.test(cssSrc)],
+    ['.mon-sub-sec 分节标题样式存在',
+      /\.mon-sub-sec \{/.test(cssSrc)],
+    ['.mon-kv 键值明细样式存在',
+      /\.mon-kv \{/.test(cssSrc)],
+    ['.mon-info 说明条样式存在',
+      /\.mon-info \{/.test(cssSrc)],
+    ['.mon-sensor-tag 传感器类型标签样式存在',
+      /\.mon-sensor-tag \{/.test(cssSrc)],
+    ['趋势图宿主容器样式存在',
+      /\.mon-panel-chart-host \{/.test(cssSrc)],
+    ['窄屏时四格统计降为两列',
+      /@media \(max-width: 760px\)[\s\S]*?\.mon-cells \{[^}]*repeat\(2,\s*1fr\)/.test(cssSrc)],
+  ];
+  cssRules.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* ---------- 后端级 ---------- */
+  const beRules = [
+    ['后端白名单含 temp / temp_mb / power',
+      /allowed = \("cpu", "load1", "mem", "temp", "temp_mb", "power"\)/.test(srvSrc)],
+    ['_live_value 映射 temp（CPU 温度）',
+      /metric == "temp"/.test(srvSrc)],
+    ['_live_value 映射 temp_mb（主板温度）',
+      /metric == "temp_mb"/.test(srvSrc)],
+    ['_live_value 映射 power（整机功耗）',
+      /metric == "power"/.test(srvSrc)],
+    ['提供 /api/power/stats 接口',
+      /\/api\/power\/stats/.test(srvSrc)],
+    ['用电统计按历史 power 指标积分',
+      /def energy_stats\(/.test(histPy) && /3\.6e6/.test(histPy)],
+    ['历史库写入 temp 指标',
+      /"temp"/.test(histPy)],
+    ['历史库写入 temp_mb 指标',
+      /"temp_mb"/.test(histPy)],
+    ['历史库写入 power 指标',
+      /"power"/.test(histPy)],
+    ['采集端带电压传感器',
+      /volts/.test(monPy)],
+    ['采集端识别传感器类型',
+      /def _sensor_type\(/.test(monPy)],
+    ['采集端返回主板温度 mbTemp',
+      /mbTemp/.test(monPy)],
+    ['采集端返回估算参数 estimation_params',
+      /estimation_params/.test(monPy)],
+    ['采集端返回开机时长 uptimeSeconds',
+      /uptimeSeconds/.test(monPy)],
+  ];
+  beRules.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* ---------- 渲染级 ---------- */
+  const TEMP_POWER_DATA = {
+    success: true, available: true, ts: now, uptime: '3 天 4 小时',
+    cpu: { available: true, percent: 20, cores: 4, coresPercent: [1, 2, 3, 4] },
+    mem: { available: true, percent: 50 },
+    gpu: { available: true, gpus: [{ name: 'RTX 3060', temp: 52 }] },
+    temp: {
+      available: true, source: 'thermal+hwmon', cpuTemp: 47, mbTemp: 33,
+      temps: [
+        { name: 'x86_pkg_temp', chip: 'thermal', value: 47, max: null, crit: null, type: 'cpu' },
+        { name: 'acpitz', chip: 'thermal', value: 39, max: null, crit: null, type: 'acpi' },
+        { name: 'coretemp Package id 0', chip: 'coretemp', value: 47, max: 80, crit: 100, type: 'cpu' },
+        { name: 'nvme composite', chip: 'nvme', value: 38, max: 70, crit: 80, type: 'disk' },
+        { name: 'motherboard', chip: 'nct6798', value: 33, max: null, crit: null, type: 'board' },
+      ],
+      fans: [{ name: 'cpu fan', rpm: 1420 }],
+      volts: [{ name: 'Vcore', value: 1.28 }, { name: '+12V', value: 12.06 }],
+      disks: [{ name: 'sda', temp: 36 }, { name: 'sdb', temp: 41 }],
+    },
+    power: {
+      ok: true, source: 'rapl', total: 68.4,
+      package: 42.1, core: 28.6, uncore: 6.2, dram: 7.3,
+      base: 8, disksW: 13, disksActive: 3, nics: 1,
+      estimation_params: {
+        tdp_w: 65, disk_typical_w: 8, nic_fixed_w: 5, base_w: 8,
+      },
+    },
+    storage: FULL.storage,
+  };
+
+  let tempHtml = '', powerHtml = '';
+  try {
+    global.window.FnStyleMonitor.__renderForTest(TEMP_POWER_DATA);
+    tempHtml = els.monTemp ? els.monTemp.innerHTML : '';
+    powerHtml = els.monPower ? els.monPower.innerHTML : '';
+  } catch (e) {
+    console.error('  ❌ 温度/能耗渲染抛异常:', e.message);
+    bad++;
+  }
+
+  const renderRules = [
+    ['温度 hero 显示 CPU 温度大数字',
+      /mon-hero-num"><b>47\.0<\/b>/.test(tempHtml)],
+    ['温度 hero 显示阈值（CPU / 硬盘）',
+      /CPU 60 \/ 75℃/.test(tempHtml) && /硬盘 50 \/ 58℃/.test(tempHtml)],
+    ['四格统计齐全（CPU / 主板 / 显卡 / 全部测点最高）',
+      /mon-cells/.test(tempHtml) &&
+      /<div class="mon-cell-eyebrow">CPU<\/div>/.test(tempHtml) &&
+      /<div class="mon-cell-eyebrow">主板<\/div>/.test(tempHtml) &&
+      /<div class="mon-cell-eyebrow">显卡<\/div>/.test(tempHtml) &&
+      /<div class="mon-cell-eyebrow">全部测点最高<\/div>/.test(tempHtml)],
+    ['显卡温度取自 gpu.gpus（52℃）',
+      /52\.0 ℃/.test(tempHtml)],
+    ['温度计条形图渲染出多行',
+      (tempHtml.match(/mon-thermo-row/g) || []).length >= 5],
+    ['温度计带阈值刻度线',
+      /mon-thermo-mark/.test(tempHtml)],
+    ['温度计刻度尺 20°~100°',
+      /20°/.test(tempHtml) && /100°/.test(tempHtml)],
+    ['风扇分节渲染',
+      /<span>风扇<\/span>/.test(tempHtml) &&
+      /1420 RPM/.test(tempHtml)],
+    ['电压分节渲染',
+      /<span>电压<\/span>/.test(tempHtml) &&
+      /1\.28 V/.test(tempHtml)],
+    ['全部传感器分节渲染',
+      /<span>全部传感器<\/span>/.test(tempHtml)],
+    ['传感器带类型标签',
+      /mon-sensor-tag">CPU</.test(tempHtml)],
+    ['能耗 hero 显示实时功耗',
+      /mon-hero-num"><b>68\.4<\/b><span>W<\/span>/.test(powerHtml)],
+    ['能耗 hero 显示口径',
+      /RAPL 实测 \+ 底座 \/ 硬盘估算/.test(powerHtml)],
+    ['功耗堆叠条渲染出分段',
+      /mon-stack/.test(powerHtml) &&
+      (powerHtml.match(/data-grow=/g) || []).length >= 4],
+    ['堆叠条含硬盘的斜纹样式',
+      /mono-hatch/.test(powerHtml)],
+    ['图例渲染（含部件与瓦数）',
+      /mon-legend/.test(powerHtml) &&
+      /CPU 封装/.test(powerHtml) && /42\.1 W/.test(powerHtml)],
+    ['部件明细渲染（Package / Core / DRAM / 硬盘 / 网卡）',
+      /CPU 封装 Package/.test(powerHtml) &&
+      /核心 Core/.test(powerHtml) &&
+      /内存 DRAM/.test(powerHtml) &&
+      /活动硬盘（3 块）/.test(powerHtml) &&
+      /网卡/.test(powerHtml)],
+    ['用电与电费分节渲染',
+      /<span>用电与电费<\/span>/.test(powerHtml)],
+    ['估算参数分节渲染',
+      /<span>估算参数<\/span>/.test(powerHtml)],
+    ['估算参数含 TDP / 单盘 / 网卡 / 底座',
+      /CPU TDP（无 RAPL 时）/.test(powerHtml) &&
+      /单盘典型功耗/.test(powerHtml) &&
+      /网卡固定功耗/.test(powerHtml)],
+  ];
+  renderRules.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  if (bad) {
+    console.error('❌ v1.1.41 温度/能耗对齐断言失败 ' + bad + ' 项');
+    process.exitCode = 1;
+  }
 })();
 
 console.log(process.exitCode ? '\n❌ 测试未全部通过' : '\n🎉 全部测试通过');

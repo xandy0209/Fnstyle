@@ -48,6 +48,12 @@
     return (Math.round(v * 100) / 100).toFixed(2);
   }
 
+  /* kWh（fnmonitor 口径：>=10 两位小数，>=0.1 三位小数，更小四位） */
+  function fmtKwh(v) {
+    if (!isNum(v)) return '—';
+    return v >= 10 ? v.toFixed(2) : v >= 0.1 ? v.toFixed(3) : v.toFixed(4);
+  }
+
   var GiB = 1024 * 1024 * 1024;
 
   /* GB（十进制取整，fnmonitor 口径：>=10 取整，否则一位小数） */
@@ -582,10 +588,75 @@
     }
   ];
 
+  /* 温度和散热板块的趋势图（1:1 对齐 fnmonitor 的 SHEETS.temp）
+     fnmonitor 的温度抽屉有两张图：
+       ① 「CPU 温度」    带警告/严重阈值虚线 + 峰值标注
+       ② 「主板温度」    无阈值
+     指标名分别是 temp 与 temp_mb。 */
+  var TEMP_CHARTS = [
+    {
+      key: 'temp',
+      title: 'CPU 温度',
+      yMin: 0,
+      yTick: function (v) { return v + '°'; },
+      peak: true,
+      thresholds: function () {
+        return [{ v: 60, lv: 'warn' }, { v: 75, lv: 'crit' }];
+      },
+      series: [{
+        m: 'temp', label: 'CPU', color: 'var(--spark-1)',
+        fmt: function (v) { return [fmt1(v), '℃']; }
+      }]
+    },
+    {
+      key: 'temp_mb',
+      title: '主板温度',
+      yMin: 0,
+      yTick: function (v) { return v + '°'; },
+      series: [{
+        m: 'temp_mb', label: '主板', color: 'var(--spark-2)',
+        fmt: function (v) { return [fmt1(v), '℃']; }
+      }]
+    }
+  ];
+
+  /* 能耗板块的趋势图（1:1 对齐 fnmonitor 的 SHEETS.power）
+     fnmonitor 的能耗抽屉有两张图：
+       ① 整机功耗（TREND_DEFS[4]，指标 power，单位 W）
+       ② 累计用电（所选范围）（指标同样是 power，前端梯形积分换算成 kWh） */
+  var POWER_CHARTS = [
+    {
+      key: 'power',
+      title: '整机功耗',
+      yMin: 0,
+      yTick: function (v) { return v + 'W'; },
+      peak: true,
+      series: [{
+        m: 'power', label: '功耗', color: 'var(--spark-2)',
+        fmt: function (v) { return [fmt1(v), 'W']; }
+      }]
+    },
+    {
+      key: 'power',
+      title: '累计用电（所选范围）',
+      yMin: 0,
+      yTick: function (v) {
+        return v >= 10 ? fmtKwh(v) : v >= 0.1 ? v.toFixed(2) : v.toFixed(3);
+      },
+      tf: cumKwh,
+      series: [{
+        m: 'power', label: '累计', color: 'var(--spark-2)',
+        fmt: function (v) { return [fmtKwh(v), 'kWh']; }
+      }]
+    }
+  ];
+
   /* 各抽屉的图表组：key = 抽屉种类，defs = 图表定义数组 */
   var CHART_GROUPS = {
     cpu: { defs: CPU_CHARTS, metrics: 'cpu,load1' },
-    mem: { defs: MEM_CHARTS, metrics: 'mem' }
+    mem: { defs: MEM_CHARTS, metrics: 'mem' },
+    temp: { defs: TEMP_CHARTS, metrics: 'temp,temp_mb' },
+    power: { defs: POWER_CHARTS, metrics: 'power' }
   };
 
   /* 图表组的 HTML。
@@ -607,6 +678,135 @@
     }).join('');
     return '<div class="mon-cmp-charts" data-charts="' + groupKey + '">' +
       '<div class="mon-cmp-chart-seg" data-cseg></div>' + cards + '</div>';
+  }
+
+  /* ---------------------------------------------------------------------
+     板块级趋势图（温度和散热 / 能耗板块用）
+     ---------------------------------------------------------------------
+     与抽屉里的 chartsHtml 同构，但挂在**板块容器**上而不是抽屉 body 上：
+     温度/能耗在 FnStyle 是直接展开的板块（没有抽屉），趋势图就跟在
+     板块内容后面，用独立的数据属性避免和抽屉里的 [data-charts] 冲突。
+
+     段控件放在图表组顶部居中 —— 与处理器/内存抽屉保持一致的观感。 */
+  function panelChartsHtml(groupKey) {
+    var grp = CHART_GROUPS[groupKey] || CHART_GROUPS.cpu;
+    var defs = grp.defs;
+    var cards = defs.map(function (c, i) {
+      return '<div class="mon-cmp-chart-card">' +
+        '<div class="mon-cmp-chart-head">' +
+        '<div class="mon-cmp-chart-title">' + esc(c.title) + '</div>' +
+        '<div class="mon-cmp-chart-legend" data-pleg="' + i + '"></div>' +
+        '</div>' +
+        '<div data-pch="' + i + '"></div>' +
+        '</div>';
+    }).join('');
+    return '<div class="mon-cmp-charts mon-panel-charts" data-pcharts="' + groupKey + '">' +
+      '<div class="mon-cmp-chart-seg" data-pseg></div>' + cards + '</div>';
+  }
+
+  /* 板块级图表实例（与抽屉的 chartState 分开管理）
+     按板块分组保存 —— 温度板块和能耗板块各自有独立的图表组，
+     互相销毁会导致先渲染的那块图表被后渲染的清掉。 */
+  var panelChartStates = {};
+
+  function destroyPanelCharts(groupKey) {
+    var st = panelChartStates[groupKey];
+    if (st) {
+      st.charts.forEach(function (c) { try { c.destroy(); } catch (e) {} });
+      delete panelChartStates[groupKey];
+    }
+  }
+
+  /* 初始化某个板块内的趋势图（box = 板块容器，groupKey = temp / power） */
+  function initPanelCharts(box, groupKey) {
+    if (!box) return;
+    var wrap = box.querySelector('[data-pcharts="' + groupKey + '"]');
+    if (!wrap || !window.FnStyleChart) return;
+
+    var grp = CHART_GROUPS[groupKey] || CHART_GROUPS.cpu;
+    var defs = grp.defs;
+
+    var segHost = wrap.querySelector('[data-pseg]');
+    var charts = defs.map(function (d, i) {
+      var host = wrap.querySelector('[data-pch="' + i + '"]');
+      var legend = wrap.querySelector('[data-pleg="' + i + '"]');
+      if (!host) return null;
+      return new window.FnStyleChart.LineChart(host, {
+        series: d.series, yMin: d.yMin, yMax: d.yMax, yTick: d.yTick,
+        peak: d.peak, thresholds: d.thresholds,
+        height: 180, legend: legend,
+        empty: function () {
+          return '暂无数据 · 后台每 60 秒记录一条历史，稍后自动出现';
+        }
+      });
+    }).filter(Boolean);
+
+    var range = '1h';
+    var st = {
+      charts: charts, range: range, res: null,
+      box: box, group: groupKey, defs: defs, metrics: grp.metrics
+    };
+    panelChartStates[groupKey] = st;
+
+    if (segHost) {
+      segHost.appendChild(window.FnStyleChart.makeRangeSeg(range, function (r) {
+        loadPanelCharts(st, r);
+      }));
+    }
+    loadPanelCharts(st, range);
+  }
+
+  function loadPanelCharts(st, range) {
+    if (!st) return;
+    st.range = range;
+    fetchHistory(st.metrics, range).then(function (res) {
+      /* 期间可能已经重建（轮询刷新）或切了范围，丢弃过期响应 */
+      if (panelChartStates[st.group] !== st || st.range !== range) return;
+      st.res = res;
+      drawPanelCharts(st);
+    });
+  }
+
+  /* 板块图表数据刷新（图表实例已存在时用，避免反复重建实例） */
+  function refreshPanelCharts(groupKey) {
+    var st = panelChartStates[groupKey];
+    if (!st) return;
+    loadPanelCharts(st, st.range);
+  }
+
+  /* 累计用电：把瓦数序列按时间梯形积分成 kWh（对齐 fnmonitor 的 cumKwh） */
+  function cumKwh(pts) {
+    var out = [];
+    if (!pts || pts.length < 2) return out;
+    /* 用相邻点的中位间隔做上限，剔除跨度过大的断档 */
+    var gaps = [];
+    for (var i = 1; i < pts.length; i++) {
+      var g = pts[i][0] - pts[i - 1][0];
+      if (g > 0) gaps.push(g);
+    }
+    gaps.sort(function (a, b) { return a - b; });
+    var cap = (gaps.length ? gaps[Math.floor(gaps.length / 2)] : 60) * 3;
+    var cum = 0;
+    for (var j = 1; j < pts.length; j++) {
+      var dt = pts[j][0] - pts[j - 1][0];
+      if (dt > 0 && dt <= cap) cum += pts[j - 1][1] * dt / 3.6e6;
+      out.push([pts[j][0], cum]);
+    }
+    return out;
+  }
+
+  function drawPanelCharts(st) {
+    if (!st || !st.res) return;
+    var res = st.res;
+    var span = window.FnStyleChart.RANGE_SEC[st.range] || 0;
+    st.defs.forEach(function (d, i) {
+      var c = st.charts[i];
+      if (!c) return;
+      var pts = (res.series && res.series[d.key]) || [];
+      /* tf 存在则先对数据做变换（如累计用电：瓦 → kWh） */
+      var data = d.tf ? [d.tf(pts)] : [pts];
+      c.setData(data, span);
+    });
   }
 
   /* 图表实例管理：抽屉每次打开重建，关闭时销毁 */
@@ -1083,6 +1283,11 @@
     render: renderCoreCards,
     open: openCompute,
     close: closeCompute,
-    isOpen: function () { return computeOpen; }
+    isOpen: function () { return computeOpen; },
+    /* 板块级趋势图（温度和散热 / 能耗板块）*/
+    panelChartsHtml: panelChartsHtml,
+    initPanelCharts: initPanelCharts,
+    refreshPanelCharts: refreshPanelCharts,
+    destroyPanelCharts: destroyPanelCharts
   };
 })();

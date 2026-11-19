@@ -68,6 +68,21 @@
     return Math.round(b / M) + ' MB';
   }
 
+  /* 数值格式化（与 compute.js 里的同名函数保持一致的口径）——
+     温度和能耗板块要用到一位/两位小数与整数。 */
+  function fmtInt(v) {
+    var n = Number(v);
+    return isNaN(n) ? '—' : String(Math.round(n));
+  }
+  function fmt1(v) {
+    var n = Number(v);
+    return isNaN(n) ? '—' : n.toFixed(1);
+  }
+  function fmt2(v) {
+    var n = Number(v);
+    return isNaN(n) ? '—' : n.toFixed(2);
+  }
+
   /* 百分比 → 等级（用于条形/温度着色）。warn 从 70% 起，high 从 90% 起。 */
   function level(pct, warnAt, highAt) {
     if (pct === null || pct === undefined || isNaN(pct)) return 'ok';
@@ -1415,7 +1430,26 @@
     }
   }
 
-  /* ---------------- 3. 温度和散热 ---------------- */
+  /* ---------------- 3. 温度和散热 ----------------
+     1:1 对齐 fnmonitor 的 SHEETS.temp：
+       ① 大数字区（CPU 温度 + 阈值提示）
+       ② 四格统计（CPU / 主板 / 显卡 / 全部测点最高）
+       ③ 温度计条形图（20~100℃ 刻度映射，阈值用竖线标记）
+       ④ 分节明细：风扇 / 电压 / 全部传感器
+     硬盘温度也并入温度计条形图（kind=disk，用硬盘阈值口径）。 */
+
+  /* 温度条刻度：20℃ → 0%，100℃ → 100%（与 fnmonitor 的 T_MIN/T_MAX 一致） */
+  var T_MIN = 20, T_MAX = 100;
+  function tPos(t) {
+    var p = (Number(t) - T_MIN) / (T_MAX - T_MIN) * 100;
+    return Math.max(0, Math.min(100, p));
+  }
+
+  /* 传感器类型 → 中文标签（对齐 fnmonitor 的 TN 映射） */
+  var SENSOR_TN = {
+    cpu: 'CPU', pch: '芯片组', board: '主板',
+    acpi: 'ACPI', disk: '硬盘', gpu: 'GPU', other: '其它'
+  };
 
   function renderTemp(d) {
     var box = $('#monTemp');
@@ -1423,60 +1457,218 @@
     var t = d.temp || {};
     var html = '';
 
-    if (t.temps && t.temps.length) {
-      var rows = t.temps.map(function (s) {
-        var lv = tempLevel(s.value);
-        var extra = '';
-        if (s.max) extra += ' · 上限 ' + s.max + '°C';
-        if (s.crit) extra += ' · 临界 ' + s.crit + '°C';
-        return '<div class="mon-row">' +
-          '<span class="mon-row-name" title="' + esc(s.chip || '') + '">' + esc(s.name) + '</span>' +
-          '<span class="mon-temp"><span class="mon-temp-dot lv-' + lv + '"></span>' +
-          '<span class="mon-row-val">' + s.value + '°C</span></span>' +
-        '</div>';
-      }).join('');
-      html += item('温度传感器', t.temps.length + ' 个',
-        '<div class="mon-list">' + rows + '</div>');
-    } else {
-      html += item('温度传感器', '—',
-        '<div class="mon-item-sub">未检测到温度传感器（<span>/sys/class/thermal</span> 与 <span>hwmon</span> 均无数据）</div>');
-    }
+    var temps = t.temps || [];
+    var fans = t.fans || [];
+    var volts = t.volts || [];
+    var cpuTemp = (t.cpuTemp === null || t.cpuTemp === undefined) ? null : Number(t.cpuTemp);
+    var mbTemp = (t.mbTemp === null || t.mbTemp === undefined) ? null : Number(t.mbTemp);
 
-    if (t.fans && t.fans.length) {
-      var frows = t.fans.map(function (f) {
-        return '<div class="mon-row">' +
-          '<span class="mon-row-name">' + esc(f.name) + '</span>' +
-          '<span class="mon-row-val">' + f.rpm + ' RPM</span>' +
-        '</div>';
-      }).join('');
-      html += item('风扇', t.fans.length + ' 个',
-        '<div class="mon-list">' + frows + '</div>');
-    } else {
-      html += item('风扇', '—',
-        '<div class="mon-item-sub">未检测到风扇转速数据</div>');
-    }
+    /* --- ① 大数字区：CPU 温度 + 阈值 --- */
+    html += '<div class="mon-hero">' +
+      '<div class="mon-hero-left">' +
+        '<div class="mon-hero-eyebrow">CPU 温度</div>' +
+        '<div class="mon-hero-num"><b>' + (cpuTemp === null ? '—' : fmt1(cpuTemp)) + '</b>' +
+        '<span>℃</span></div>' +
+      '</div>' +
+      '<div class="mon-hero-right">' +
+        '<div class="mon-hero-eyebrow">阈值</div>' +
+        '<div class="mon-hero-side">CPU ' + TH_TEMP_WARN + ' / ' + TH_TEMP_CRIT + '℃<br>' +
+        '硬盘 ' + TH_DISK_TEMP_WARN + ' / ' + TH_DISK_TEMP_CRIT + '℃</div>' +
+      '</div>' +
+    '</div>';
 
-    // 硬盘温度
-    if (t.disks && t.disks.length) {
-      var withTemp = t.disks.filter(function (x) { return x.temp !== null && x.temp !== undefined; });
-      if (withTemp.length) {
-        var drows = withTemp.map(function (x) {
-          return '<div class="mon-row">' +
-            '<span class="mon-row-name">' + esc(x.name) + '</span>' +
-            '<span class="mon-temp"><span class="mon-temp-dot lv-' + diskTempLevel(x.temp) + '"></span>' +
-            '<span class="mon-row-val">' + x.temp + '°C</span></span>' +
-          '</div>';
-        }).join('');
-        html += item('硬盘温度', withTemp.length + ' 块',
-          '<div class="mon-list">' + drows + '</div>');
+    /* --- ② 四格统计：CPU / 主板 / 显卡 / 全部测点最高 --- */
+    var gpuTemps = [];
+    /* 真机 gpu 段结构是 { available, gpus:[...] }，不是数组 */
+    var gpuList = (d.gpu && Array.isArray(d.gpu.gpus)) ? d.gpu.gpus
+                 : (Array.isArray(d.gpu) ? d.gpu : []);
+    gpuList.forEach(function (g) {
+      if (g && g.temp !== null && g.temp !== undefined && g.temp !== '') {
+        gpuTemps.push(Number(g.temp));
       }
+    });
+    temps.forEach(function (s) {
+      if (s && s.type === 'gpu' && s.value !== null && s.value !== undefined) {
+        gpuTemps.push(Number(s.value));
+      }
+    });
+    var allT = temps.map(function (s) { return Number(s.value); })
+      .filter(function (v) { return !isNaN(v); })
+      .concat([cpuTemp, mbTemp])
+      .filter(function (v) { return v !== null && !isNaN(v); });
+    (t.disks || []).forEach(function (x) {
+      if (x && x.temp !== null && x.temp !== undefined && x.temp !== '') {
+        allT.push(Number(x.temp));
+      }
+    });
+
+    function tv(v) { return (v === null || v === undefined || isNaN(v)) ? '—' : fmt1(v) + ' ℃'; }
+    html += '<div class="mon-cells">' +
+      '<div class="mon-cell"><div class="mon-cell-eyebrow">CPU</div><b>' + tv(cpuTemp) + '</b></div>' +
+      '<div class="mon-cell"><div class="mon-cell-eyebrow">主板</div><b>' + tv(mbTemp) + '</b></div>' +
+      '<div class="mon-cell"><div class="mon-cell-eyebrow">显卡</div><b>' +
+        (gpuTemps.length ? tv(Math.max.apply(null, gpuTemps)) : '—') + '</b></div>' +
+      '<div class="mon-cell"><div class="mon-cell-eyebrow">全部测点最高</div><b>' +
+        (allT.length ? tv(Math.max.apply(null, allT)) : '—') + '</b></div>' +
+    '</div>';
+
+    /* --- ③ 温度计条形图 --- */
+    /* 测点清单：CPU → 主板 → 其它传感器（排除 disk 类型）→ 硬盘 */
+    var points = [];
+    if (cpuTemp !== null) points.push({ k: 'cpu', label: 'CPU', v: cpuTemp, kind: 'cpu' });
+    if (mbTemp !== null) points.push({ k: 'mb', label: '主板', v: mbTemp, kind: 'other' });
+    temps.forEach(function (s, i) {
+      if (!s || s.type === 'disk') return;
+      if (s.value === null || s.value === undefined) return;
+      points.push({
+        k: 's' + i + s.name, label: s.name, v: Number(s.value),
+        kind: s.type === 'cpu' ? 'cpu' : 'other',
+        max: s.max, crit: s.crit
+      });
+    });
+    (t.disks || []).forEach(function (x) {
+      if (!x || x.temp === null || x.temp === undefined || x.temp === '') return;
+      points.push({ k: 'd-' + x.name, label: x.name, v: Number(x.temp), kind: 'disk' });
+    });
+
+    if (points.length) {
+      var trows = points.map(function (p) {
+        /* 阈值刻度：CPU 用 CPU 阈值，硬盘用硬盘阈值，其它用传感器自身 max/crit */
+        var marks = [];
+        var lv;
+        if (p.kind === 'cpu') {
+          marks = [TH_TEMP_WARN, TH_TEMP_CRIT];
+          lv = tempLevel(p.v);
+        } else if (p.kind === 'disk') {
+          marks = [TH_DISK_TEMP_WARN, TH_DISK_TEMP_CRIT];
+          lv = diskTempLevel(p.v);
+        } else {
+          marks = [p.max, p.crit].filter(function (v) {
+            return v !== null && v !== undefined && !isNaN(v);
+          });
+          lv = (p.crit !== null && p.crit !== undefined && p.v >= p.crit) ? 'high'
+              : (p.max !== null && p.max !== undefined && p.v >= p.max) ? 'warn' : 'ok';
+        }
+        var markHtml = marks.map(function (v) {
+          return '<span class="mon-thermo-mark" style="left:' + tPos(v).toFixed(1) + '%"></span>';
+        }).join('');
+        var cls = lv === 'high' ? 'crit' : lv === 'warn' ? 'warn' : '';
+        return '<div class="mon-thermo-row">' +
+          '<span class="mon-thermo-label" title="' + esc(p.label) + '">' + esc(p.label) + '</span>' +
+          '<div class="mon-thermo-bar">' + markHtml +
+            '<i class="mon-thermo-fill ' + cls + '" style="width:' + tPos(p.v).toFixed(1) + '%"></i>' +
+          '</div>' +
+          '<span class="mon-thermo-val">' + fmt1(p.v) + '℃</span>' +
+        '</div>';
+      }).join('');
+
+      var scaleHtml = '<div class="mon-thermo-scale"><span></span><div>' +
+        [20, 40, 60, 80, 100].map(function (v) {
+          return '<span style="left:' + tPos(v).toFixed(1) + '%">' + v + '°</span>';
+        }).join('') + '</div><span></span></div>';
+
+      html += '<div class="mon-thermo">' + trows + scaleHtml + '</div>';
+    } else {
+      html += '<div class="mon-thermo"><div class="mon-info">未读取到任何温度传感器' +
+        '（fnOS 默认未安装 lm-sensors，已直读 thermal zone 与 hwmon；' +
+        '虚拟机或容器内通常无法访问硬件传感器）。</div></div>';
+    }
+
+    /* --- ④ 分节明细：风扇 / 电压 / 全部传感器 --- */
+    if (fans.length) {
+      html += '<div class="mon-sub-sec"><span>风扇</span><span class="faint">' + fans.length + ' 个</span></div>';
+      html += '<div class="mon-kv">' + fans.map(function (f) {
+        return '<div class="mon-kv-row"><span>' + esc(f.name || '风扇') + '</span>' +
+          '<span>' + (f.rpm === null || f.rpm === undefined ? '—' : fmtInt(f.rpm) + ' RPM') + '</span></div>';
+      }).join('') + '</div>';
+    } else {
+      html += '<div class="mon-sub-sec"><span>风扇</span></div>';
+      html += '<div class="mon-info">未检测到可读取的风扇转速传感器' +
+        '（已适配标准 hwmon、IPMI/BMC、ThinkPad ACPI 与 0xA20 硬件监控邮箱（只读）；' +
+        '仍无数值通常表示该机型固件未向系统开放风扇数据）。</div>';
+    }
+
+    if (volts.length) {
+      html += '<div class="mon-sub-sec"><span>电压</span><span class="faint">' + volts.length + ' 个</span></div>';
+      html += '<div class="mon-kv">' + volts.map(function (v) {
+        return '<div class="mon-kv-row"><span>' + esc(v.name) + '</span>' +
+          '<span>' + fmt2(v.value) + ' V</span></div>';
+      }).join('') + '</div>';
+    } else {
+      html += '<div class="mon-sub-sec"><span>电压</span></div>';
+      html += '<div class="mon-info">未读取到电压数据。</div>';
+    }
+
+    html += '<div class="mon-sub-sec"><span>全部传感器</span>' +
+      '<span class="faint">' + temps.length + ' 个</span></div>';
+    if (temps.length) {
+      html += '<div class="mon-kv">' + temps.map(function (s) {
+        var extra = '';
+        if (s.max !== null && s.max !== undefined) {
+          extra += '<div class="sub">上限 ' + fmt1(s.max) + ' ℃</div>';
+        }
+        var tag = SENSOR_TN[s.type] || s.type || '其它';
+        return '<div class="mon-kv-row">' +
+          '<span>' + esc(s.name) + '<span class="mon-sensor-tag">' + esc(tag) + '</span></span>' +
+          '<span>' + fmt1(s.value) + ' ℃' + extra + '</span></div>';
+      }).join('') + '</div>';
+    } else {
+      html += '<div class="mon-info">sensors 未返回温度' +
+        '（未安装 lm-sensors，已使用 thermal zone / hwmon 直读作为替代）。</div>';
     }
 
     box.innerHTML = html;
     $('#monTempCount').textContent = t.available ? '传感器在线' : '不可用';
+
+    /* 板块趋势图（CPU 温度 / 主板温度）
+       趋势图挂在**独立的宿主容器**里（#monTempCharts），不放在内容区 ——
+       内容区每 3 秒轮询重建一次，趋势图放里面会被反复清空，图表永远画不出来。
+       宿主已建好图表时不重复创建，只刷新数据。 */
+    var chartHost = $('#monTempCharts');
+    if (chartHost && window.FnStyleCompute) {
+      if (!chartHost.querySelector('[data-pcharts="temp"]')) {
+        chartHost.innerHTML = window.FnStyleCompute.panelChartsHtml('temp');
+        requestAnimationFrame(function () {
+          requestAnimationFrame(function () {
+            window.FnStyleCompute.initPanelCharts(chartHost, 'temp');
+          });
+        });
+      } else if (window.FnStyleCompute.refreshPanelCharts) {
+        window.FnStyleCompute.refreshPanelCharts('temp');
+      }
+    }
   }
 
   /* ---------------- 4. 能耗 ---------------- */
+
+  /* ---------------- 4. 能耗 ----------------
+     1:1 对齐 fnmonitor 的 SHEETS.power：
+       ① 大数字区（实时功耗 + 口径说明）
+       ② 功耗堆叠条（按部件分解：CPU 封装 / 内存 / 硬盘 / 主板底座 / 其他）
+       ③ 部件明细（CPU 封装 / 核心 / 非核心 / 内存 / 主板底座 / 活动硬盘）
+       ④ 用电与电费（今日 / 本月 / 开机以来）
+       ⑤ 估算参数
+     用电量由 /api/power/stats 提供（历史库 power 指标梯形积分）。 */
+
+  /* 功耗部件分解（对齐 fnmonitor 的 powerParts） */
+  function powerParts(p) {
+    var parts = [];
+    function ok(v) { return v !== null && v !== undefined && !isNaN(v); }
+    if (ok(p.package)) parts.push(['CPU 封装', Number(p.package), 'var(--spark-1)']);
+    if (ok(p.dram)) parts.push(['内存', Number(p.dram), 'var(--spark-2)']);
+    if (ok(p.disksW)) {
+      parts.push(['硬盘' + (p.disksActive ? '（' + p.disksActive + ' 块在转）' : ''),
+        Number(p.disksW), 'hatch']);
+    }
+    if (ok(p.base)) parts.push(['主板与其他', Number(p.base), 'var(--bg-hover)']);
+    var sum = parts.reduce(function (a, x) { return a + x[1]; }, 0);
+    var rest = (Number(p.total) || 0) - sum;
+    if (rest > 0.05) {
+      parts.push([p.source === 'estimated' ? 'CPU 与网卡等（估算）' : '其他',
+        rest, 'var(--border-strong)']);
+    }
+    return parts;
+  }
 
   function renderPower(d) {
     var box = $('#monPower');
@@ -1485,48 +1677,174 @@
     var html = '';
 
     if (!p.ok) {
-      html += item('整机功耗', '—',
-        '<div class="mon-item-sub">功耗数据不可用（既无 RAPL 实测，也无法按 TDP 估算）</div>');
+      html += '<div class="mon-hero">' +
+        '<div class="mon-hero-left">' +
+          '<div class="mon-hero-eyebrow">实时功耗</div>' +
+          '<div class="mon-hero-num"><b>—</b><span>W</span></div>' +
+        '</div>' +
+        '<div class="mon-hero-right"><div class="mon-hero-eyebrow">口径</div>' +
+          '<div class="mon-hero-side">不可用</div></div>' +
+      '</div>';
+      html += '<div class="mon-info">功耗数据不可用（既无 RAPL 实测，也无法按 TDP 估算）。</div>';
       $('#monPowerSource').textContent = '不可用';
       box.innerHTML = html;
       return;
     }
 
     var isRapl = p.source === 'rapl';
-    html += item(
-      '整机功耗',
-      (p.total === null || p.total === undefined ? '—' : p.total + ' W'),
-      '<div class="mon-item-sub">' +
-        (isRapl
-          ? '来源：<span>RAPL 实测</span>（package ' + (p.package === null || p.package === undefined ? '—' : p.package + ' W') +
-            (p.core !== null && p.core !== undefined ? ' · core ' + p.core + ' W' : '') +
-            (p.dram !== null && p.dram !== undefined ? ' · dram ' + p.dram + ' W' : '') + '）'
-          : '来源：<span>TDP 模型估算</span>（基准 ' + (p.tdp || '—') + ' W）') +
-        '<br>主板基线 <span>' + (p.base === null || p.base === undefined ? '—' : p.base + ' W') + '</span>' +
-        ' · 硬盘 <span>' + (p.disksW === null || p.disksW === undefined ? '—' : p.disksW + ' W') + '</span>' +
-        (p.disksActive ? '（' + p.disksActive + ' 块）' : '') +
-        (p.nics !== undefined && p.nics !== null ? ' · 网卡 ' + p.nics + ' 口' : '') +
-      '</div>'
-    );
+    var srcText = isRapl ? 'RAPL 实测 + 底座 / 硬盘估算' : '模型估算（无 RAPL）';
 
+    /* --- ① 大数字区 --- */
+    html += '<div class="mon-hero">' +
+      '<div class="mon-hero-left">' +
+        '<div class="mon-hero-eyebrow">实时功耗</div>' +
+        '<div class="mon-hero-num"><b>' +
+          (p.total === null || p.total === undefined ? '—' : fmt1(p.total)) +
+        '</b><span>W</span></div>' +
+      '</div>' +
+      '<div class="mon-hero-right">' +
+        '<div class="mon-hero-eyebrow">口径</div>' +
+        '<div class="mon-hero-side">' + srcText + '</div>' +
+      '</div>' +
+    '</div>';
+
+    /* --- ② 功耗堆叠条 + 图例 --- */
+    var parts = powerParts(p);
+    if (parts.length) {
+      html += '<div class="mon-stack">' + parts.map(function (q) {
+        var cls = q[2] === 'hatch' ? ' mono-hatch' : '';
+        var style = q[2] === 'hatch' ? '' : ' style="background:' + q[2] + '"';
+        return '<i class="' + (cls || '').trim() + '"' + style +
+          ' data-grow="' + q[1].toFixed(2) + '"></i>';
+      }).join('') + '</div>';
+      html += '<div class="mon-legend">' + parts.map(function (q) {
+        var sw = q[2] === 'hatch'
+          ? '<i class="mono-hatch"></i>'
+          : '<i style="background:' + q[2] + '"></i>';
+        return '<span>' + sw + esc(q[0]) + ' <b>' + fmt1(q[1]) + ' W</b></span>';
+      }).join('') + '</div>';
+    }
+
+    /* --- ③ 部件明细 --- */
+    function w(v) {
+      return (v === null || v === undefined || isNaN(v))
+        ? '<span class="faint">—</span>' : fmt1(v) + ' W';
+    }
+    var detail = [];
     if (isRapl) {
-      // RAPL 各域明细
-      var rows = [];
-      [['package', '封装 (Package)'], ['core', '核心 (Core)'], ['uncore', '非核心 (Uncore)'], ['dram', '内存 (DRAM)']]
-        .forEach(function (pair) {
-          var v = p[pair[0]];
-          if (v === null || v === undefined) return;
-          rows.push('<div class="mon-row"><span class="mon-row-name">' + pair[1] +
-            '</span><span class="mon-row-val">' + v + ' W</span></div>');
+      detail.push(['CPU 封装 Package', w(p.package)]);
+      detail.push(['　核心 Core', w(p.core)]);
+      detail.push(['　非核心 Uncore', w(p.uncore)]);
+      detail.push(['内存 DRAM', w(p.dram)]);
+    } else {
+      detail.push(['CPU 封装 Package', w(p.package)]);
+      detail.push(['　核心 Core', w(p.core)]);
+      detail.push(['　非核心 Uncore', w(p.uncore)]);
+      detail.push(['内存 DRAM', w(p.dram)]);
+    }
+    detail.push(['主板 / 其他底座', w(p.base)]);
+    detail.push(['活动硬盘' + (p.disksActive ? '（' + p.disksActive + ' 块）' : ''), w(p.disksW)]);
+    if (p.nics !== null && p.nics !== undefined) {
+      detail.push(['网卡', p.nics + ' 口 · 约 ' + fmt1(p.nics * 5) + ' W']);
+    }
+    html += '<div class="mon-sub-sec"><span>部件明细</span>' +
+      '<span class="faint">' + (isRapl ? 'RAPL 实测' : '模型估算') + '</span></div>';
+    html += '<div class="mon-kv">' + detail.map(function (kv) {
+      return '<div class="mon-kv-row"><span>' + esc(kv[0]) + '</span><span>' + kv[1] + '</span></div>';
+    }).join('') + '</div>';
+
+    /* --- ④ 用电与电费（异步加载） --- */
+    html += '<div class="mon-sub-sec"><span>用电与电费</span>' +
+      '<span class="faint" data-pwr-rate></span></div>';
+    html += '<div class="mon-kv" data-pwr-energy><div class="mon-kv-row">' +
+      '<span>今日</span><span>统计加载中…</span></div></div>';
+
+    /* --- ⑤ 估算参数 --- */
+    var ep = p.estimation_params || {};
+    if (ep.tdp_w !== undefined || ep.disk_typical_w !== undefined) {
+      html += '<div class="mon-sub-sec"><span>估算参数</span></div>';
+      html += '<div class="mon-kv">' +
+        '<div class="mon-kv-row"><span>CPU TDP（无 RAPL 时）</span><span>' +
+          (ep.tdp_w !== undefined ? ep.tdp_w + ' W' : '—') + '</span></div>' +
+        '<div class="mon-kv-row"><span>单盘典型功耗</span><span>' +
+          (ep.disk_typical_w !== undefined ? ep.disk_typical_w + ' W' : '—') + '</span></div>' +
+        '<div class="mon-kv-row"><span>网卡固定功耗</span><span>' +
+          (ep.nic_fixed_w !== undefined ? ep.nic_fixed_w + ' W' : '—') + '</span></div>' +
+        '<div class="mon-kv-row"><span>主板 / 其他底座</span><span>' +
+          (ep.base_w !== undefined ? ep.base_w + ' W' : '—') + '</span></div>' +
+      '</div>';
+    }
+
+    /* --- 说明条 --- */
+    html += '<div class="mon-info">有 RAPL 时它只测得 CPU 封装（与内存）功耗，' +
+      '整机值再叠加主板底座与活动硬盘的典型功耗；无 RAPL 时按 TDP × CPU 占用估算。' +
+      '休眠硬盘不计入。</div>';
+
+    box.innerHTML = html;
+
+    /* 板块趋势图（整机功耗 / 累计用电）
+       挂在**独立的宿主容器**里（#monPowerCharts），理由同温度板块：
+       内容区每 3 秒轮询重建一次，趋势图放里面会被反复清空。 */
+    var pchartHost = $('#monPowerCharts');
+    if (pchartHost && window.FnStyleCompute) {
+      if (!pchartHost.querySelector('[data-pcharts="power"]')) {
+        pchartHost.innerHTML = window.FnStyleCompute.panelChartsHtml('power');
+        requestAnimationFrame(function () {
+          requestAnimationFrame(function () {
+            window.FnStyleCompute.initPanelCharts(pchartHost, 'power');
+          });
         });
-      if (rows.length) {
-        html += item('RAPL 功耗明细', '—',
-          '<div class="mon-list">' + rows.join('') + '</div>');
+      } else if (window.FnStyleCompute.refreshPanelCharts) {
+        window.FnStyleCompute.refreshPanelCharts('power');
       }
     }
 
-    box.innerHTML = html;
+    /* 堆叠条按部件占比分配宽度（flex-grow 用总功率归一） */
+    var totalW = parts.reduce(function (a, x) { return a + x[1]; }, 0) || 1;
+    Array.prototype.forEach.call(box.querySelectorAll('.mon-stack > i'), function (el) {
+      var g = parseFloat(el.getAttribute('data-grow')) || 0;
+      el.style.flexGrow = String((g / totalW) * 100);
+    });
+
     $('#monPowerSource').textContent = isRapl ? 'RAPL 实测' : 'TDP 估算';
+
+    /* 异步加载用电量与电费 */
+    loadPowerEnergy(box);
+  }
+
+  /* 拉取用电量与电费统计并回填到能耗板块 */
+  function loadPowerEnergy(box) {
+    if (!box || !window.fetch) return;
+    fetch('/api/power/stats').then(function (r) {
+      return r.ok ? r.json() : null;
+    }).then(function (j) {
+      if (!j || !j.success) return;
+      var rateEl = box.querySelector('[data-pwr-rate]');
+      if (rateEl) {
+        rateEl.textContent = '电价 ' + (j.rate_yuan_per_kwh || 0.6) + ' 元/kWh';
+      }
+      var host = box.querySelector('[data-pwr-energy]');
+      if (!host) return;
+      host.innerHTML =
+        '<div class="mon-kv-row"><span>今日</span><span>' +
+          fmtKwh(j.today_kwh) + ' kWh · ' + fmtYuan(j.today_yuan) + ' 元</span></div>' +
+        '<div class="mon-kv-row"><span>本月</span><span>' +
+          fmtKwh(j.month_kwh) + ' kWh · ' + fmtYuan(j.month_yuan) + ' 元</span></div>' +
+        '<div class="mon-kv-row"><span>开机以来（按当前功率估）</span><span>' +
+          fmtKwh(j.boot_kwh) + ' kWh</span></div>';
+    }).catch(function () { /* 静默失败：保留「统计加载中…」 */ });
+  }
+
+  function fmtKwh(v) {
+    var n = Number(v);
+    if (isNaN(n)) return '—';
+    return n >= 10 ? n.toFixed(2) : n >= 0.1 ? n.toFixed(3) : n.toFixed(4);
+  }
+
+  function fmtYuan(v) {
+    var n = Number(v);
+    if (isNaN(n)) return '—';
+    return n.toFixed(2);
   }
 
   /* ---------------- 总渲染 ---------------- */

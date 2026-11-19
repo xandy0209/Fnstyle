@@ -431,6 +431,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_monitor()
         if p == "/api/monitor/history":
             return self._handle_monitor_history()
+        if p == "/api/power/stats":
+            return self._handle_power_stats()
         if p == "/api/storage/scan":
             return self._handle_storage_scan()
         if p == "/api/storage/history":
@@ -545,7 +547,7 @@ class Handler(BaseHTTPRequestHandler):
                                    "error": "缺少 metric 或 metrics 参数"})
             return True
         # 只放行已知指标，避免把 history 表当成任意查询入口
-        allowed = ("cpu", "load1", "mem")
+        allowed = ("cpu", "load1", "mem", "temp", "temp_mb", "power")
         names = [n for n in names if n in allowed]
         if not names:
             self._send_json(400, {"success": False, "error": "不支持的指标名"})
@@ -601,9 +603,54 @@ class Handler(BaseHTTPRequestHandler):
                 return load[0] if load else None
             if metric == "mem":
                 return (snap.get("mem") or {}).get("percent")
+            if metric == "temp":
+                return (snap.get("temp") or {}).get("cpuTemp")
+            if metric == "temp_mb":
+                return (snap.get("temp") or {}).get("mbTemp")
+            if metric == "power":
+                pw = snap.get("power") or {}
+                return pw.get("total") if pw.get("ok") else None
         except Exception:
             pass
         return None
+
+    def _handle_power_stats(self):
+        """用电量与电费统计：GET /api/power/stats
+
+        以历史库里的 power 指标（整机瓦数）梯形积分成 kWh，
+        口径与 fnmonitor 的能耗统计一致。
+        """
+        try:
+            import history_collect
+        except Exception:
+            history_collect = None
+
+        snap = _MONITOR.snapshot() if _MONITOR is not None else None
+        uptime = (snap or {}).get("uptimeSeconds")
+
+        rate = 0.6
+        if snap:
+            power = snap.get("power") or {}
+            params = power.get("estimation_params") or {}
+            # 电价暂用固定默认值（与 fnmonitor 的 power_rate_yuan 默认一致）
+            rate = float(params.get("rate_yuan_per_kwh") or 0.6)
+
+        if history_collect is None:
+            self._send_json(200, {
+                "success": False,
+                "error": "历史库模块不可用",
+            })
+            return True
+
+        try:
+            stats = history_collect.energy_stats(rate, uptime)
+        except Exception as e:
+            self._send_json(500, {"success": False, "error": str(e)})
+            return True
+
+        stats["success"] = True
+        self._send_json(200, stats)
+        return True
 
     def _handle_update_start(self):
         body = self._read_body()

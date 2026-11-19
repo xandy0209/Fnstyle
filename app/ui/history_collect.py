@@ -82,15 +82,18 @@ _STORE = None
 
 
 def write_history(snapshot):
-    """把一帧监控快照里的处理器 / 内存指标写进历史库。
+    """把一帧监控快照里的处理器 / 内存 / 温度 / 功耗指标写进历史库。
 
     调用方传的是 monitor_collect 的完整快照（dict）。只有指标可用时
     才写 —— 没有有效值写进去只会污染曲线。
 
-    写的指标（与 fnmonitor 的 SHEETS.cpu / SHEETS.mem 对应）：
-      cpu    CPU 使用率（处理器抽屉趋势图）
-      load1  系统负载 1 分钟（处理器抽屉趋势图）
-      mem    内存使用率（内存抽屉趋势图）
+    写的指标（与 fnmonitor 的 SHEETS 对应）：
+      cpu     CPU 使用率（处理器抽屉趋势图）
+      load1   系统负载 1 分钟（处理器抽屉趋势图）
+      mem     内存使用率（内存抽屉趋势图）
+      temp    CPU 温度（温度与散热板块趋势图）
+      temp_mb 主板温度（温度与散热板块趋势图）
+      power   整机功耗（能耗板块趋势图）
 
     返回 True 表示本次确实写了。
     """
@@ -125,6 +128,30 @@ def write_history(snapshot):
         except Exception:
             pass
 
+    # CPU / 主板温度 —— 温度与散热板块的趋势图数据源
+    temp = snapshot.get("temp") or {}
+    cpu_temp = temp.get("cpuTemp")
+    if cpu_temp is not None:
+        try:
+            rows.append((now, "temp", round(float(cpu_temp), 2)))
+        except Exception:
+            pass
+    mb_temp = temp.get("mbTemp")
+    if mb_temp is not None:
+        try:
+            rows.append((now, "temp_mb", round(float(mb_temp), 2)))
+        except Exception:
+            pass
+
+    # 整机功耗 —— 能耗板块的趋势图数据源
+    power = snapshot.get("power") or {}
+    p_total = power.get("total")
+    if p_total is not None and power.get("ok"):
+        try:
+            rows.append((now, "power", round(float(p_total), 2)))
+        except Exception:
+            pass
+
     if not rows:
         return False
     return store.write(rows)
@@ -145,6 +172,72 @@ def query_history(metric, range_="1h"):
         return []
     return [[float(t), round(float(v), 2) if isinstance(v, float) else v]
             for t, v in rows]
+
+
+def energy_stats(rate_yuan_per_kwh=0.6, uptime_seconds=None):
+    """用电量与电费统计（1:1 对齐 fnmonitor 的能耗统计口径）。
+
+    口径：以历史库里的 power 指标（整机瓦数）按时间分段梯形积分成 kWh。
+      - 今日：当天 00:00 起的累计
+      - 本月：当月 1 日起的累计
+      - 开机以来：按当前功率 × 开机时长估算
+
+    与 fnmonitor 一致：功率历史每 60 秒一条，积分时按每段的实际时长
+    折算成 kWh（瓦 × 秒 / 3.6e6）。
+
+    返回：{"today_kwh", "month_kwh", "boot_kwh",
+           "today_yuan", "month_yuan", "rate_yuan_per_kwh"}
+    """
+    rate = float(rate_yuan_per_kwh or 0.6)
+    result = {
+        "today_kwh": 0.0, "month_kwh": 0.0, "boot_kwh": 0.0,
+        "today_yuan": 0.0, "month_yuan": 0.0,
+        "rate_yuan_per_kwh": rate,
+        "basis": "history",
+    }
+
+    now = time.time()
+    lt = time.localtime(now)
+    today_start = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1))
+    month_start = time.mktime((lt.tm_year, lt.tm_mon, 1, 0, 0, 0, 0, 0, -1))
+
+    # 取最长保留期的功率历史（7 天足够覆盖本月统计）
+    pts = query_history("power", "7d")
+    if pts:
+        today_kwh = 0.0
+        month_kwh = 0.0
+        for i in range(1, len(pts)):
+            t0, v0 = pts[i - 1]
+            t1, v1 = pts[i]
+            dt = t1 - t0
+            if dt <= 0:
+                continue
+            # 梯形积分：平均功率 × 时长
+            w = (float(v0) + float(v1)) / 2.0
+            kwh = w * dt / 3.6e6
+            if t0 >= today_start:
+                today_kwh += kwh
+            if t0 >= month_start:
+                month_kwh += kwh
+        result["today_kwh"] = round(today_kwh, 4)
+        result["month_kwh"] = round(month_kwh, 4)
+        result["today_yuan"] = round(today_kwh * rate, 2)
+        result["month_yuan"] = round(month_kwh * rate, 2)
+
+    # 开机累计：按当前功率 × 开机时长估算
+    if uptime_seconds and uptime_seconds > 0:
+        store = _store()
+        cur_w = 0.0
+        if store is not None:
+            try:
+                rows = store.query("power", 600)
+                if rows:
+                    cur_w = float(rows[-1][1]) or 0.0
+            except Exception:
+                cur_w = 0.0
+        result["boot_kwh"] = round(cur_w * uptime_seconds / 3.6e6, 4)
+
+    return result
 
 
 def cleanup_history(retention_days=None):

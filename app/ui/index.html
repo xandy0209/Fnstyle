@@ -35,7 +35,7 @@
     </div>
     <!-- 顶栏右侧：当前版本号 + 检查更新入口 + 新页面打开 -->
     <div class="topbar-right" id="topbarUpdate">
-      <span class="ver-pill" id="verPill" title="当前版本">v1.1.40</span>
+      <span class="ver-pill" id="verPill" title="当前版本">v1.1.41</span>
       <span class="ub-status" id="tbUpdateStatus"></span>
       <button class="btn sm icon-btn" id="tbCheckUpdate" type="button" title="检查更新" aria-label="检查更新">
         <svg class="upd-ico" viewBox="0 0 24 24" aria-hidden="true">
@@ -184,6 +184,9 @@
         <div class="mon-grid mon-grid-2" id="monTemp">
           <div class="loading"><span class="spin"></span> 读取传感器…</div>
         </div>
+        <!-- 趋势图容器独立于内容区：内容区每 3 秒重建一次，
+             趋势图若放在里面会被反复清空，图表永远画不出来 -->
+        <div class="mon-panel-chart-host" id="monTempCharts"></div>
       </div>
     </div>
 
@@ -198,6 +201,8 @@
         <div class="mon-grid mon-grid-2" id="monPower">
           <div class="loading"><span class="spin"></span> 读取功耗…</div>
         </div>
+        <!-- 趋势图容器独立于内容区（理由同上） -->
+        <div class="mon-panel-chart-host" id="monPowerCharts"></div>
       </div>
     </div>
   </div>

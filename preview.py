@@ -250,17 +250,28 @@ def mock_monitor():
             "available": True,
             "source": "thermal+hwmon",
             "cpuTemp": 47.0,
+            "mbTemp": 33.0,
             "temps": [
-                {"name": "x86_pkg_temp", "chip": "thermal", "value": 47.0, "max": None, "crit": 100.0},
-                {"name": "acpitz", "chip": "thermal", "value": 39.0, "max": None, "crit": None},
-                {"name": "coretemp Package id 0", "chip": "coretemp", "value": 47.0, "max": 80.0, "crit": 100.0},
-                {"name": "nvme composite", "chip": "nvme", "value": 38.0, "max": 70.0, "crit": 80.0},
-                {"name": "motherboard", "chip": "nct6798", "value": 33.0, "max": None, "crit": None},
+                {"name": "x86_pkg_temp", "chip": "thermal", "value": 47.0, "max": None, "crit": None, "type": "cpu"},
+                {"name": "acpitz", "chip": "thermal", "value": 39.0, "max": None, "crit": None, "type": "acpi"},
+                {"name": "coretemp Package id 0", "chip": "coretemp", "value": 47.0, "max": 80.0, "crit": 100.0, "type": "cpu"},
+                {"name": "coretemp Core 0", "chip": "coretemp", "value": 45.0, "max": 80.0, "crit": 100.0, "type": "cpu"},
+                {"name": "coretemp Core 3", "chip": "coretemp", "value": 43.0, "max": 80.0, "crit": 100.0, "type": "cpu"},
+                {"name": "nvme composite", "chip": "nvme", "value": 38.0, "max": 70.0, "crit": 80.0, "type": "disk"},
+                {"name": "motherboard", "chip": "nct6798", "value": 33.0, "max": None, "crit": None, "type": "board"},
+                {"name": "pch", "chip": "nct6798", "value": 41.0, "max": None, "crit": None, "type": "pch"},
+                {"name": "gpu", "chip": "amdgpu", "value": 52.0, "max": None, "crit": None, "type": "gpu"},
             ],
             "fans": [
                 {"name": "nct6798 fan1", "rpm": 1180},
                 {"name": "nct6798 fan2", "rpm": 962},
                 {"name": "cpu fan", "rpm": 1420},
+            ],
+            "volts": [
+                {"name": "Vcore", "value": 1.28},
+                {"name": "+3.3V", "value": 3.31},
+                {"name": "+5V", "value": 5.02},
+                {"name": "+12V", "value": 12.06},
             ],
             "disks": [
                 {"name": "sda", "model": "WDC WD40EFZX-68AWUN0", "temp": 36.0,
@@ -306,7 +317,16 @@ def mock_monitor():
             "base": 8.0,
             "disksW": 13.0,
             "disksActive": 3,
+            "nics": 1,
+            "estimation_params": {
+                "tdp_w": 65.0,
+                "disk_typical_w": 8.0,
+                "nic_fixed_w": 5.0,
+                "base_w": 8.0,
+                "rate_yuan_per_kwh": 0.6,
+            },
         },
+        "uptimeSeconds": 1036440,
     }
 
 def mock_monitor_empty():
@@ -318,9 +338,10 @@ def mock_monitor_empty():
         "mem": {"available": False},
         "gpu": {"gpus": [], "available": False},
         "temp": {"available": False, "source": "none", "cpuTemp": None,
-                 "temps": [], "fans": [], "disks": []},
+                 "mbTemp": None, "temps": [], "fans": [], "volts": [], "disks": []},
         "storage": {"available": False, "volumes": [], "raid": [], "disks": []},
         "power": {"ok": False, "source": "unknown"},
+        "uptimeSeconds": 0,
     }
 
 
@@ -368,12 +389,45 @@ def mock_monitor_history(range_="1h", metrics="cpu,load1"):
             elif name == "load1":
                 v = 1.1 + 0.9 * math.sin((k / max(1, count - 1)) * 4.0 + i)
                 v = max(0.0, v)
+            elif name == "temp":
+                v = 46 + 6 * math.sin((k / max(1, count - 1)) * 5.0 + i)
+                v = max(28.0, min(82.0, v))
+            elif name == "temp_mb":
+                v = 33 + 4 * math.sin((k / max(1, count - 1)) * 3.2 + i)
+                v = max(26.0, min(58.0, v))
+            elif name == "power":
+                v = 62 + 18 * math.sin((k / max(1, count - 1)) * 4.4 + i)
+                v = max(20.0, min(140.0, v))
             else:
                 v = 50.0
             pts.append([round(ts, 2), round(v, 2)])
         series[name] = pts
 
     return {"success": True, "range": range_, "series": series}
+
+
+def mock_power_stats():
+    """用电量与电费统计（对齐 fnmonitor 的能耗统计口径）。
+
+    真机上由 history_collect.energy_stats() 从 SQLite 的 power 指标梯形积分；
+    本机预览按同样的口径造一份假数据，用于验证能耗板块的用电与电费展示。
+    """
+    rate = 0.6
+    now = time.time()
+    boot_kwh = 68.4 * 1036440 / 3.6e6
+    today_kwh = 1.2847
+    month_kwh = 21.6390
+    return {
+        "success": True,
+        "today_kwh": today_kwh,
+        "month_kwh": month_kwh,
+        "boot_kwh": round(boot_kwh, 4),
+        "today_yuan": round(today_kwh * rate, 2),
+        "month_yuan": round(month_kwh * rate, 2),
+        "rate_yuan_per_kwh": rate,
+        "basis": "history",
+        "ts": int(now),
+    }
 
 
 # --------------------------------------------------------------------------
@@ -507,6 +561,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(mock_monitor_history(
                 (query.get("range", ["1h"])[0] or "1h"),
                 (query.get("metrics", ["cpu,load1"])[0] or "cpu,load1")))
+
+        if name == "power/stats":
+            # 用电量与电费统计（能耗板块用）
+            return self.send_json(mock_power_stats())
 
 
         if name == "apply":
