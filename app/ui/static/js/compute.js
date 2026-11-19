@@ -567,18 +567,48 @@
     }
   ];
 
-  function cpuChartsHtml() {
-    var cards = CPU_CHARTS.map(function (c, i) {
+  /* 内存抽屉的趋势图（1:1 对齐 fnmonitor 的 SHEETS.mem）
+     fnmonitor 的内存抽屉有一张「内存使用率」图，指标名就是 mem。 */
+  var MEM_CHARTS = [
+    {
+      key: 'mem',
+      title: '内存使用率',
+      yMin: 0, yMax: 100,
+      yTick: function (v) { return v + '%'; },
+      series: [{
+        m: 'mem', label: '内存', color: 'var(--spark-2)',
+        fmt: function (v) { return [fmtInt(v), '%']; }
+      }]
+    }
+  ];
+
+  /* 各抽屉的图表组：key = 抽屉种类，defs = 图表定义数组 */
+  var CHART_GROUPS = {
+    cpu: { defs: CPU_CHARTS, metrics: 'cpu,load1' },
+    mem: { defs: MEM_CHARTS, metrics: 'mem' }
+  };
+
+  /* 图表组的 HTML。
+     ⚠️ 范围切换段控件放在**最后一张图表卡片的底部**（卡片内、画布下方），
+        而不是像 fnmonitor 那样浮在图表组上方 —— 需求指定的位置。
+        多张图时，段控件只出现一次，挂在最后一张卡片下。 */
+  function chartsHtml(groupKey) {
+    var grp = CHART_GROUPS[groupKey] || CHART_GROUPS.cpu;
+    var defs = grp.defs;
+    var last = defs.length - 1;
+    var cards = defs.map(function (c, i) {
+      var seg = (i === last)
+        ? '<div class="mon-cmp-chart-seg" data-cseg></div>' : '';
       return '<div class="mon-cmp-chart-card">' +
         '<div class="mon-cmp-chart-head">' +
         '<div class="mon-cmp-chart-title">' + esc(c.title) + '</div>' +
         '<div class="mon-cmp-chart-legend" data-cleg="' + i + '"></div>' +
         '</div>' +
         '<div data-cch="' + i + '"></div>' +
+        seg +
         '</div>';
     }).join('');
-    return '<div class="mon-cmp-charts" data-charts>' +
-      '<div class="mon-cmp-chart-seg" data-cseg></div>' + cards + '</div>';
+    return '<div class="mon-cmp-charts" data-charts="' + groupKey + '">' + cards + '</div>';
   }
 
   /* 图表实例管理：抽屉每次打开重建，关闭时销毁 */
@@ -596,8 +626,12 @@
     var wrap = body.querySelector('[data-charts]');
     if (!wrap || !window.FnStyleChart) return;
 
+    var groupKey = wrap.getAttribute('data-charts') || 'cpu';
+    var grp = CHART_GROUPS[groupKey] || CHART_GROUPS.cpu;
+    var defs = grp.defs;
+
     var segHost = wrap.querySelector('[data-cseg]');
-    var charts = CPU_CHARTS.map(function (d, i) {
+    var charts = defs.map(function (d, i) {
       var host = body.querySelector('[data-cch="' + i + '"]');
       var legend = body.querySelector('[data-cleg="' + i + '"]');
       if (!host) return null;
@@ -617,7 +651,10 @@
     }).filter(Boolean);
 
     var range = '1h';
-    chartState = { charts: charts, range: range, res: null, body: body };
+    chartState = {
+      charts: charts, range: range, res: null, body: body,
+      group: groupKey, defs: defs, metrics: grp.metrics
+    };
 
     if (segHost) {
       segHost.appendChild(window.FnStyleChart.makeRangeSeg(range, function (r) {
@@ -632,7 +669,7 @@
     if (!chartState) return;
     var st = chartState;
     st.range = range;
-    fetchHistory('cpu,load1', range).then(function (res) {
+    fetchHistory(st.metrics, range).then(function (res) {
       /* 期间用户可能又切了范围 —— 丢弃过期响应 */
       if (!chartState || chartState !== st || st.range !== range) return;
       st.res = res;
@@ -644,7 +681,7 @@
     if (!chartState || !chartState.res) return;
     var res = chartState.res;
     var span = window.FnStyleChart.RANGE_SEC[chartState.range] || 0;
-    CPU_CHARTS.forEach(function (d, i) {
+    chartState.defs.forEach(function (d, i) {
       var c = chartState.charts[i];
       if (!c) return;
       var pts = (res.series && res.series[d.key]) || [];
@@ -750,11 +787,12 @@
       var pc = (d.cpu && d.cpu.coresPercent) || [];
       var host = body.querySelector('[data-dcores]');
       if (host && pc.length) setDetailCores(host, pc);
-      /* 处理器抽屉的两张趋势图（等抽屉滑入后才有实际宽度） */
-      requestAnimationFrame(function () {
-        requestAnimationFrame(function () { initCharts(body); });
-      });
     }
+    /* 抽屉里的趋势图（处理器 2 张 + 内存 1 张）
+       等抽屉滑入后才有实际宽度，所以延后两帧再初始化。 */
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () { initCharts(body); });
+    });
   }
 
   function closeCompute() {
@@ -863,7 +901,7 @@
       '<div class="right"><span class="mon-cmp-eyebrow">负载 1 / 5 / 15</span>' +
       '<b class="tnum">' + esc(la) + '</b></div></div>' +
       secHtml('每核使用率') + cores +
-      cpuChartsHtml() +
+      chartsHtml('cpu') +
       secHtml('占用最高的进程', '每 15 秒刷新') +
       '<div class="mon-kv" data-procs>' +
       procRowsHtml((d && d.procs) || [], 'cpu') + '</div>' +
@@ -940,6 +978,7 @@
       '<div class="mon-cmp-card" style="cursor:default">' + stack + '</div>' +
       '<p class="mon-cmp-note">“已用”为扣除可回收缓存后的实际占用；' +
       '“缓存”是 Linux 用空闲内存加速读盘的部分，应用需要时会立即让出。</p>' +
+      chartsHtml('mem') +
       secHtml('内存占用较多的进程', '取自 CPU 前 20 的进程') +
       '<div class="mon-kv">' + procRowsHtml(memProcTop(d), 'mem') + '</div>' +
       secHtml('交换分区') + swapHtml +

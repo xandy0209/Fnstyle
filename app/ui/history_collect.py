@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # ---------------------------------------------------------------------------
-# FnStyle —— 处理器历史指标写入与查询（趋势图数据源）
+# FnStyle —— 处理器 / 内存历史指标写入与查询（趋势图数据源）
 #
-# 处理器详情抽屉里的「CPU 使用率」「系统负载（1 分钟）」两张趋势图需要
-# 一段时间内的连续采样值。fnmonitor 用 SQLite 的 metrics 表实现：
-# 每 60 秒写一条，保留 7 天，前端按范围（10m/1h/6h/24h/7d/all）查询。
+# 处理器详情抽屉里的「CPU 使用率」「系统负载（1 分钟）」两张趋势图，
+# 以及内存详情抽屉里的「内存使用率」趋势图，都需要一段时间内的连续采样值。
+# fnmonitor 用 SQLite 的 metrics 表实现：每 60 秒写一条，保留 7 天，
+# 前端按范围（10m/1h/6h/24h/7d/all）查询。
 #
 # 本模块与 fnmonitor 的差异：
 #   - 复用既有的 storage.db，不新建数据库文件（同一块盘、同一份清理策略）；
-#   - 只写处理器抽屉真正需要的两个指标：cpu 与 load1。
+#   - 只写抽屉真正需要的三个指标：cpu、load1、mem。
 #
 # 致谢与许可：
 #   表结构与读写口径参考了开源项目 fnmonitor
@@ -81,10 +82,15 @@ _STORE = None
 
 
 def write_history(snapshot):
-    """把一帧监控快照里的处理器指标写进历史库。
+    """把一帧监控快照里的处理器 / 内存指标写进历史库。
 
-    调用方传的是 monitor_collect 的完整快照（dict）。只有 cpu 指标可用时
+    调用方传的是 monitor_collect 的完整快照（dict）。只有指标可用时
     才写 —— 没有有效值写进去只会污染曲线。
+
+    写的指标（与 fnmonitor 的 SHEETS.cpu / SHEETS.mem 对应）：
+      cpu    CPU 使用率（处理器抽屉趋势图）
+      load1  系统负载 1 分钟（处理器抽屉趋势图）
+      mem    内存使用率（内存抽屉趋势图）
 
     返回 True 表示本次确实写了。
     """
@@ -107,6 +113,15 @@ def write_history(snapshot):
     if loadavg:
         try:
             rows.append((now, "load1", round(float(loadavg[0]), 2)))
+        except Exception:
+            pass
+
+    # 内存使用率 —— 内存抽屉的「内存使用率」趋势图数据源
+    mem = snapshot.get("mem") or {}
+    mem_percent = mem.get("percent")
+    if mem_percent is not None:
+        try:
+            rows.append((now, "mem", round(float(mem_percent), 2)))
         except Exception:
             pass
 

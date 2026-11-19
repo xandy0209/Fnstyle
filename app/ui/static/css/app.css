@@ -1770,7 +1770,7 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: .85rem;
 }
-.mon-grid-3 { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+.mon-grid-3 { grid-template-columns: repeat(3, 1fr); }
 .mon-grid-2 { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
 .mon-grid > .loading { grid-column: 1 / -1; }
 
@@ -3399,7 +3399,7 @@ html.mon-scroll-lock body {
 
 /* ---- 处理器抽屉的趋势图（移植 fnmonitor 的 LineChart 样式） ----
    结构与 fnmonitor 的 .chart-card / .chart 一致：
-     .mon-cmp-chart-card   图表卡片（标题 + 图例 + 画布）
+     .mon-cmp-chart-card   图表卡片（标题 + 图例 + 画布 + 可选底部段控件）
      .mon-cmp-chart-seg    范围切换段控件（10分钟/1小时/…）
      .mon-chart            画布容器（相对定位，供悬浮提示定位）
    配色沿用本项目的 --spark-1 / --warning / --danger 变量，
@@ -3409,10 +3409,14 @@ html.mon-scroll-lock body {
   gap: .85rem;
   margin-top: .35rem;
 }
+/* 范围切换段控件：放在**最后一张图表卡片内部、画布下方**。
+   用一条细分隔线与图表区隔开，视觉上属于卡片的一部分。 */
 .mon-cmp-chart-seg {
   display: flex;
   justify-content: flex-start;
-  margin-bottom: .1rem;
+  margin-top: .7rem;
+  padding-top: .6rem;
+  border-top: 1px solid var(--border);
 }
 .mon-cmp-chart-card {
   background: var(--bg-card);
@@ -3420,6 +3424,8 @@ html.mon-scroll-lock body {
   border-radius: var(--radius);
   padding: .85rem 1rem .6rem;
 }
+/* 带段控件的卡片底部留白稍大一点 */
+.mon-cmp-chart-card:has(.mon-cmp-chart-seg) { padding-bottom: .75rem; }
 .mon-cmp-chart-head {
   display: flex;
   align-items: flex-start;

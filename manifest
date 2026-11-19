@@ -1,5 +1,5 @@
 appname               = fnstyle
-version               = 1.1.37
+version               = 1.1.38
 display_name          = FnStyle
 desc                  = 集中管理飞牛个性化设置与丰富主题库：网站标题、登录框、LOGO、壁纸、毛玻璃、任务栏等独立配置，内置多源主题库，支持一键应用到 fnOS 系统，卸载后自动还原系统默认样式。
 platform              = all
@@ -15,5 +15,5 @@ desktop_applaunchname = fnstyle.main
 service_port          = 9910
 checkport             = false
 ctl_stop              = true
-changelog             = 1.1.37：CPU 使用率采样窗口与 fnmonitor 对齐，修复数值剧烈跳变 —— ① 核实并定位根因：FnStyle 原实现的 CPU 使用率采样窗口仅为 0.25 秒，而 fnmonitor 在同一台 NAS 上的实测配置为 10 秒（/vol1/@appdata/fnmonitor/config.json 的 interval=10），两者口径不一致导致显示数值无法对齐；② 量化机理：/proc/stat 的时间片精度为 1 jiffy = 10ms（USER_HZ=100），采样窗口内每核能分到的 jiffy 数量决定了量化分辨率 —— 0.25 秒窗口每核仅约 25 个 jiffy，单个 jiffy 即占 4%，读数在 2%~64% 间剧烈跳变并出现 0% / 100% 极端值；3 秒窗口约 300 个 jiffy（单 jiffy 占 0.33%）；10 秒窗口约 1000 个 jiffy（单 jiffy 占 0.1%），数值稳定；③ 改造实现：CPU 采集从 3 秒主循环中拆出，改由独立的 10 秒采样线程承担（两次采样差分，采样点间隔即窗口长度），其余指标（内存 / 温度 / 硬盘 / GPU）仍保持 3 秒刷新节奏不变，主循环改为从 CPU 缓存取数；④ 顺带修复一处真实缺陷：原逻辑在差分失败（窗口内无 jiffy 流逝）时会把缓存覆盖成不可用状态，导致处理器卡片整块数据消失；现改为仅在拿到有效百分比时才更新缓存，抖动时保留上一轮有效值；⑤ CPU 拓扑（物理核 / 逻辑线程 / 插槽）改为进程级缓存，避免每轮采集 fork 一次 lscpu；⑥ 新增 verify/verify_cpu_sample_window.py（31 项断言）与 verify/fixtures/cpu_stat_samples.json（NAS 真机 12 组 /proc/stat 样本夹具），离线复算验证 10 秒窗口波动小于 0.25 秒窗口、逐核读数更集中、且不出现 0% / 100% 极端跳变；⑦ 实测对照（同一台 NAS、同一份 /proc/stat、fnmonitor 原始算法离线复算）：0.25 秒窗口读数序列极差 62.0 个百分点，10 秒窗口极差 38.9 个百分点，且 0.25 秒窗口可复现出与旧版 FnStyle 完全一致的跳变形态。
-checksum              = 209df7b0e743bd9bd092762ba81153c0
+changelog             = 1.1.38：处理器/内存/显卡三卡片铺满整行，趋势图范围控件下移，内存抽屉补齐内存使用率趋势图 —— ① 修复三卡片右侧留白：原 .mon-grid-3 用 repeat(auto-fill, minmax(240px, 1fr))，在容器宽度足够放 4 列时会造出第 4 个空列，导致 3 张卡片只占 3/4 宽度、右侧空出约 278px；现改为固定 repeat(3, 1fr)，三张卡片严格等宽铺满整行（实测 1600 / 1440 / 1280 / 1100 视口下右侧空白均为 0px，900px 断点仍正确降级为单列铺满）；② 处理器抽屉的时间范围切换控件（10分钟/1小时/6小时/24小时/7天/全部）从图表组上方移到趋势图卡片内部底部、画布正下方，并用一条细分隔线与图表区分隔，视觉上归属卡片；多张图时段控件只出现一次，挂在最后一张卡片下；③ 内存抽屉补齐「内存使用率」趋势图（1:1 对齐 fnmonitor 的 SHEETS.mem）：新增 MEM_CHARTS 图表定义（0~100%、内存色 --spark-2），并把原处理器专用的 cpuChartsHtml() 重构为通用的 chartsHtml(groupKey) 图表组机制，按 CHART_GROUPS 登记表分别取用图表定义与指标列表；内存抽屉图表位置与 fnmonitor 一致（内存构成堆叠条与说明之后、进程列表之前）；④ 后端历史写入补上 mem 指标（此前只写 cpu 与 load1，内存趋势图无数据源），接口白名单与实时值兜底原本已支持 mem；⑤ 抽屉图表初始化不再局限于处理器，内存抽屉打开时同样初始化图表实例；⑥ verify/verify_monitor_render.js 新增 v1.1.38 断言块（19 项），覆盖三列固定布局、段控件下移与内存趋势图全链路。
+checksum              = 7a4d938aaa39415fa60e9aa1627c3850

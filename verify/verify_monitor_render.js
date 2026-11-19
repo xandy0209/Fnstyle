@@ -1651,7 +1651,7 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     ['monitor.js 暴露 lockScroll', /lockScroll: lockPageScroll/.test(mon)],
     ['monitor.js 暴露 unlockScroll', /unlockScroll: unlockPageScroll/.test(mon)],
     ['renderCore 委托给 FnStyleCompute', /window\.FnStyleCompute && window\.FnStyleCompute\.render/],
-    ['版本号已 bump 到 1.1.37', /v1\.1\.37/.test(html)],
+    ['版本号已 bump 到 1.1.38', /v1\.1\.38/.test(html)],
   ];
   wireRules.forEach(([label, ok]) => {
     console.log((ok ? '  ✓ ' : '  ✗ ') + label);
@@ -1868,7 +1868,7 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     ['CPU_WARN = 85', /var CPU_WARN = 85/],
     ['CPU_CRIT = 95', /var CPU_CRIT = 95/],
     ['负载图起点为 0', /key: 'load1'[\s\S]{0,200}yMin: 0/],
-    ['抽屉插入趋势图容器', /secHtml\('每核使用率'\) \+ cores \+[\s\S]{0,80}cpuChartsHtml\(\)/],
+    ['抽屉插入趋势图容器', /secHtml\('每核使用率'\) \+ cores \+[\s\S]{0,80}chartsHtml\('cpu'\)/],
     ['initCharts 创建 LineChart 实例', /new window\.FnStyleChart\.LineChart\(host/],
     ['图表高度 180px', /height: 180/],
     ['打开抽屉时初始化图表', /initCharts\(body\)/],
@@ -1934,7 +1934,7 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
 
     /* ---- ⑦ 版本与接入 ---- */
     ['index.html 引入 chart.js', /<script src="static\/js\/chart\.js"><\/script>/],
-    ['版本号已 bump 到 1.1.37', /v1\.1\.37/.test(html)],
+    ['版本号已 bump 到 1.1.38', /v1\.1\.38/.test(html)],
   ];
 
   rules.forEach(([label, ok]) => {
@@ -1963,8 +1963,8 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
 
   /* ---- ⑨ app.js 版本号（单独读文件） ---- */
   const appjs = fs3.readFileSync(path3.join(base, 'static', 'js', 'app.js'), 'utf8');
-  const appOk = /APP_VERSION = '1\.1\.37'/.test(appjs);
-  console.log((appOk ? '  ✓ ' : '  ✗ ') + 'app.js 版本号 1.1.37');
+  const appOk = /APP_VERSION = '1\.1\.38'/.test(appjs);
+  console.log((appOk ? '  ✓ ' : '  ✗ ') + 'app.js 版本号 1.1.38');
   if (!appOk) bad++;
 
   /* ---- ⑩ v1.1.37：CPU 采样窗口 0.25s → 10s（与 fnmonitor 对齐） ---- */
@@ -2012,7 +2012,59 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     }
   }
 
-  if (bad) { console.error('❌ v1.1.37 断言失败 ' + bad + ' 项'); process.exitCode = 1; }
+  /* ---- ⑫ v1.1.38：三卡片铺满 + 段控件下移 + 内存趋势图 ---- */
+  console.log('\n--- 三卡片铺满 / 段控件下移 / 内存趋势图（v1.1.38）---');
+  const cmp3 = fs3.readFileSync(path3.join(base, 'static', 'js', 'compute.js'), 'utf8');
+  const css3 = fs3.readFileSync(path3.join(base, 'static', 'css', 'app.css'), 'utf8');
+  const hist3 = fs3.readFileSync(path3.join(base, 'history_collect.py'), 'utf8');
+
+  const v38 = [
+    /* --- ① 三卡片铺满整行 --- */
+    ['mon-grid-3 固定 3 列（不再 auto-fill）',
+      /\.mon-grid-3\s*\{\s*grid-template-columns:\s*repeat\(3,\s*1fr\)/.test(css3)],
+    ['mon-grid-3 已无 auto-fill',
+      !/\.mon-grid-3\s*\{[^}]*auto-fill/.test(css3)],
+    ['mon-grid-3 仅用于处理器板块',
+      /class="mon-grid mon-grid-3" id="monCore"/.test(html)],
+
+    /* --- ② 段控件移到趋势图卡片底部 --- */
+    ['chartsHtml 通用图表组函数', /function chartsHtml\(groupKey\)/.test(cmp3)],
+    ['段控件挂在最后一张图表卡片内',
+      /var last = defs\.length - 1;[\s\S]{0,300}\(i === last\)[\s\S]{0,120}data-cseg/.test(cmp3)],
+    ['段控件不再浮在图表组上方',
+      !/\.mon-cmp-charts" data-charts[^>]*>'\s*\+\s*'<div class="mon-cmp-chart-seg"/.test(cmp3)],
+    ['段控件样式改为卡片内下沿（顶部边框线）',
+      /\.mon-cmp-chart-seg\s*\{[^}]*margin-top:[^}]*padding-top:[^}]*border-top:\s*1px solid/.test(css3)],
+    ['段控件不再用 margin-bottom 外挂',
+      !/\.mon-cmp-chart-seg\s*\{[^}]*margin-bottom/.test(css3)],
+
+    /* --- ③ 内存抽屉补「内存使用率」趋势图 --- */
+    ['定义 MEM_CHARTS 内存使用率图表',
+      /var MEM_CHARTS = \[[\s\S]{0,200}title: '内存使用率'/.test(cmp3)],
+    ['内存图表指标键为 mem', /key: 'mem'/.test(cmp3)],
+    ['内存图表组登记在 CHART_GROUPS',
+      /CHART_GROUPS = \{[\s\S]{0,200}mem:\s*\{\s*defs:\s*MEM_CHARTS,\s*metrics:\s*'mem'/.test(cmp3)],
+    ['内存抽屉插入 chartsHtml(\'mem\')',
+      /chartsHtml\('mem'\)/.test(cmp3)],
+    ['内存抽屉图表位置在堆叠条之后、进程列表之前',
+      /mon-cmp-note[\s\S]{0,300}chartsHtml\('mem'\)[\s\S]{0,200}内存占用较多的进程/.test(cmp3)],
+    ['内存抽屉也初始化图表（不再只限 cpu）',
+      /requestAnimationFrame\(function \(\) \{ initCharts\(body\); \}\);/.test(cmp3)],
+    ['drawCharts 按当前图表组定义绘制',
+      /chartState\.defs\.forEach/.test(cmp3)],
+    ['loadCharts 按当前图表组指标拉取',
+      /fetchHistory\(st\.metrics, range\)/.test(cmp3)],
+    ['后端写入 mem 历史指标',
+      /rows\.append\(\(now,\s*"mem"/.test(hist3)],
+    ['后端 mem 指标取自 mem.percent',
+      /mem_percent = mem\.get\("percent"\)/.test(hist3)],
+  ];
+  v38.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  if (bad) { console.error('❌ v1.1.38 断言失败 ' + bad + ' 项'); process.exitCode = 1; }
 })();
 
 console.log(process.exitCode ? '\n❌ 测试未全部通过' : '\n🎉 全部测试通过');
