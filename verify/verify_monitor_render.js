@@ -1651,7 +1651,7 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     ['monitor.js 暴露 lockScroll', /lockScroll: lockPageScroll/.test(mon)],
     ['monitor.js 暴露 unlockScroll', /unlockScroll: unlockPageScroll/.test(mon)],
     ['renderCore 委托给 FnStyleCompute', /window\.FnStyleCompute && window\.FnStyleCompute\.render/],
-    ['版本号已 bump 到 1.1.36', /v1\.1\.36/.test(html)],
+    ['版本号已 bump 到 1.1.37', /v1\.1\.37/.test(html)],
   ];
   wireRules.forEach(([label, ok]) => {
     console.log((ok ? '  ✓ ' : '  ✗ ') + label);
@@ -1934,7 +1934,7 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
 
     /* ---- ⑦ 版本与接入 ---- */
     ['index.html 引入 chart.js', /<script src="static\/js\/chart\.js"><\/script>/],
-    ['版本号已 bump 到 1.1.36', /v1\.1\.36/.test(html)],
+    ['版本号已 bump 到 1.1.37', /v1\.1\.37/.test(html)],
   ];
 
   rules.forEach(([label, ok]) => {
@@ -1963,11 +1963,56 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
 
   /* ---- ⑨ app.js 版本号（单独读文件） ---- */
   const appjs = fs3.readFileSync(path3.join(base, 'static', 'js', 'app.js'), 'utf8');
-  const appOk = /APP_VERSION = '1\.1\.36'/.test(appjs);
-  console.log((appOk ? '  ✓ ' : '  ✗ ') + 'app.js 版本号 1.1.36');
+  const appOk = /APP_VERSION = '1\.1\.37'/.test(appjs);
+  console.log((appOk ? '  ✓ ' : '  ✗ ') + 'app.js 版本号 1.1.37');
   if (!appOk) bad++;
 
-  if (bad) { console.error('❌ v1.1.36 断言失败 ' + bad + ' 项'); process.exitCode = 1; }
+  /* ---- ⑩ v1.1.37：CPU 采样窗口 0.25s → 10s（与 fnmonitor 对齐） ---- */
+  console.log('\n--- CPU 采样窗口与 fnmonitor 对齐（v1.1.37）---');
+  const mon2 = fs3.readFileSync(path3.join(base, 'monitor_collect.py'), 'utf8');
+
+  const winRules = [
+    ['CPU_SAMPLE_WINDOW 常量 = 10', /CPU_SAMPLE_WINDOW\s*=\s*10\b/],
+    ['已移除 time.sleep(0.25) 短窗口', !/time\.sleep\(0\.2\d*\)/.test(mon2)],
+    ['存在独立 CPU 采样线程 _cpu_loop', /def _cpu_loop\s*\(/],
+    ['CPU 线程按 CPU_SAMPLE_WINDOW 等待', /self\._stop\.wait\(CPU_SAMPLE_WINDOW\)/],
+    ['主循环从 CPU 缓存取数 _cpu_snapshot', /def _cpu_snapshot\s*\(/],
+    ['_collect_once 不再直接采集 CPU', /_collect_once[\s\S]{0,1200}cpu\s*=\s*self\._cpu_snapshot\(\)/],
+    ['拓扑进程级缓存 _cpu_topology_cached', /def _cpu_topology_cached\s*\(/],
+    ['抖动保护：无有效读数时保留上一轮', /if not cpu\.get\(["']available["']\):[\s\S]{0,80}continue/],
+    ['基线与当前值分两次采样做差分', /collect_cpu\(\)\s*#\s*第 1 次[\s\S]{0,900}collect_cpu\(\)\s*#\s*第 2 次/],
+    ['注释说明 jiffy 量化分辨率', /jiffy[\s\S]{0,40}10ms/],
+  ];
+  winRules.forEach(([label, ok]) => {
+    const res = typeof ok === 'string' ? ok : (ok instanceof RegExp ? ok.test(mon2) : !!ok);
+    console.log((res ? '  ✓ ' : '  ✗ ') + label);
+    if (!res) bad++;
+  });
+
+  /* ---- ⑪ CPU 采样窗口专项测试脚本与夹具存在 ---- */
+  const verifyDir = path3.join(base, '..', '..', 'verify');
+  const cpuWinPath = path3.join(verifyDir, 'verify_cpu_sample_window.py');
+  const cpuFixPath = path3.join(verifyDir, 'fixtures', 'cpu_stat_samples.json');
+  const exists = (p) => { try { return fs3.existsSync(p); } catch (e) { return false; } };
+  const fixtureOk = exists(cpuFixPath);
+  console.log((exists(cpuWinPath) ? '  ✓ ' : '  ✗ ') + '新增 verify/verify_cpu_sample_window.py');
+  if (!exists(cpuWinPath)) bad++;
+  console.log((fixtureOk ? '  ✓ ' : '  ✗ ') + '新增 verify/fixtures/cpu_stat_samples.json（NAS 真机样本）');
+  if (!fixtureOk) bad++;
+  if (fixtureOk) {
+    try {
+      const fx = JSON.parse(fs3.readFileSync(cpuFixPath, 'utf8'));
+      const n = (fx.samples || []).length;
+      const okN = n >= 12;
+      console.log((okN ? '  ✓ ' : '  ✗ ') + '夹具样本组数 ≥ 12（实为 ' + n + '）');
+      if (!okN) bad++;
+    } catch (e) {
+      console.log('  ✗ 夹具 JSON 解析失败：' + e.message);
+      bad++;
+    }
+  }
+
+  if (bad) { console.error('❌ v1.1.37 断言失败 ' + bad + ' 项'); process.exitCode = 1; }
 })();
 
 console.log(process.exitCode ? '\n❌ 测试未全部通过' : '\n🎉 全部测试通过');

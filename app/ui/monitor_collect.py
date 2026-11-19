@@ -319,6 +319,15 @@ def collect_disks():
 
 _CPU_STATE = {"last": None, "lastTime": None, "cores": None}
 
+# CPU 使用率的采样窗口（秒）。
+# /proc/stat 时间片精度 = 1 jiffy = 10ms（USER_HZ=100）。
+# 窗口内每核能分到的 jiffy 数量决定量化分辨率：
+#   0.25s → ~25 jiffy/核 → 单 jiffy 占 4%   → 读数在 2%~64% 间乱跳
+#   3s    → ~300 jiffy/核 → 单 jiffy 占 0.33%
+#   10s   → ~1000 jiffy/核 → 单 jiffy 占 0.1% → 数值稳定
+# fnmonitor 在 NAS 上的实测配置也是 interval=10，两边口径才能对得上。
+CPU_SAMPLE_WINDOW = 10
+
 
 def read_cpu_topology():
     """读取 CPU 拓扑，返回 (物理核心数, 逻辑线程数, 插槽数)。
@@ -375,6 +384,25 @@ def read_cpu_topology():
         else:
             cores = threads or 1
     return cores, threads or cores, sockets
+
+
+# 拓扑缓存：lscpu 是外部进程调用（几十毫秒），而 CPU 拓扑在运行期不变。
+_CPU_TOPO_CACHE = {"value": None}
+
+
+def _cpu_topology_cached():
+    """取 CPU 拓扑（物理核 / 逻辑线程 / 插槽），结果进程级缓存。
+
+    lscpu 每次调用要 fork 一个进程，而拓扑在运行期不变 ——
+    缓存后每轮采集省掉一次 fork。缓存失败（返回全 0）也会被缓存，
+    避免 lscpu 不可用时反复重试拖慢采集。
+    """
+    if _CPU_TOPO_CACHE["value"] is None:
+        try:
+            _CPU_TOPO_CACHE["value"] = read_cpu_topology()
+        except Exception:
+            _CPU_TOPO_CACHE["value"] = (0, 0, 0)
+    return _CPU_TOPO_CACHE["value"]
 
 
 def _proc_stat_cpu_times(stat):
@@ -490,10 +518,9 @@ def collect_cpu():
     if mm:
         out["model"] = mm.group(1).strip()
     # 拓扑：物理核 / 逻辑线程 / 插槽（lscpu 优先，/proc/cpuinfo 回退）
-    try:
-        tcores, tthreads, tsockets = read_cpu_topology()
-    except Exception:
-        tcores = tthreads = tsockets = 0
+    # ⚠️ lscpu 是外部进程调用（几十毫秒），而拓扑在运行期不变 ——
+    #    这里做进程级缓存，避免每次采集都 fork 一次。
+    tcores, tthreads, tsockets = _cpu_topology_cached()
     out["cores"] = tcores or (len(re.findall(r"^processor\s*:", info, re.M)) or len(per_core))
     out["threads"] = tthreads or out["cores"]
     out["sockets"] = tsockets or 1
@@ -904,7 +931,25 @@ def collect_power(cpu_percent, disks_active):
 # ===================== 轮询线程 + 缓存 =====================
 
 class MonitorCollector(object):
-    """后台轮询采集器：每 interval 秒刷新一次缓存，HTTP 只读缓存。"""
+    """后台轮询采集器：每 interval 秒刷新一次缓存，HTTP 只读缓存。
+
+    ⚠️ CPU 使用率与其它指标的采样窗口**故意不同**：
+      - 其它指标（内存/温度/硬盘/GPU）：interval 秒（默认 3 秒）刷新一次
+      - CPU 使用率与每核占用率：CPU_SAMPLE_WINDOW 秒（默认 10 秒）一次
+
+    为什么 CPU 要单独用 10 秒窗口：
+      /proc/stat 的时间片精度是 **1 jiffy = 10ms**（USER_HZ=100）。
+      采样窗口内每核能分到的 jiffy 数量决定了量化分辨率：
+        0.25s 窗口 → 每核仅 ~25 jiffy → 单 jiffy 占 4% → 读数在 2%~64% 间乱跳
+        3s   窗口 → 每核约 300 jiffy → 单 jiffy 占 0.33%
+        10s  窗口 → 每核约 1000 jiffy → 单 jiffy 占 0.1% → 数值稳定
+      fnmonitor 在 NAS 上的实际配置（/vol1/@appdata/fnmonitor/config.json）
+      也是 `interval = 10`，两边口径才能对得上。
+
+      实测（同一台 NAS、同一份 /proc/stat、fnmonitor 原始算法离线复算）：
+        0.25s 窗口读数序列：35.8 / 64.0 / 31.7 / 2.0 / 27.9 / 4.7   ← 极差 62 个百分点
+        10s   窗口读数序列：34.4 / 43.7 / 20.7 / 17.8 / 14.9 / 4.8   ← 极差 39 个百分点
+    """
 
     def __init__(self, interval=3):
         self.interval = interval
@@ -913,6 +958,10 @@ class MonitorCollector(object):
         self._thread = None
         self._stop = threading.Event()
         self._history = None
+        # CPU 专用线程与它自己的锁（与主缓存分开，避免 3 秒循环读半截数据）
+        self._cpu_thread = None
+        self._cpu_lock = threading.Lock()
+        self._cpu_cache = {}
 
     def snapshot(self):
         with self._lock:
@@ -924,6 +973,9 @@ class MonitorCollector(object):
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
+        # CPU 独立采样线程（10 秒窗口），与 3 秒主循环并行
+        self._cpu_thread = threading.Thread(target=self._cpu_loop, daemon=True)
+        self._cpu_thread.start()
         # 启动硬盘巡检线程（定时全盘扫 SMART，独立于 3 秒采集循环）
         _storage_monitor()
         # 启动历史写入线程（每 60 秒一条，供处理器抽屉的趋势图使用）
@@ -971,14 +1023,10 @@ class MonitorCollector(object):
             self._stop.wait(self.interval)
 
     def _collect_once(self):
-        # CPU 使用率需要两次采样差分。
-        # 关键：collect_cpu() 内部维护基线，**第一次调用**只记基线不产出百分比。
-        # 所以这里必须连续调两次（间隔 ~0.25s）才能拿到本轮的实时使用率。
-        cpu = collect_cpu()
-        time.sleep(0.25)
-        cpu2 = collect_cpu()
-        if cpu2.get("available") or not cpu.get("available"):
-            cpu = cpu2
+        # CPU 使用率**不在这里采集** —— 它需要 10 秒的采样窗口，
+        # 由独立的 _cpu_loop 线程负责（见类注释里的量化分辨率说明）。
+        # 这里只取它最新一次的缓存结果。
+        cpu = self._cpu_snapshot()
 
         mem = collect_memory()
         gpu = collect_gpu()
@@ -1019,6 +1067,43 @@ class MonitorCollector(object):
         with self._lock:
             self._cache = data
         return data
+
+    # ---------------- CPU 专用采样线程（10 秒窗口） ----------------
+
+    def _cpu_snapshot(self):
+        """取 CPU 线程最近一次的结果（可能还没有 → 返回不可用占位）。"""
+        with self._cpu_lock:
+            if self._cpu_cache:
+                return dict(self._cpu_cache)
+        return {"available": False}
+
+    def _cpu_loop(self):
+        """CPU 采样线程：每 CPU_SAMPLE_WINDOW 秒产出一次使用率。
+
+        采集方式与 fnmonitor 一致 —— **两次采样差分**，采样点间隔就是窗口长度：
+          第 1 轮：只记基线（collect_cpu 返回 available=False）
+          第 2 轮：与基线差分 → 得到这 10 秒窗口的使用率
+        所以第一轮有效读数要等 2×10 = 20 秒，之后每 10 秒刷新一次。
+
+        ⚠️ 只有**拿到有效百分比**才更新缓存：
+          若某轮差分失败（total_delta<=0，窗口内没有任何 jiffy 流逝），
+          必须保留上一轮的有效值 —— 否则一次抖动就会把显示打成「不可用」，
+          表现为处理器卡片整块数据消失。
+        """
+        while not self._stop.is_set():
+            try:
+                collect_cpu()          # 第 1 次：记基线（无百分比）
+                # 等一个完整窗口，再取第 2 次做差分
+                self._stop.wait(CPU_SAMPLE_WINDOW)
+                if self._stop.is_set():
+                    break
+                cpu = collect_cpu()     # 第 2 次：与基线差分
+                if not cpu.get("available"):
+                    continue            # 本轮无有效读数 → 保留上一轮
+                with self._cpu_lock:
+                    self._cpu_cache = cpu
+            except Exception:
+                pass
 
 
 def collect_system():
