@@ -174,6 +174,88 @@ def query_history(metric, range_="1h"):
             for t, v in rows]
 
 
+def _day_key(ts):
+    """时间戳 → 本地日期字符串 YYYY-MM-DD。"""
+    lt = time.localtime(ts)
+    return "%04d-%02d-%02d" % (lt.tm_year, lt.tm_mon, lt.tm_mday)
+
+
+def daily_energy(rate_yuan_per_kwh=0.6, max_days=30):
+    """按天聚合用电量（1:1 对齐 fnmonitor 的 /api/daily 口径）。
+
+    fnmonitor 的每日用电柱状图是把 power 历史按自然日分桶、
+    每桶内做梯形积分（瓦 × 秒 / 3.6e6 = kWh），再按天倒序排列。
+
+    返回：{
+      "days": [{"day": "2026-11-15", "kwh": 0.12, "cost": 0.07,
+                "power_h": 23.5, "has_data": True}, ...],
+      "rate_yuan_per_kwh": 0.6,
+      "success": True,
+    }
+    days 按日期升序；只包含有功率数据的天。
+    """
+    rate = float(rate_yuan_per_kwh or 0.6)
+    pts = query_history("power", "all")
+    buckets = {}
+    if pts:
+        # 每段按其起点所在天归属；跨天段归到起点那天（与 fnmonitor 一致）
+        for i in range(1, len(pts)):
+            t0, v0 = pts[i - 1]
+            t1, v1 = pts[i]
+            dt = t1 - t0
+            if dt <= 0:
+                continue
+            w = (float(v0) + float(v1)) / 2.0
+            kwh = w * dt / 3.6e6
+            key = _day_key(t0)
+            b = buckets.setdefault(key, {"kwh": 0.0, "power_h": 0.0})
+            b["kwh"] += kwh
+            b["power_h"] += dt / 3600.0
+
+    days = []
+    for key in sorted(buckets.keys()):
+        b = buckets[key]
+        days.append({
+            "day": key,
+            "kwh": round(b["kwh"], 4),
+            "cost": round(b["kwh"] * rate, 2),
+            "power_h": round(b["power_h"], 2),
+            "has_data": True,
+        })
+    # 只保留最近 max_days 天
+    if max_days and len(days) > max_days:
+        days = days[-max_days:]
+    return {"days": days, "rate_yuan_per_kwh": rate, "success": True}
+
+
+def avg_power():
+    """平均功率（1:1 对齐 fnmonitor 的 avgW）。
+
+    fnmonitor 的口径：
+      1. 优先用 /api/daily 里有数据的天的平均功率（按 kwh / power_h 反推）
+      2. 否则用功率历史的算术平均
+      3. 都没有则返回 None
+
+    返回 {"w": 瓦数, "basis": "口径说明", "n": 天数} 或 None
+    """
+    daily = daily_energy()
+    ds = [d for d in daily.get("days", []) if d.get("power_h", 0) > 0]
+    if ds:
+        total_kwh = sum(d["kwh"] for d in ds)
+        total_h = sum(d["power_h"] for d in ds)
+        if total_h >= 1:
+            return {
+                "w": total_kwh * 1000.0 / total_h,
+                "basis": "近 %d 天平均" % len(ds),
+                "n": len(ds),
+            }
+    pts = query_history("power", "all")
+    if len(pts) > 5:
+        avg = sum(float(p[1] or 0) for p in pts) / len(pts)
+        return {"w": avg, "basis": "功率历史平均", "n": len(pts)}
+    return None
+
+
 def energy_stats(rate_yuan_per_kwh=0.6, uptime_seconds=None):
     """用电量与电费统计（1:1 对齐 fnmonitor 的能耗统计口径）。
 
@@ -181,12 +263,15 @@ def energy_stats(rate_yuan_per_kwh=0.6, uptime_seconds=None):
       - 今日：当天 00:00 起的累计
       - 本月：当月 1 日起的累计
       - 开机以来：按当前功率 × 开机时长估算
+      - 本月预计：本月已用 + 平均功率 × 本月剩余天数
+      - 全年估算：平均功率 × 8.76（8760 小时 / 1000）
 
     与 fnmonitor 一致：功率历史每 60 秒一条，积分时按每段的实际时长
     折算成 kWh（瓦 × 秒 / 3.6e6）。
 
     返回：{"today_kwh", "month_kwh", "boot_kwh",
-           "today_yuan", "month_yuan", "rate_yuan_per_kwh"}
+           "today_yuan", "month_yuan", "rate_yuan_per_kwh",
+           "month_proj_kwh", "year_proj_kwh", "avg_w", "avg_basis"}
     """
     rate = float(rate_yuan_per_kwh or 0.6)
     result = {
@@ -194,6 +279,9 @@ def energy_stats(rate_yuan_per_kwh=0.6, uptime_seconds=None):
         "today_yuan": 0.0, "month_yuan": 0.0,
         "rate_yuan_per_kwh": rate,
         "basis": "history",
+        "month_proj_kwh": None, "year_proj_kwh": None,
+        "month_proj_yuan": None, "year_proj_yuan": None,
+        "avg_w": None, "avg_basis": "",
     }
 
     now = time.time()
@@ -236,6 +324,39 @@ def energy_stats(rate_yuan_per_kwh=0.6, uptime_seconds=None):
             except Exception:
                 cur_w = 0.0
         result["boot_kwh"] = round(cur_w * uptime_seconds / 3.6e6, 4)
+
+    # ---- 本月预计 / 全年估算（对齐 fnmonitor 的 monthProj / yearProj）----
+    try:
+        ap = avg_power()
+    except Exception:
+        ap = None
+    if ap:
+        w = float(ap.get("w") or 0)
+        result["avg_w"] = round(w, 1)
+        result["avg_basis"] = ap.get("basis") or ""
+        # 本月预计：本月已用 + 平均功率 × 本月剩余天数
+        if result["month_kwh"] > 0:
+            import calendar
+            import datetime
+            now_dt = datetime.datetime.now()
+            last_day = calendar.monthrange(now_dt.year, now_dt.month)[1]
+            remain_days = last_day - now_dt.day
+            remain_secs = remain_days * 86400
+            result["month_proj_kwh"] = round(
+                result["month_kwh"] + w * remain_secs / 3.6e9, 4)
+            result["month_proj_remain_days"] = remain_days
+        # 全年估算：平均功率 × 8.76（8760 小时 / 1000）
+        result["year_proj_kwh"] = round(w * 8.76, 1)
+        # 折算成电费（fnmonitor 的 eff = 本月电费 / 本月用电，没数据时用费率）
+        if result["month_kwh"] > 0 and result["month_yuan"] > 0:
+            eff = result["month_yuan"] / result["month_kwh"]
+        else:
+            eff = rate
+        result["eff_rate_yuan_per_kwh"] = round(eff, 4)
+        if result["month_proj_kwh"] is not None:
+            result["month_proj_yuan"] = round(result["month_proj_kwh"] * eff, 2)
+        if result["year_proj_kwh"] is not None:
+            result["year_proj_yuan"] = round(result["year_proj_kwh"] * eff, 2)
 
     return result
 

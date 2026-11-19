@@ -964,11 +964,25 @@
     var sub = $('#monComputeSub');
     if (!body || !title || !sub) return;
 
-    body.innerHTML = (kind === 'mem') ? memSheetHtml(d) : cpuSheetHtml(d);
+    /* 四种抽屉：处理器 / 内存 / 温度与散热 / 能耗
+       温度与能耗的内容由 monitor.js 提供（那边才有传感器 / 功耗采集逻辑），
+       处理器与内存在本文件里直接拼。 */
     if (kind === 'mem') {
+      body.innerHTML = memSheetHtml(d);
       title.textContent = '内存';
       sub.textContent = memSubText(d);
+    } else if (kind === 'temp') {
+      body.innerHTML = window.FnStyleMonitor && window.FnStyleMonitor.tempSheetHtml
+        ? window.FnStyleMonitor.tempSheetHtml(d) : '<div class="mon-cmp-note">温度模块未加载</div>';
+      title.textContent = '温度与散热';
+      sub.textContent = tempSubText(d);
+    } else if (kind === 'power') {
+      body.innerHTML = window.FnStyleMonitor && window.FnStyleMonitor.powerSheetHtml
+        ? window.FnStyleMonitor.powerSheetHtml(d) : '<div class="mon-cmp-note">能耗模块未加载</div>';
+      title.textContent = '能耗';
+      sub.textContent = powerSubText(d);
     } else {
+      body.innerHTML = cpuSheetHtml(d);
       title.textContent = '处理器';
       sub.textContent = cpuSubText(d);
     }
@@ -984,17 +998,21 @@
       requestAnimationFrame(function () { ov.classList.add('on'); });
     });
 
-    /* 详情里的每核点阵也要填色 */
-    if (kind !== 'mem') {
-      var pc = (d.cpu && d.cpu.coresPercent) || [];
+    /* 详情里的每核点阵也要填色（只有处理器抽屉有） */
+    if (kind === 'cpu' || kind === 'mem') {
+      var pc = (d && d.cpu && d.cpu.coresPercent) || [];
       var host = body.querySelector('[data-dcores]');
       if (host && pc.length) setDetailCores(host, pc);
     }
-    /* 抽屉里的趋势图（处理器 2 张 + 内存 1 张）
+    /* 抽屉里的趋势图（处理器 2 张 + 内存 1 张 + 温度 2 张 + 能耗 2 张）
        等抽屉滑入后才有实际宽度，所以延后两帧再初始化。 */
     requestAnimationFrame(function () {
       requestAnimationFrame(function () { initCharts(body); });
     });
+    /* 能耗抽屉的用电与电费异步回填 */
+    if (kind === 'power' && window.FnStyleMonitor && window.FnStyleMonitor.loadPowerEnergy) {
+      window.FnStyleMonitor.loadPowerEnergy(body);
+    }
   }
 
   function closeCompute() {
@@ -1029,6 +1047,29 @@
   function memSubText(d) {
     var m = (d && d.mem) || {};
     return m.total ? gb(m.total) + ' GB 物理内存' : '';
+  }
+
+  /* 温度与散热抽屉的副标题（对齐 fnmonitor 的 SHEETS.temp.sub）
+     口径：温度测点数（含硬盘）· 风扇数 */
+  function tempSubText(d) {
+    var t = (d && d.temp) || {};
+    var temps = (t.temps || []).length;
+    var disks = (t.disks || []).filter(function (x) {
+      return x && x.temp !== null && x.temp !== undefined && x.temp !== '';
+    }).length;
+    var cpu = (t.cpuTemp === null || t.cpuTemp === undefined) ? 0 : 1;
+    var fans = (t.fans || []).length;
+    return (temps + disks + cpu) + ' 个温度测点 · ' + fans + ' 个风扇';
+  }
+
+  /* 能耗抽屉的副标题（对齐 fnmonitor 的 SHEETS.power.sub）*/
+  function powerSubText(d) {
+    var p = (d && d.power) || {};
+    if (!p.ok) return '功耗不可用';
+    var src = (p.source === 'idrac') ? 'iDRAC 整机实测'
+      : (p.source === 'rapl') ? 'RAPL 实测 + 底座 / 硬盘估算'
+      : '模型估算（无 RAPL）';
+    return '来源：' + src;
   }
 
   function cpuSheetHtml(d) {
@@ -1288,6 +1329,8 @@
     open: openCompute,
     close: closeCompute,
     isOpen: function () { return computeOpen; },
+    /* 抽屉里的趋势图组（温度 / 能耗抽屉用）*/
+    chartsHtml: chartsHtml,
     /* 板块级趋势图（温度和散热 / 能耗板块）*/
     panelChartsHtml: panelChartsHtml,
     initPanelCharts: initPanelCharts,

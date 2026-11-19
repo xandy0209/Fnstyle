@@ -14,6 +14,15 @@
   var timer = null;
   var lastData = null;
   var inited = false;
+  /* 用电统计（/api/power/stats）与每日用电（/api/power/daily）。
+     这两个接口较重（要扫历史库），所以只在能耗板块可见时拉一次，
+     拉到的结果缓存在这里供总览四格与柱状图共用。 */
+  var pstats = null;           // /api/power/stats 的结果
+  var pdaily = null;           // /api/power/daily 的结果
+  var pstatsAt = 0;            // 上次拉取时间（毫秒）
+  var pdailyAt = 0;
+  var PSTAT_TTL = 60000;       // 60 秒刷新一次即可（能耗是慢变量）
+  var PDaily_TTL = 600000;     // 10 分钟刷新一次（每日用电只按天变）
 
   function $(sel) { return document.querySelector(sel); }
   function $$(sel) { return Array.prototype.slice.call(document.querySelectorAll(sel)); }
@@ -1431,12 +1440,11 @@
   }
 
   /* ---------------- 3. 温度和散热 ----------------
-     1:1 对齐 fnmonitor 的 SHEETS.temp：
-       ① 大数字区（CPU 温度 + 阈值提示）
-       ② 四格统计（CPU / 主板 / 显卡 / 全部测点最高）
-       ③ 温度计条形图（20~100℃ 刻度映射，阈值用竖线标记）
-       ④ 分节明细：风扇 / 电压 / 全部传感器
-     硬盘温度也并入温度计条形图（kind=disk，用硬盘阈值口径）。 */
+     fnmonitor 有两套彼此独立的 UI：
+       · 总览卡片（defineModule id:'thermal'）—— 主页面上的两栏摘要卡
+       · 详情抽屉（SHEETS.temp）—— 点「详情 ›」后弹出的完整面板
+     本文件里两套都有：renderTempOverview / renderPowerOverview 画总览，
+     renderTemp / renderPower 画抽屉内容。 */
 
   /* 温度条刻度：20℃ → 0%，100℃ → 100%（与 fnmonitor 的 T_MIN/T_MAX 一致） */
   var T_MIN = 20, T_MAX = 100;
@@ -1451,6 +1459,395 @@
     acpi: 'ACPI', disk: '硬盘', gpu: 'GPU', other: '其它'
   };
 
+  /* ================= 总览形态：温度与散热 =================
+     对齐 fnmonitor defineModule id:'thermal'（源文件 3014 行起）：
+       <div class="grid g-thermal">            ← 1.5fr 1fr 两栏
+         <div class="card pad tap">             ← 左栏（可点开详情）
+           <div class="label">处理器与主板<span class="faint lbl-r">竖线为警告 / 严重阈值</span></div>
+           <div data-ref="tl"></div>            ← CPU / 主板温度条
+           <div class="label" style="margin:18px 0 6px">硬盘</div>
+           <div data-ref="td"></div>            ← 硬盘温度条
+           ${scaleHTML}                         ← 20/40/60/80/100 刻度尺
+         </div>
+         <div class="card pad">                ← 右栏
+           <div class="label">风扇</div>
+           <div data-ref="fans"></div>
+           <div data-ref="vw"><div class="label">电压</div><div class="volts"></div></div>
+         </div>
+       </div>
+     温度测点顺序与 fnmonitor 的 thermoList() 一致：
+       CPU → 主板 → 传感器（排除硬盘，最多 6 条）→ 硬盘单独一段。 */
+
+  /* 温度色阶（对齐 fnmonitor 的 RAMP.temp / RAMP.dtemp）
+     fnmonitor 的温度条用**渐变**填充（rampGrad + background-size 裁切），
+     而不是纯色 —— 这里同样输出渐变，视觉更接近。 */
+  function ovTempStops(kind) {
+    var w = (kind === 'disk') ? TH_DISK_TEMP_WARN : TH_TEMP_WARN;
+    var c = (kind === 'disk') ? TH_DISK_TEMP_CRIT : TH_TEMP_CRIT;
+    var RG = 'var(--r-g)', RY = 'var(--r-y)';
+    return (kind === 'disk')
+      ? [[Math.min(20, w - 13), RG], [w - 12, RG], [w - 4, RY], [w, 'var(--warning)'], [c, 'var(--danger)']]
+      : [[Math.min(30, w - 26), RG], [w - 25, RG], [w - 10, RY], [w, 'var(--warning)'], [c, 'var(--danger)']];
+  }
+
+  /* 温度条填充（渐变 + background-size 只铺满已填充段）*/
+  function ovTempFill(value, kind) {
+    var stops = ovTempStops(kind);
+    var grad = 'linear-gradient(90deg,' + stops.map(function (s) {
+      return s[1] + ' ' + s[0] + '%';
+    }).join(',') + ')';
+    var len = tPos(value);
+    var big = (100 / Math.max(len, .5) * 100).toFixed(1) + '%';
+    return 'background-image:' + grad + ';background-size:' + big + ' 100%;background-position:left';
+  }
+
+  /* 温度条一行（对齐 fnmonitor 的 thermoRows）
+     DOM：<div class="thermo-row"><span class="t-l">…</span>
+           <div class="thermo"><span class="mk"/><i/></div>
+           <span class="v">40℃</span></div> */
+  function ovThermoRow(label, value, marks, kind, cls) {
+    var p = tPos(value);
+    var mkHtml = (marks || []).map(function (m) {
+      return '<span class="mk" style="left:' + tPos(m).toFixed(1) + '%"></span>';
+    }).join('');
+    return '<div class="thermo-row">' +
+      '<span class="' + (cls ? cls + ' ' : '') + 't-l" title="' + esc(label) + '">' + esc(label) + '</span>' +
+      '<div class="thermo">' + mkHtml +
+        '<i style="width:' + p.toFixed(1) + '%;' + ovTempFill(value, kind) + '"></i></div>' +
+      '<span class="v">' + fmtInt(value) + '℃</span>' +
+    '</div>';
+  }
+
+  /* 空状态（对齐 fnmonitor 的 emptyHTML） */
+  function ovEmpty(title, text) {
+    return '<div class="empty-s"><div><b>' + esc(title) + '</b>' +
+      (text ? '<span>' + esc(text) + '</span>' : '') + '</div></div>';
+  }
+
+  /* 刻度尺（对齐 fnmonitor 的 scaleHTML） */
+  var OV_SCALE_HTML = '<div class="thermo-scale"><span></span><div>' +
+    [20, 40, 60, 80, 100].map(function (v) {
+      return '<span style="left:' + tPos(v) + '%">' + v + '°</span>';
+    }).join('') + '</div><span></span></div>';
+
+  function renderTempOverview(d) {
+    var box = $('#monTempOverview');
+    if (!box) return;
+    var t = d.temp || {};
+    var temps = t.temps || [];
+    var fans = t.fans || [];
+    var volts = t.volts || [];
+    var cpuTemp = (t.cpuTemp === null || t.cpuTemp === undefined) ? null : Number(t.cpuTemp);
+    var mbTemp = (t.mbTemp === null || t.mbTemp === undefined) ? null : Number(t.mbTemp);
+
+    /* ---- 左栏：处理器与主板 + 硬盘 ----
+       ⚠️ fnmonitor 的 thermoList(o) 是「CPU + 主板 + 全部传感器」拼好之后
+       才 slice(0, 6) —— 6 条是**总数上限**（含 CPU 与主板）。
+       FnStyle 之前写成「CPU + 主板 + 传感器.slice(0,6)」= 最多 8 条，超了。
+       硬盘是独立段落（fnmonitor 的 diskThermo），不受这个上限约束。 */
+    var rows = '';
+    var marks = [TH_TEMP_WARN, TH_TEMP_CRIT];
+    var list = [];
+    if (cpuTemp !== null && !isNaN(cpuTemp)) {
+      list.push({ label: 'CPU', value: cpuTemp, marks: marks, kind: 'cpu' });
+    }
+    if (mbTemp !== null && !isNaN(mbTemp)) {
+      list.push({ label: '主板', value: mbTemp, marks: [], kind: 'other' });
+    }
+    /* 传感器（排除硬盘类型） */
+    temps.forEach(function (s) {
+      if (!s || s.type === 'disk') return;
+      if (s.value === null || s.value === undefined || s.value === '') return;
+      var kind = s.type === 'cpu' ? 'cpu' : 'other';
+      var sm = (kind === 'cpu') ? marks
+        : [s.max, s.crit].filter(function (x) { return x !== null && x !== undefined; });
+      list.push({ label: s.name, value: Number(s.value), marks: sm, kind: kind });
+    });
+    /* 总数上限 6（与 fnmonitor thermoList 的 slice(0, 6) 一致） */
+    list.slice(0, 6).forEach(function (it) {
+      rows += ovThermoRow(it.label, it.value, it.marks, it.kind);
+    });
+    if (!rows) {
+      rows = ovEmpty('未读取到 CPU / 主板温度',
+        'fnOS 默认未安装 lm-sensors，已直读 thermal zone 与 hwmon；虚拟机或容器内通常无法访问硬件传感器。');
+    }
+
+    /* 硬盘单独一段（对齐 fnmonitor 的 diskThermo）
+       标签 = 插槽号（没有插槽号就用设备名），休眠盘追加「· 休眠」
+       ⚠️ fnmonitor 的 slot 来自 iDRAC（apply_idrac_slots），FnStyle 无 iDRAC 支持，
+          所以实际始终回退到设备名。 */
+    var diskRows = '';
+    (t.disks || []).forEach(function (x) {
+      if (x && x.temp !== null && x.temp !== undefined && x.temp !== '') {
+        var sleeping = !!(x.standby || x.state === 'standby');
+        var slot = (x.slot !== null && x.slot !== undefined && x.slot !== '')
+          ? Number(x.slot) : null;
+        var lbl = (slot !== null && !isNaN(slot))
+          ? ('插槽 ' + slot) : String(x.name || '');
+        if (sleeping) lbl += ' · 休眠';
+        diskRows += ovThermoRow(lbl, Number(x.temp),
+          [TH_DISK_TEMP_WARN, TH_DISK_TEMP_CRIT], 'disk', sleeping ? 'faint' : '');
+      }
+    });
+    if (!diskRows) {
+      diskRows = ovEmpty('没有可用的硬盘温度',
+        (t.disks || []).length ? '硬盘未提供温度（需要 drivetemp 或 smartctl）' : '未检测到物理硬盘');
+    }
+
+    /* ---- 右栏：风扇 + 电压 ---- */
+    var fanHtml = '';
+    if (fans.length) {
+      fanHtml = fans.map(function (f) {
+        var rpm = Number(f.rpm);
+        var has = f.rpm !== null && f.rpm !== undefined && !isNaN(rpm);
+        var spin = has && rpm > 0 ? (2400 / Math.max(300, rpm)).toFixed(2) + 's' : '0s';
+        return '<div class="fan">' +
+          '<span class="fan-ico">' + fanIcon(spin) + '</span>' +
+          '<div style="flex:1;min-width:0">' +
+            '<div class="sub">' + esc(f.name || '风扇') + '</div>' +
+            '<div class="num"><span>' + (has ? fmtInt(rpm) : '--') + '</span>' +
+            '<span class="unit" style="font-size:12px">RPM</span></div>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+    } else {
+      fanHtml = ovEmpty('未检测到可读取的风扇传感器',
+        '已适配标准 hwmon、IPMI/BMC、ThinkPad ACPI 与 0xA20 硬件监控邮箱（只读）；' +
+        '仍无数值通常表示该机型固件未向系统开放风扇数据。');
+    }
+
+    var voltHtml = '';
+    if (volts.length) {
+      voltHtml = volts.slice(0, 8).map(function (v) {
+        return '<div class="volt">' +
+          '<div class="eyebrow">' + esc(v.name) + '</div>' +
+          '<div class="num"><span>' + fmt2(v.value) + '</span>' +
+          '<span class="unit" style="font-size:12px">V</span></div>' +
+        '</div>';
+      }).join('');
+    }
+
+    box.innerHTML =
+      '<div class="label" style="margin-bottom:6px">处理器与主板' +
+        '<span class="faint lbl-r">竖线为警告 / 严重阈值</span></div>' +
+      rows +
+      '<div class="label" style="margin:18px 0 6px">硬盘</div>' +
+      diskRows +
+      OV_SCALE_HTML;
+
+    /* 右栏是独立一张卡（fnmonitor 的 .g-thermal 第二个 .card.pad） */
+    var right = $('#monTempSide');
+    if (right) {
+      right.innerHTML =
+        '<div class="label">风扇</div>' +
+        '<div style="margin-top:6px">' + fanHtml + '</div>' +
+        (voltHtml
+          ? '<div class="label" style="margin:18px 0 12px">电压</div><div class="volts">' + voltHtml + '</div>'
+          : '');
+    }
+
+    /* ---- 摘要行（对齐 fnmonitor 的 m.r.dek）----
+       fnmonitor 口径：CPU 超阈值 → 整行用 warn 样式 + 建议检查风道；
+       否则列出 CPU / 硬盘最高 / 风扇平均。硬盘最高排除休眠盘。 */
+    var dek = $('#monTempDek');
+    if (dek) {
+      var hot = null;
+      (t.disks || []).forEach(function (x) {
+        if (!x || x.temp === null || x.temp === undefined || x.temp === '') return;
+        if (x.standby || x.state === 'standby') return;   // 休眠盘不参与最高温
+        if (!hot || Number(x.temp) > Number(hot.temp)) hot = x;
+      });
+      var fanAvg = null;
+      var running = fans.filter(function (f) { return Number(f.rpm) > 0; });
+      if (running.length) {
+        fanAvg = running.reduce(function (s, f) { return s + Number(f.rpm); }, 0) / running.length;
+      }
+      var cpuLv = (cpuTemp === null || isNaN(cpuTemp)) ? '' : tempLevel(cpuTemp);
+      if (cpuLv === 'high' || cpuLv === 'warn') {
+        dek.innerHTML = '<span class="warn">CPU ' + fmtInt(cpuTemp) + '℃，温度' +
+          (cpuLv === 'high' ? '过高' : '偏高') + '</span>，建议检查风道与灰尘。';
+      } else {
+        var parts = [];
+        if (cpuTemp !== null && !isNaN(cpuTemp)) parts.push('CPU <b>' + fmtInt(cpuTemp) + '℃</b>');
+        if (hot) parts.push('硬盘最高 ' + fmtInt(hot.temp) + '℃（' + esc(hot.name) + '）');
+        if (fanAvg !== null) parts.push('风扇平均 ' + fmtInt(fanAvg) + ' RPM');
+        if (!parts.length) {
+          dek.textContent = '未读取到任何温度传感器。';
+        } else {
+          dek.innerHTML = parts.join('，') + '。';
+        }
+      }
+    }
+
+    var cnt = $('#monTempCount');
+    if (cnt) {
+      cnt.textContent = (temps.length + (t.disks || []).length) + ' 个温度测点 · ' + fans.length + ' 个风扇';
+    }
+  }
+
+  /* ================= 总览形态：能耗 =================
+     对齐 fnmonitor defineModule id:'energy'（源文件 3107 行起）：
+       <div class="energy">                    ← 1.1fr 1fr 两栏
+         <div class="card pad energy-live tap">← 左：实时功耗
+           <div class="label">实时功耗<span class="pill">硬件 RAPL</span></div>
+           <div class="dnum huge">30.5 W</div>   ← 76px
+           <div class="sub">整机 = CPU 封装（RAPL 实测）+ 内存 + 主板底座 + 活动硬盘</div>
+           <div class="stack">…</div>            ← 堆叠条
+           <div class="legend">…</div>
+         </div>
+         <div class="stat-cells">              ← 右：2×2 四格
+           今日用电 / 本月用电 / 本月预计电费 / 全年估算
+         </div>
+       </div>
+       <div class="card chart-card">           ← 下方：每日用电柱状图
+     */
+
+  var SRC_TXT = { rapl: '硬件 RAPL', idrac: 'iDRAC 实测', estimated: '模型估算' };
+
+  function renderPowerOverview(d) {
+    var box = $('#monPowerOverview');
+    var statsBox = $('#monPowerStats');
+    if (!box || !statsBox) return;
+    var p = d.power || {};
+    var has = p.ok !== false && p.total !== null && p.total !== undefined;
+    /* 电价优先取后端返回的实际费率（用户在设置里改过就是那个值）*/
+    var rate = (pstats && pstats.rate_yuan_per_kwh) ? pstats.rate_yuan_per_kwh : 0.6;
+
+    /* ---- 左栏：实时功耗 ---- */
+    var html = '';
+    html += '<div class="label">实时功耗' +
+      '<span class="pill" style="margin-left:auto">' +
+      (has ? (SRC_TXT[p.source] || '来源未知') : '不可用') + '</span></div>';
+    html += '<div class="dnum huge" style="margin-top:18px"><span class="dm">' +
+      (has ? fmt1(p.total) : '--') + '</span><span class="unit">W</span></div>';
+    html += '<div class="sub" style="margin-top:6px">' +
+      (has
+        ? (p.source === 'idrac' ? 'iDRAC 实测整机输出'
+          : p.source === 'rapl' ? '整机 = CPU 封装（RAPL 实测）+ 内存 + 主板底座 + 活动硬盘'
+          : '无 RAPL：按 TDP × CPU 占用 + 硬盘 + 网卡 + 主板底座估算')
+        : '无法读取 RAPL，也无法估算整机功耗') + '</div>';
+
+    /* 堆叠条 + 图例（fnmonitor：堆叠条 12px 高、2px gap；图例色块 8px）*/
+    var parts = has ? powerParts(p) : [];
+    if (parts.length) {
+      html += '<div class="stack" style="margin-top:22px;height:12px">' +
+        parts.map(function (q) {
+          var style = q[2] === 'hatch' ? '' : ' style="background:' + q[2] + '"';
+          return '<i class="' + (q[2] === 'hatch' ? 'ov-hatch' : '') + '"' + style +
+            ' data-grow="' + q[1].toFixed(2) + '"></i>';
+        }).join('') + '</div>';
+      html += '<div class="legend">' + parts.map(function (q) {
+        return '<span>' + ovStackSwatch(q[2]) + esc(q[0]) +
+          ' <b>' + fmt1(q[1]) + ' W</b></span>';
+      }).join('') + '</div>';
+    }
+    box.innerHTML = html;
+
+    /* 堆叠条按部件功耗分配宽度（flex-grow 用部件值本身即可，
+       浏览器会按比例归一 —— fnmonitor 也是直接写 q[1]）*/
+    if (parts.length) {
+      Array.prototype.forEach.call(box.querySelectorAll('.stack > i'), function (el) {
+        el.style.flexGrow = (parseFloat(el.getAttribute('data-grow')) || 0).toFixed(2);
+      });
+    }
+
+    /* ---- 右栏：四格（今日 / 本月 / 本月预计 / 全年）---- */
+    statsBox.innerHTML = '<div class="stat-cells">' +
+      '<div class="stat-cell"><div class="eyebrow">今日用电</div>' +
+        '<div class="dnum"><span class="dm">' + (pstats ? fmtKwh(pstats.today_kwh) : '--') + '</span><span class="unit">kWh</span></div>' +
+        '<div class="sub">' + (pstats ? '电费 ' + fmtYuan(pstats.today_yuan) : '--') + '</div></div>' +
+      '<div class="stat-cell"><div class="eyebrow">本月用电</div>' +
+        '<div class="dnum"><span class="dm">' + (pstats ? fmtKwh(pstats.month_kwh) : '--') + '</span><span class="unit">kWh</span></div>' +
+        '<div class="sub">' + (pstats ? '电费 ' + fmtYuan(pstats.month_yuan) : '--') + '</div></div>' +
+      '<div class="stat-cell"><div class="eyebrow">本月预计电费</div>' +
+        '<div class="dnum"><span class="dm">' + (pstats && pstats.month_proj_yuan !== null && pstats.month_proj_yuan !== undefined
+          ? fmtYuan(pstats.month_proj_yuan) : '--') + '</span></div>' +
+        '<div class="sub">' + (pstats && pstats.month_proj_kwh
+          ? '约 ' + fmtKwh(pstats.month_proj_kwh) + ' kWh · 剩余天数按' + esc(pstats.avg_basis || '平均') + ' ' + fmt1(pstats.avg_w) + ' W'
+          : '本月数据不足') + '</div></div>' +
+      '<div class="stat-cell"><div class="eyebrow">全年估算<span class="pill est-pill">估算</span></div>' +
+        '<div class="dnum"><span class="dm">' + (pstats && pstats.year_proj_yuan !== null && pstats.year_proj_yuan !== undefined
+          ? fmtYuan(pstats.year_proj_yuan) : '--') + '</span></div>' +
+        '<div class="sub">' + (pstats && pstats.year_proj_kwh
+          ? '约 ' + fmtInt(pstats.year_proj_kwh) + ' kWh · ' + esc(pstats.avg_basis || '平均') + ' ' + fmt1(pstats.avg_w) + ' W × 8760 小时'
+          : '暂无可用的功率数据') + '</div></div>' +
+    '</div>';
+
+    /* ---- 摘要行（对齐 fnmonitor 的 m.r.dek）---- */
+    var dek = $('#monPowerDek');
+    if (dek) {
+      var txt = '';
+      if (!has) {
+        txt = '功耗不可用。';
+      } else {
+        txt = '此刻 <b>' + fmt1(p.total) + ' W</b>';
+        if (pstats) {
+          txt += '，按电价 ' + rate + ' 元/kWh';
+          if (pstats.month_proj_yuan !== null && pstats.month_proj_yuan !== undefined) {
+            txt += '，本月电费预计 <b>' + fmtYuan(pstats.month_proj_yuan) + '</b>';
+          }
+        }
+        txt += '。';
+        /* 休眠硬盘提示（fnmonitor 会追加「N 块硬盘休眠中」）*/
+        var sleeping = (d.storage && d.storage.disks || []).filter(function (x) {
+          return x && (x.standby || x.state === 'standby');
+        }).length;
+        if (sleeping) txt += sleeping + ' 块硬盘休眠中。';
+      }
+      dek.innerHTML = txt;
+    }
+
+    var src = $('#monPowerSource');
+    if (src) {
+      src.textContent = has ? (SRC_TXT[p.source] || '来源未知') : '不可用';
+    }
+  }
+
+  /* 每日用电柱状图（对齐 fnmonitor 的 energy 模块下方 .card.chart-card）
+     fnmonitor 的口径：
+       · 柱高 = 当天 kWh / 最大值 × 100%（最大值上浮 8%）
+       · X 轴标签：n>14 每 7 个一标、n>7 每 3 个一标、否则每个都标；
+         最后一个固定写「今天」
+       · 最后一天（今天）高亮，其余半透明
+       · 无数据时显示 .chart-empty-s 空态 */
+  function renderPowerDaily(res) {
+    var box = $('#monPowerDaily');
+    if (!box) return;
+    var days = (res && res.days) || [];
+    var html = '<div class="chart-head"><div class="chart-title">' +
+      (days.length ? '近 ' + days.length + ' 天用电' : '近 30 天用电') + '</div>' +
+      '<div class="chart-legend"><span><span class="lk"><i class="kb0"></i></span>' +
+      '<span>每日 kWh · 按功率历史积分</span></span></div></div>';
+    if (!days.length) {
+      html += '<div class="chart-empty-s">暂无功率数据：采集满一段时间后这里会显示每天的用电量</div>';
+      box.innerHTML = html;
+      return;
+    }
+    /* 柱高：最大值上浮 8%（与 fnmonitor 的 max = Math.max(...) * 1.08 一致）*/
+    var max = Math.max.apply(null, days.map(function (d) { return d.kwh || 0; })) * 1.08 || 1;
+    var n = days.length;
+    var step = n > 14 ? 7 : (n > 7 ? 3 : 1);
+    html += '<div class="ov-bars">' + days.map(function (d, i) {
+      var h = Math.max(1, (d.kwh || 0) / max * 100);
+      var last = i === n - 1;
+      var parts = String(d.day || '').split('-');
+      var shortLabel = parts.length === 3
+        ? (Number(parts[1]) + '/' + Number(parts[2])) : (d.day || '');
+      /* X 轴标签：末位固定「今天」，其余按 step 间隔 */
+      var lb = last ? '今天'
+        : (((n - 1 - i) % step === 0) ? shortLabel : '');
+      var tip = shortLabel + (last ? ' · 今天' : '') + ' · ' + fmtKwh(d.kwh) + ' kWh';
+      var cost = (d.cost !== null && d.cost !== undefined) ? (' · ' + fmtYuan(d.cost) + ' 元') : '';
+      var hrs = (d.power_h !== null && d.power_h !== undefined && d.power_h < 23.5)
+        ? (' · 数据 ' + fmt1(d.power_h) + ' 小时') : '';
+      return '<div class="ov-bar-col' + (last ? ' last' : '') + '" title="' +
+        esc(tip + cost + hrs) + '">' +
+        '<div class="ov-bar" style="height:' + h.toFixed(1) + '%"></div>' +
+        '<div class="ov-bar-lb">' + esc(lb) + '</div></div>';
+    }).join('') + '</div>';
+    box.innerHTML = html;
+  }
+
   /* 风扇图标（对齐 fnmonitor 的 #i-fan symbol：中心轴 + 三片扇叶）
      fnmonitor 的 .fan-ico svg{animation:spin linear infinite} 旋转的是整个 svg，
      所以这里输出一个完整 svg，动画周期通过 --fan-spin 变量传入。 */
@@ -1464,10 +1861,10 @@
       '</svg>';
   }
 
-  function renderTemp(d) {
-    var box = $('#monTemp');
-    if (!box) return;
-    var t = d.temp || {};
+  /* 温度抽屉内容（1:1 对齐 fnmonitor 的 SHEETS.temp）
+     返回 HTML 字符串，由 compute.js 的 openCompute('temp') 插进抽屉 body。 */
+  function tempSheetHtml(d) {
+    var t = (d && d.temp) || {};
     var html = '';
 
     var temps = t.temps || [];
@@ -1587,7 +1984,12 @@
         '虚拟机或容器内通常无法访问硬件传感器）。</div></div>';
     }
 
-    /* --- ④ 分节明细：风扇 / 电压 / 全部传感器 --- */
+    /* --- ④ 趋势图（对齐 fnmonitor 的 SHEETS.temp：温度计之后、风扇之前）--- */
+    if (window.FnStyleCompute && window.FnStyleCompute.chartsHtml) {
+      html += window.FnStyleCompute.chartsHtml('temp');
+    }
+
+    /* --- ⑤ 分节明细：风扇 / 电压 / 全部传感器 --- */
     /* 风扇 —— 对齐 fnmonitor 的 .fan（40px 圆形图标 + 名称 + 大号转速） */
     if (fans.length) {
       html += '<div class="mon-sub-sec"><span>风扇</span><span class="faint">' + fans.length + ' 个</span></div>';
@@ -1644,26 +2046,7 @@
         '（未安装 lm-sensors，已使用 thermal zone / hwmon 直读作为替代）。</div>';
     }
 
-    box.innerHTML = html;
-    $('#monTempCount').textContent = t.available ? '传感器在线' : '不可用';
-
-    /* 板块趋势图（CPU 温度 / 主板温度）
-       趋势图挂在**独立的宿主容器**里（#monTempCharts），不放在内容区 ——
-       内容区每 3 秒轮询重建一次，趋势图放里面会被反复清空，图表永远画不出来。
-       宿主已建好图表时不重复创建，只刷新数据。 */
-    var chartHost = $('#monTempCharts');
-    if (chartHost && window.FnStyleCompute) {
-      if (!chartHost.querySelector('[data-pcharts="temp"]')) {
-        chartHost.innerHTML = window.FnStyleCompute.panelChartsHtml('temp');
-        requestAnimationFrame(function () {
-          requestAnimationFrame(function () {
-            window.FnStyleCompute.initPanelCharts(chartHost, 'temp');
-          });
-        });
-      } else if (window.FnStyleCompute.refreshPanelCharts) {
-        window.FnStyleCompute.refreshPanelCharts('temp');
-      }
-    }
+    return html;
   }
 
   /* ---------------- 4. 能耗 ---------------- */
@@ -1677,30 +2060,53 @@
        ⑤ 估算参数
      用电量由 /api/power/stats 提供（历史库 power 指标梯形积分）。 */
 
-  /* 功耗部件分解（对齐 fnmonitor 的 powerParts） */
+  /* 功耗部件分解（对齐 fnmonitor 的 powerParts）
+     fnmonitor 的配色是围绕主色的明度渐变：
+       CPU 封装   = 主色
+       内存       = 主色 55% 混卡片底
+       硬盘       = 斜线纹理（hatch）
+       主板与其他 = 主色 25% 混卡片底
+       剩余       = --fill-3
+     FnStyle 用 color-mix 实现同款层次。 */
   function powerParts(p) {
     var parts = [];
     function ok(v) { return v !== null && v !== undefined && !isNaN(v); }
+    if (p.source === 'idrac') {
+      return [['整机实测', Number(p.total) || 0, 'var(--spark-1)']];
+    }
     if (ok(p.package)) parts.push(['CPU 封装', Number(p.package), 'var(--spark-1)']);
-    if (ok(p.dram)) parts.push(['内存', Number(p.dram), 'var(--spark-2)']);
+    if (ok(p.dram)) {
+      parts.push(['内存', Number(p.dram),
+        'color-mix(in srgb, var(--spark-1) 55%, var(--bg-elevated))']);
+    }
     if (ok(p.disksW)) {
       parts.push(['硬盘' + (p.disksActive ? '（' + p.disksActive + ' 块在转）' : ''),
         Number(p.disksW), 'hatch']);
     }
-    if (ok(p.base)) parts.push(['主板与其他', Number(p.base), 'var(--bg-hover)']);
+    if (ok(p.base)) {
+      parts.push(['主板与其他', Number(p.base),
+        'color-mix(in srgb, var(--spark-1) 25%, var(--bg-elevated))']);
+    }
     var sum = parts.reduce(function (a, x) { return a + x[1]; }, 0);
     var rest = (Number(p.total) || 0) - sum;
     if (rest > 0.05) {
       parts.push([p.source === 'estimated' ? 'CPU 与网卡等（估算）' : '其他',
-        rest, 'var(--border-strong)']);
+        rest, 'var(--bg-hover)']);
     }
     return parts;
   }
 
-  function renderPower(d) {
-    var box = $('#monPower');
-    if (!box) return;
-    var p = d.power || {};
+  /* 堆叠条色块（hatch 用斜线纹理，其余直接上色）*/
+  function ovStackSwatch(color) {
+    return color === 'hatch'
+      ? '<i class="ov-hatch"></i>'
+      : '<i style="background:' + color + '"></i>';
+  }
+
+  /* 能耗抽屉内容（1:1 对齐 fnmonitor 的 SHEETS.power）
+     返回 HTML 字符串，由 compute.js 的 openCompute('power') 插进抽屉 body。 */
+  function powerSheetHtml(d) {
+    var p = (d && d.power) || {};
     var html = '';
 
     if (!p.ok) {
@@ -1713,9 +2119,7 @@
           '<div class="mon-hero-side">不可用</div></div>' +
       '</div>';
       html += '<div class="mon-info">功耗数据不可用（既无 RAPL 实测，也无法按 TDP 估算）。</div>';
-      $('#monPowerSource').textContent = '不可用';
-      box.innerHTML = html;
-      return;
+      return html;
     }
 
     var isRapl = p.source === 'rapl';
@@ -1738,13 +2142,15 @@
     /* --- ② 功耗堆叠条 + 图例 ---
        对齐 fnmonitor：堆叠条与图例同在一个 .card.pad 卡片里 */
     var parts = powerParts(p);
+    var totalW = parts.reduce(function (a, x) { return a + x[1]; }, 0) || 1;
     if (parts.length) {
       html += '<div class="mon-stack-wrap">' +
         '<div class="mon-stack">' + parts.map(function (q) {
           var cls = q[2] === 'hatch' ? ' mono-hatch' : '';
-          var style = q[2] === 'hatch' ? '' : ' style="background:' + q[2] + '"';
-          return '<i class="' + (cls || '').trim() + '"' + style +
-            ' data-grow="' + q[1].toFixed(2) + '"></i>';
+          /* flex-grow 按部件功耗占总功耗的比例分配 */
+          var bg = q[2] === 'hatch' ? '' : 'background:' + q[2] + ';';
+          return '<i class="' + cls.trim() + '" style="' + bg +
+            'flex-grow:' + ((q[1] / totalW) * 100).toFixed(2) + '"></i>';
         }).join('') + '</div>' +
         '<div class="mon-legend">' + parts.map(function (q) {
           var sw = q[2] === 'hatch'
@@ -1755,7 +2161,12 @@
       '</div>';
     }
 
-    /* --- ③ 部件明细 --- */
+    /* --- ③ 趋势图（对齐 fnmonitor 的 SHEETS.power：堆叠条之后、部件明细之前）--- */
+    if (window.FnStyleCompute && window.FnStyleCompute.chartsHtml) {
+      html += window.FnStyleCompute.chartsHtml('power');
+    }
+
+    /* --- ④ 部件明细 --- */
     function w(v) {
       return (v === null || v === undefined || isNaN(v))
         ? '<span class="faint">—</span>' : fmt1(v) + ' W';
@@ -1783,13 +2194,13 @@
       return '<div class="mon-kv-row"><span>' + esc(kv[0]) + '</span><span>' + kv[1] + '</span></div>';
     }).join('') + '</div>';
 
-    /* --- ④ 用电与电费（异步加载） --- */
+    /* --- ⑤ 用电与电费（异步加载） --- */
     html += '<div class="mon-sub-sec"><span>用电与电费</span>' +
       '<span class="faint" data-pwr-rate></span></div>';
     html += '<div class="mon-kv" data-pwr-energy><div class="mon-kv-row">' +
       '<span>今日</span><span>统计加载中…</span></div></div>';
 
-    /* --- ⑤ 估算参数 --- */
+    /* --- ⑥ 估算参数 --- */
     var ep = p.estimation_params || {};
     if (ep.tdp_w !== undefined || ep.disk_typical_w !== undefined) {
       html += '<div class="mon-sub-sec"><span>估算参数</span></div>';
@@ -1810,36 +2221,74 @@
       '整机值再叠加主板底座与活动硬盘的典型功耗；无 RAPL 时按 TDP × CPU 占用估算。' +
       '休眠硬盘不计入。</div>';
 
-    box.innerHTML = html;
+    return html;
+  }
 
-    /* 板块趋势图（整机功耗 / 累计用电）
-       挂在**独立的宿主容器**里（#monPowerCharts），理由同温度板块：
-       内容区每 3 秒轮询重建一次，趋势图放里面会被反复清空。 */
-    var pchartHost = $('#monPowerCharts');
-    if (pchartHost && window.FnStyleCompute) {
-      if (!pchartHost.querySelector('[data-pcharts="power"]')) {
-        pchartHost.innerHTML = window.FnStyleCompute.panelChartsHtml('power');
+  /* 板块趋势图（温度和散热 / 能耗各一组）
+     挂在**独立宿主容器**里（#monTempCharts / #monPowerCharts）——
+     总览卡片区每 3 秒轮询重建一次，趋势图放里面会被反复清空。
+     宿主已建好图表时不重复创建，只刷新数据。 */
+  function renderPanelCharts(d) {
+    if (!window.FnStyleCompute) return;
+    var groups = [
+      { host: '#monTempCharts', key: 'temp' },
+      { host: '#monPowerCharts', key: 'power' }
+    ];
+    groups.forEach(function (g) {
+      var host = $(g.host);
+      if (!host) return;
+      if (!host.querySelector('[data-pcharts="' + g.key + '"]')) {
+        host.innerHTML = window.FnStyleCompute.panelChartsHtml(g.key);
         requestAnimationFrame(function () {
           requestAnimationFrame(function () {
-            window.FnStyleCompute.initPanelCharts(pchartHost, 'power');
+            window.FnStyleCompute.initPanelCharts(host, g.key);
           });
         });
       } else if (window.FnStyleCompute.refreshPanelCharts) {
-        window.FnStyleCompute.refreshPanelCharts('power');
+        window.FnStyleCompute.refreshPanelCharts(g.key);
       }
-    }
-
-    /* 堆叠条按部件占比分配宽度（flex-grow 用总功率归一） */
-    var totalW = parts.reduce(function (a, x) { return a + x[1]; }, 0) || 1;
-    Array.prototype.forEach.call(box.querySelectorAll('.mon-stack > i'), function (el) {
-      var g = parseFloat(el.getAttribute('data-grow')) || 0;
-      el.style.flexGrow = String((g / totalW) * 100);
     });
+  }
 
-    $('#monPowerSource').textContent = isRapl ? 'RAPL 实测' : 'TDP 估算';
+  /* --------------------------------------------------------------------------
+   用电统计的异步拉取
+   -------------------------------------------------------------------------- */
+  /* /api/power/stats —— 今日 / 本月 / 本月预计 / 全年估算
+     这个接口要扫历史库，比 /api/monitor 重，所以加了 TTL 缓存：
+     能耗是慢变量，60 秒刷新一次足够。 */
+  function ensurePowerStats() {
+    var now = Date.now();
+    if (pstats && now - pstatsAt < PSTAT_TTL) return pstats;
+    if (!window.fetch) return pstats;
+    return fetch('/api/power/stats').then(function (r) {
+      return r.ok ? r.json() : null;
+    }).then(function (j) {
+      if (j && j.success) {
+        pstats = j;
+        pstatsAt = Date.now();
+        /* 拿到统计后重画总览四格（此时才有电费 / 预计值）*/
+        if (lastData) renderPowerOverview(lastData);
+      }
+      return pstats;
+    }).catch(function () { return pstats; });
+  }
 
-    /* 异步加载用电量与电费 */
-    loadPowerEnergy(box);
+  /* /api/power/daily —— 每日用电柱状图
+     数据按天聚合，一天只变一次，所以 TTL 给到 10 分钟。 */
+  function ensurePowerDaily() {
+    var now = Date.now();
+    if (pdaily && now - pdailyAt < PDaily_TTL) return pdaily;
+    if (!window.fetch) return pdaily;
+    return fetch('/api/power/daily?days=30').then(function (r) {
+      return r.ok ? r.json() : null;
+    }).then(function (j) {
+      if (j && j.success) {
+        pdaily = j;
+        pdailyAt = Date.now();
+        renderPowerDaily(pdaily);
+      }
+      return pdaily;
+    }).catch(function () { return pdaily; });
   }
 
   /* 拉取用电量与电费统计并回填到能耗板块 */
@@ -1882,7 +2331,8 @@
   function render(d) {
     if (!d || d.success === false) {
       var msg = (d && (d.error || d.message)) || '监控服务不可用';
-      ['monStorage', 'monCore', 'monTemp', 'monPower'].forEach(function (id) {
+      ['monStorage', 'monCore', 'monTempOverview', 'monTempSide',
+        'monPowerOverview', 'monPowerStats', 'monPowerDaily'].forEach(function (id) {
         var b = $('#' + id);
         if (b) b.innerHTML = emptyBox(msg);
       });
@@ -1899,8 +2349,14 @@
     }
     renderStorage(d.storage);
     renderCore(d);
-    renderTemp(d);
-    renderPower(d);
+    /* 温度和散热 / 能耗：总览卡片形态（对齐 fnmonitor 的 overview 模块）*/
+    renderTempOverview(d);
+    renderPowerOverview(d);
+    /* 用电统计与每日用电是独立接口，异步补齐后回调重画 */
+    ensurePowerStats();
+    ensurePowerDaily();
+    /* 板块趋势图宿主（内容区已换形态，图表挂在独立宿主上）*/
+    renderPanelCharts(d);
 
     var st = $('#monStatus');
     if (st) {
@@ -2043,6 +2499,45 @@
     if (timer) { clearInterval(timer); timer = null; }
   }
 
+  /* --------------------------------------------------------------------------
+     温度 / 能耗的详情抽屉入口
+     -------------------------------------------------------------------------- */
+  /* 两种入口都指向同一个抽屉（fnmonitor 的 SHEETS）：
+       ① 卡片头右上角的「详情 ›」按钮（data-sheet="temp" / "power"）
+       ② 整张总览卡片可点（fnmonitor 的 .card.pad.tap，data-sheet 同款）
+     抽屉内容由 compute.js 的 openCompute 渲染。 */
+  function bindSheetDrawer() {
+    if (bindSheetDrawer._done) return;
+    bindSheetDrawer._done = true;
+
+    function open(kind) {
+      if (!window.FnStyleCompute || !window.FnStyleCompute.open) return;
+      window.FnStyleCompute.open(kind, lastData);
+    }
+
+    /* 按钮点击 */
+    document.addEventListener('click', function (e) {
+      var el = e.target.closest ? e.target.closest('[data-sheet]') : null;
+      if (!el) return;
+      /* 卡片本身也可点（.ov-tap），但里面的按钮会冒泡到卡片，
+         这里统一处理并阻止卡片再处理一次。 */
+      var kind = el.getAttribute('data-sheet');
+      if (!kind) return;
+      e.preventDefault();
+      e.stopPropagation();
+      open(kind);
+    });
+
+    /* 键盘可达：卡片可聚焦时按 Enter / Space 打开 */
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      var el = e.target.closest ? e.target.closest('.ov-tap[data-sheet]') : null;
+      if (!el) return;
+      e.preventDefault();
+      open(el.getAttribute('data-sheet'));
+    });
+  }
+
   /* ---------------- 初始化 ---------------- */
 
   function init() {
@@ -2064,6 +2559,8 @@
     }
     /* 巡检历史抽屉：即使还没拉到数据也要能打开（显示"尚未巡检"占位） */
     bindScanLogDrawer();
+    /* 温度 / 能耗的「详情 ›」按钮 + 整张总览卡片可点 */
+    bindSheetDrawer();
     var auto = $('#monAuto');
     if (auto) {
       auto.addEventListener('change', function () {
@@ -2115,6 +2612,11 @@
     stop: stopAuto,
     // 供 compute.js 的详情抽屉使用：取最近一次采集数据
     lastData: function () { return lastData; },
+    // 温度 / 能耗抽屉的内容（1:1 对齐 fnmonitor 的 SHEETS.temp / SHEETS.power）
+    tempSheetHtml: tempSheetHtml,
+    powerSheetHtml: powerSheetHtml,
+    // 抽屉里的用电与电费需要异步回填
+    loadPowerEnergy: loadPowerEnergy,
     // 滚动锁：抽屉打开/关闭时成对调用，避免锁计数泄漏
     lockScroll: lockPageScroll,
     unlockScroll: unlockPageScroll

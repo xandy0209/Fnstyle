@@ -433,6 +433,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_monitor_history()
         if p == "/api/power/stats":
             return self._handle_power_stats()
+        if p == "/api/power/daily":
+            return self._handle_power_daily()
         if p == "/api/storage/scan":
             return self._handle_storage_scan()
         if p == "/api/storage/history":
@@ -650,6 +652,47 @@ class Handler(BaseHTTPRequestHandler):
 
         stats["success"] = True
         self._send_json(200, stats)
+        return True
+
+    def _handle_power_daily(self):
+        """每日用电量聚合：GET /api/power/daily?days=30
+
+        按自然日分桶，把功率历史梯形积分成每天的 kWh，
+        口径与 fnmonitor 的 /api/daily 一致。
+        """
+        try:
+            import history_collect
+        except Exception:
+            history_collect = None
+
+        if history_collect is None:
+            self._send_json(200, {
+                "success": False,
+                "error": "历史库模块不可用",
+                "days": [],
+            })
+            return True
+
+        try:
+            days = 30
+            parts = urllib.parse.urlparse(self.path).query.split("&")
+            for kv in parts:
+                if kv.startswith("days="):
+                    try:
+                        days = max(1, min(30, int(kv[5:])))
+                    except Exception:
+                        pass
+        except Exception:
+            days = 30
+
+        try:
+            result = history_collect.daily_energy(0.6, days)
+        except Exception as e:
+            self._send_json(500, {"success": False, "error": str(e), "days": []})
+            return True
+
+        result["success"] = True
+        self._send_json(200, result)
         return True
 
     def _handle_update_start(self):

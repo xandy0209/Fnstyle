@@ -35,7 +35,7 @@
     </div>
     <!-- 顶栏右侧：当前版本号 + 检查更新入口 + 新页面打开 -->
     <div class="topbar-right" id="topbarUpdate">
-      <span class="ver-pill" id="verPill" title="当前版本">v1.1.42</span>
+      <span class="ver-pill" id="verPill" title="当前版本">v1.1.43</span>
       <span class="ub-status" id="tbUpdateStatus"></span>
       <button class="btn sm icon-btn" id="tbCheckUpdate" type="button" title="检查更新" aria-label="检查更新">
         <svg class="upd-ico" viewBox="0 0 24 24" aria-hidden="true">
@@ -178,15 +178,23 @@
       <header>
         <h2><span>🌡</span> 温度和散热</h2>
         <div class="spacer"></div>
+        <button type="button" class="mon-link-btn" data-sheet="temp">详情 ›</button>
         <span class="theme-count" id="monTempCount">—</span>
       </header>
       <div class="body">
-        <div class="mon-grid mon-grid-2" id="monTemp">
-          <div class="loading"><span class="spin"></span> 读取传感器…</div>
+        <!-- 总览形态（对齐 fnmonitor thermal 模块：1.5fr 1fr 两栏） -->
+        <p class="mod-dek" id="monTempDek">—</p>
+        <div class="g-thermal">
+          <div class="ov-card ov-tap" id="monTempOverview" data-sheet="temp"
+               tabindex="0" role="button" title="查看温度与散热详情">
+            <div class="loading"><span class="spin"></span> 读取传感器…</div>
+          </div>
+          <div class="ov-card" id="monTempSide">
+            <div class="loading"><span class="spin"></span> 读取风扇…</div>
+          </div>
         </div>
-        <!-- 趋势图容器独立于内容区：内容区每 3 秒重建一次，
-             趋势图若放在里面会被反复清空，图表永远画不出来 -->
-        <div class="mon-panel-chart-host" id="monTempCharts"></div>
+        <!-- 板块趋势图宿主（独立于内容区，避免每 3 秒轮询把图表清空） -->
+        <div id="monTempCharts"></div>
       </div>
     </div>
 
@@ -195,14 +203,26 @@
       <header>
         <h2><span>⚡</span> 能耗</h2>
         <div class="spacer"></div>
+        <button type="button" class="mon-link-btn" data-sheet="power">详情 ›</button>
         <span class="theme-count" id="monPowerSource">—</span>
       </header>
       <div class="body">
-        <div class="mon-grid mon-grid-2" id="monPower">
-          <div class="loading"><span class="spin"></span> 读取功耗…</div>
+        <!-- 总览形态（对齐 fnmonitor energy 模块：1.1fr 1fr + 下方柱状图） -->
+        <p class="mod-dek" id="monPowerDek">—</p>
+        <div class="energy">
+          <div class="ov-card ov-tap energy-live" id="monPowerOverview" data-sheet="power"
+               tabindex="0" role="button" title="查看能耗详情">
+            <div class="loading"><span class="spin"></span> 读取功耗…</div>
+          </div>
+          <div class="ov-card" id="monPowerStats">
+            <div class="loading"><span class="spin"></span> 读取用电统计…</div>
+          </div>
         </div>
-        <!-- 趋势图容器独立于内容区（理由同上） -->
-        <div class="mon-panel-chart-host" id="monPowerCharts"></div>
+        <div class="ov-card ov-chart-card" id="monPowerDaily">
+          <div class="loading"><span class="spin"></span> 读取每日用电…</div>
+        </div>
+        <!-- 板块趋势图宿主（独立于内容区，避免每 3 秒轮询把图表清空） -->
+        <div id="monPowerCharts"></div>
       </div>
     </div>
   </div>

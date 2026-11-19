@@ -37,7 +37,12 @@ function mkEl(id) {
   };
 }
 ['monStorage', 'monStoreCount', 'monStatus', 'monUpdated', 'monCore', 'monCoreCount',
-  'monTemp', 'monTempCount', 'monPower', 'monPowerSource', 'btnMonRefresh', 'monAuto',
+  /* v1.1.43：温度/能耗改为「总览卡片」形态，内容进容器 #monTempOverview /
+     #monTempSide / #monPowerOverview / #monPowerStats / #monPowerDaily，
+     旧的 monTemp / monPower 容器已移除（内容移到抽屉） */
+  'monTempOverview', 'monTempSide', 'monTempDek',
+  'monPowerOverview', 'monPowerStats', 'monPowerDaily', 'monPowerDek',
+  'monTempCount', 'monPowerSource', 'btnMonRefresh', 'monAuto',
   /* v1.1.41：趋势图宿主容器（独立于内容区，避免每 3 秒轮询被清空） */
   'monTempCharts', 'monPowerCharts',
   'btnMonScan', 'monDrawerOverlay', 'monDrawerTitle', 'monDrawerSub', 'monDrawerBody',
@@ -701,11 +706,18 @@ if (html) {
   console.log((ssdOk ? '  ✓ ' : '  ✗ ') + 'SMART 表：SSD 转速不拼 RPM 后缀');
   if (!ssdOk) bad++;
 
-  /* --- 滑入动画：.on 是在两帧 rAF 之后加的，必须异步断言 --- */
+  /* --- 滑入动画：.on 是在两帧 rAF 之后加的，必须异步断言 ---
+     注意：要打开一个「存在的盘」才会走 showDrawer()；
+     「未找到硬盘」分支会提前 return，不会加 .on。 */
+  /* 重新打开抽屉再断言：后面的 v1.1.34 块会同步调用 closeDiskDrawer()，
+     把 .on 移除掉 —— 必须在 setTimeout 回调里重开（此时同步代码已跑完）。 */
   setTimeout(function () {
-    const onOk = els.monDrawerOverlay.classList.contains('on') === true;
-    console.log((onOk ? '  ✓ ' : '  ✗ ') + 'overlay 加上 .on（滑入动画）');
-    if (!onOk) process.exitCode = 1;
+    openDiskDrawer('sda');
+    setTimeout(function () {
+      const onOk = els.monDrawerOverlay.classList.contains('on') === true;
+      console.log((onOk ? '  ✓ ' : '  ✗ ') + 'overlay 加上 .on（滑入动画）');
+      if (!onOk) process.exitCode = 1;
+    }, 20);
   }, 30);
 
   if (bad) { console.error('❌ 抽屉断言失败 ' + bad + ' 项'); process.exitCode = 1; }
@@ -2236,8 +2248,10 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
 
   /* ---------- 源码级：温度板块 ---------- */
   const srcRules = [
-    ['renderTemp 已重写（大数字 + 四格 + 温度计 + 分节）',
-      /function renderTemp\(d\)/.test(monSrc)],
+    /* v1.1.43：renderTemp 改为纯函数 tempSheetHtml(d)（返回 HTML 字符串，
+       由抽屉层注入）；renderTempOverview 负责总览卡片。 */
+    ['tempSheetHtml 已重写（大数字 + 四格 + 温度计 + 分节）',
+      /function tempSheetHtml\(d\)/.test(monSrc)],
     ['温度 hero 区使用 mon-hero',
       /mon-hero/.test(monSrc)],
     ['四格统计使用 mon-cells',
@@ -2273,8 +2287,8 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
 
   /* ---------- 源码级：能耗板块 ---------- */
   const pwrRules = [
-    ['renderPower 已重写（hero + 堆叠条 + 明细 + 电费）',
-      /function renderPower\(d\)/.test(monSrc)],
+    ['powerSheetHtml 已重写（hero + 堆叠条 + 明细 + 电费）',
+      /function powerSheetHtml\(d\)/.test(monSrc)],
     ['功耗堆叠条使用 mon-stack',
       /mon-stack/.test(monSrc)],
     ['图例使用 mon-legend',
@@ -2339,12 +2353,11 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     ['index.html 有独立的能耗趋势图宿主',
       /id="monPowerCharts"/.test(htmlSrc)],
     ['温度板块挂到独立宿主而非内容区',
-      /\$\('#monTempCharts'\)/.test(monSrc)],
+      /host: '#monTempCharts'/.test(monSrc)],
     ['能耗板块挂到独立宿主而非内容区',
-      /\$\('#monPowerCharts'\)/.test(monSrc)],
+      /host: '#monPowerCharts'/.test(monSrc)],
     ['宿主已有图表时不重复创建实例',
-      /chartHost\.querySelector\('\[data-pcharts="temp"\]'\)/.test(monSrc) &&
-      /pchartHost\.querySelector\('\[data-pcharts="power"\]'\)/.test(monSrc)],
+      /host\.querySelector\('\[data-pcharts="' \+ g\.key \+ '"\]'\)/.test(monSrc)],
   ];
   hostRules.forEach(([label, ok]) => {
     console.log((ok ? '  ✓ ' : '  ✗ ') + label);
@@ -2456,10 +2469,21 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
   };
 
   let tempHtml = '', powerHtml = '';
+  /* v1.1.43：总览卡片进新容器；抽屉内容用导出接口单独取 */
+  let tempOverviewHtml = '', tempSideHtml = '';
+  let powerOverviewHtml = '', powerStatsHtml = '', powerDekHtml = '';
   try {
     global.window.FnStyleMonitor.__renderForTest(TEMP_POWER_DATA);
-    tempHtml = els.monTemp ? els.monTemp.innerHTML : '';
-    powerHtml = els.monPower ? els.monPower.innerHTML : '';
+    tempOverviewHtml = els.monTempOverview ? els.monTempOverview.innerHTML : '';
+    tempSideHtml = els.monTempSide ? els.monTempSide.innerHTML : '';
+    powerOverviewHtml = els.monPowerOverview ? els.monPowerOverview.innerHTML : '';
+    powerStatsHtml = els.monPowerStats ? els.monPowerStats.innerHTML : '';
+    powerDekHtml = els.monPowerDek ? els.monPowerDek.innerHTML : '';
+    /* 抽屉内容（v1.1.42 成果，v1.1.43 保持）*/
+    tempHtml = global.window.FnStyleMonitor.tempSheetHtml
+      ? global.window.FnStyleMonitor.tempSheetHtml(TEMP_POWER_DATA) : '';
+    powerHtml = global.window.FnStyleMonitor.powerSheetHtml
+      ? global.window.FnStyleMonitor.powerSheetHtml(TEMP_POWER_DATA) : '';
   } catch (e) {
     console.error('  ❌ 温度/能耗渲染抛异常:', e.message);
     bad++;
@@ -2503,7 +2527,7 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       /RAPL 实测 \+ 底座 \/ 硬盘估算/.test(powerHtml)],
     ['功耗堆叠条渲染出分段',
       /mon-stack/.test(powerHtml) &&
-      (powerHtml.match(/data-grow=/g) || []).length >= 4],
+      (powerHtml.match(/flex-grow:/g) || []).length >= 4],
     ['堆叠条含硬盘的斜纹样式',
       /mono-hatch/.test(powerHtml)],
     ['图例渲染（含部件与瓦数）',
@@ -2718,4 +2742,186 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
   }
 })();
 
-console.log(process.exitCode ? '\n❌ 测试未全部通过' : '\n🎉 全部测试通过');
+
+/* =====================================================================
+   v1.1.43：总览卡片 1:1 还原（fnmonitor 的 thermal / energy overview 模块）
+   ---------------------------------------------------------------------
+   v1.1.42 只还原了「详情抽屉」（SHEETS.temp / SHEETS.power），
+   用户拿 fnmonitor 截图比对后发现：截图里的其实是「总览卡片」
+   （defineModule id:'thermal' 3014 行 / id:'energy' 3107 行）。
+   v1.1.43 两套都做，并补齐数据缺口（每日用电量 / 月年推算 / 柱状图）。
+
+   本块断言总览侧的结构与 CSS 关键值：
+     .g-thermal  1.5fr 1fr（fnmonitor .grid.g-thermal）
+     .energy     1.1fr 1fr（fnmonitor .energy）
+     .thermo-row 112px 1fr 64px / 条高 6px
+     .stat-cells 2 列 × 2 行 / .stat-cell .dnum --dm-h:24px
+     .energy-live .dnum.huge --dm-h:60px（大数字）
+     .stack 高 12px gap 2px / .legend gap 6px 18px 色块 8px
+     .volts 2 列
+   ===================================================================== */
+(function () {
+  let bad = 0;
+  console.log('\n--- 温度和散热 / 能耗 总览卡片 1:1 还原（v1.1.43）---');
+
+  const monSrc2 = fs.readFileSync(SRC, 'utf8');
+  const compSrc2 = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui',
+    'static', 'js', 'compute.js'), 'utf8');
+  const cssTxt2 = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui',
+    'static', 'css', 'app.css'), 'utf8');
+  const htmlTxt2 = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui',
+    'index.html'), 'utf8');
+
+  /* ---------- 总览 DOM 结构（index.html）---------- */
+  const domRules = [
+    ['温度总览左栏容器 #monTempOverview（可点开抽屉）',
+      /id="monTempOverview"[^>]*data-sheet="temp"/.test(htmlTxt2)],
+    ['温度总览右栏容器 #monTempSide（风扇 + 电压）',
+      /id="monTempSide"/.test(htmlTxt2)],
+    ['能耗总览左栏容器 #monPowerOverview（可点开抽屉）',
+      /id="monPowerOverview"[^>]*data-sheet="power"/.test(htmlTxt2)],
+    ['能耗四格统计容器 #monPowerStats',
+      /id="monPowerStats"/.test(htmlTxt2)],
+    ['每日用电柱状图容器 #monPowerDaily',
+      /id="monPowerDaily"/.test(htmlTxt2)],
+    ['能耗左栏带 energy-live 类（决定大数字字号）',
+      /class="[^"]*energy-live[^"]*" id="monPowerOverview"/.test(htmlTxt2)],
+    ['温度摘要行 #monTempDek',
+      /id="monTempDek"/.test(htmlTxt2)],
+    ['能耗摘要行 #monPowerDek',
+      /id="monPowerDek"/.test(htmlTxt2)],
+    ['旧容器 #monTemp / #monPower 已移除（内容进抽屉）',
+      !/id="monTemp"/.test(htmlTxt2) && !/id="monPower"/.test(htmlTxt2)],
+  ];
+
+  /* ---------- 总览 CSS 关键值 ---------- */
+  const cssRules = [
+    ['.g-thermal 为 1.5fr 1fr（fnmonitor .grid.g-thermal）',
+      /\.g-thermal \{[^}]*grid-template-columns: 1\.5fr 1fr/.test(cssTxt2)],
+    ['.energy 为 1.1fr 1fr（fnmonitor .energy）',
+      /\.energy \{[^}]*grid-template-columns: 1\.1fr 1fr/.test(cssTxt2)],
+    ['.thermo-row 三列栅格 112px 1fr 64px',
+      /\.thermo-row \{[^}]*grid-template-columns: 112px 1fr 64px/.test(cssTxt2)],
+    ['温度条高 6px（fnmonitor .thermo height:6px）',
+      /\.thermo \{[^}]*height: 6px/.test(cssTxt2)],
+    ['.stat-cells 为 2 列（fnmonitor repeat(2,1fr)）',
+      /\.stat-cells \{[^}]*grid-template-columns: repeat\(2, 1fr\)/.test(cssTxt2)],
+    ['.stat-cell .dnum 用 --dm-h: 24px（fnmonitor .stat-cell .dnum）',
+      /\.stat-cell \.dnum \{[^}]*--dm-h: 24px/.test(cssTxt2)],
+    ['.energy-live .dnum.huge 用 --dm-h: 60px（fnmonitor）',
+      /\.energy-live \.dnum\.huge \{[^}]*--dm-h: 60px/.test(cssTxt2)],
+    ['.dnum 由 --dm-h 驱动字号（不是裸 font-size）',
+      /\.dnum \{[^}]*--dm-h: 40px/.test(cssTxt2)],
+    ['.dnum 数字本体用 .dm 且带 display 字体',
+      /\.dnum > \.dm \{[^}]*var\(--font-display\)/.test(cssTxt2)],
+    ['堆叠条 gap 2px（fnmonitor .stack gap:2px）',
+      /\.stack \{[^}]*gap: 2px/.test(cssTxt2)],
+    ['图例 gap 6px 18px（fnmonitor .legend）',
+      /\.legend \{[^}]*gap: 6px 18px/.test(cssTxt2)],
+    ['.volts 为 2 列网格',
+      /\.volts \{[^}]*grid-template-columns: repeat\(2, 1fr\)/.test(cssTxt2)],
+    ['640px 断点：.energy-live .dnum.huge --dm-h:46px',
+      /@media \(max-width: 640px\)[\s\S]{0,400}?\.energy-live \.dnum\.huge \{ --dm-h: 46px/.test(cssTxt2)],
+    ['640px 断点：.stat-cell .dnum --dm-h:20px',
+      /@media \(max-width: 640px\)[\s\S]{0,500}?\.stat-cell \.dnum \{ --dm-h: 20px/.test(cssTxt2)],
+    ['960px 断点：.g-thermal / .energy 单列',
+      /@media \(max-width: 960px\)[\s\S]{0,200}?\.g-thermal \{ grid-template-columns: 1fr/.test(cssTxt2) &&
+      /@media \(max-width: 960px\)[\s\S]{0,300}?\.energy \{ grid-template-columns: 1fr/.test(cssTxt2)],
+  ];
+
+  /* ---------- 总览 JS 实现 ---------- */
+  const jsRules = [
+    ['renderTempOverview 存在（温度总览）',
+      /function renderTempOverview\(d\)/.test(monSrc2)],
+    ['renderPowerOverview 存在（能耗总览）',
+      /function renderPowerOverview\(d\)/.test(monSrc2)],
+    ['renderPowerDaily 存在（每日用电柱状图）',
+      /function renderPowerDaily\(res\)/.test(monSrc2)],
+    ['温度条总数上限 6（fnmonitor thermoList 的 slice(0,6)）',
+      /list\.slice\(0, 6\)/.test(monSrc2)],
+    ['硬盘段落独立，不受 6 条上限约束',
+      /diskRows \+=/.test(monSrc2)],
+    ['温度色阶按阈值分 5 段（fnmonitor RAMP.temp / dtemp）',
+      /function ovTempStops\(kind\)/.test(monSrc2) &&
+      /function ovTempFill\(value, kind\)/.test(monSrc2)],
+    ['刻度尺 20/40/60/80/100（fnmonitor scaleHTML）',
+      /\[20, 40, 60, 80, 100\]/.test(monSrc2)],
+    ['功率部件分解对齐 fnmonitor powerParts（含 iDRAC 分支）',
+      /if \(p\.source === 'idrac'\)/.test(monSrc2) &&
+      /CPU 封装/.test(monSrc2) && /内存/.test(monSrc2) &&
+      /主板与其他/.test(monSrc2)],
+    ['硬盘部件用 hatch 斜纹（fnmonitor）',
+      /'hatch'/.test(monSrc2)],
+    ['柱状图最大值上浮 8%（fnmonitor barOpts max×1.08）',
+      /1\.08/.test(monSrc2)],
+    ['X 轴标签步进 n>14?7:n>7?3:1 且末位「今天」（fnmonitor）',
+      /今天/.test(monSrc2)],
+    ['总览卡片可点击打开抽屉（.ov-tap[data-sheet]）',
+      /\.ov-tap\[data-sheet\]/.test(monSrc2)],
+    ['能耗统计走 /api/power/stats',
+      /\/api\/power\/stats/.test(monSrc2)],
+    ['每日用电走 /api/power/daily',
+      /\/api\/power\/daily/.test(monSrc2)],
+    ['抽屉支持 temp / power 两种（compute.js openCompute）',
+      /kind === 'temp'/.test(compSrc2) && /kind === 'power'/.test(compSrc2)],
+    ['抽屉调用 monitor 导出的 tempSheetHtml / powerSheetHtml',
+      /window\.FnStyleMonitor\.tempSheetHtml/.test(compSrc2) &&
+      /window\.FnStyleMonitor\.powerSheetHtml/.test(compSrc2)],
+  ];
+
+  const all = domRules.concat(cssRules, jsRules);
+  all.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  if (bad) {
+    console.error('❌ v1.1.43 总览卡片 1:1 还原断言失败 ' + bad + ' 项');
+    process.exitCode = 1;
+  }
+})();
+
+
+/* =====================================================================
+   v1.1.43：版本号一致性（4 处必须同步）
+   ---------------------------------------------------------------------
+   历史教训：v1.1.36 ~ v1.1.42 每次 bump 只改了 manifest / app.js /
+   index.html，漏了 app/ui/index.cgi 的 APP_VERSION —— 实机 9910 端口
+   的 /api/version 一直返回 1.1.35（落后 8 个版本），用户完全看不到。
+   本块把 4 处版本号锁在一起，任何一处漏改即失败。
+   ===================================================================== */
+(function () {
+  let bad = 0;
+  console.log('\n--- 版本号一致性（4 处同步）---');
+
+  const mf = fs.readFileSync(path.join(__dirname, '..', 'manifest'), 'utf8');
+  const m = mf.match(/^version\s*=\s*(\S+)/m);
+  const ver = m ? m[1] : '';
+  const htmlTxtV = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'index.html'), 'utf8');
+  const appJsV = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'js', 'app.js'), 'utf8');
+  const cgiV = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'index.cgi'), 'utf8');
+
+  const rules = [
+    ['manifest 版本号已读到（v' + ver + '）', ver !== ''],
+    ['index.html 的 ver-pill 与 manifest 一致',
+      new RegExp('ver-pill[^>]*>v' + ver + '<').test(htmlTxtV)],
+    ['app.js 的 APP_VERSION 与 manifest 一致',
+      new RegExp("APP_VERSION = '" + ver + "'").test(appJsV)],
+    ['index.cgi 的 APP_VERSION 与 manifest 一致',
+      new RegExp('APP_VERSION="' + ver + '"').test(cgiV)],
+  ];
+  rules.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  if (bad) {
+    console.error('❌ 版本号一致性断言失败 ' + bad + ' 项');
+    process.exitCode = 1;
+  }
+})();
+
+/* 抽屉滑入动画断言是异步的（两帧 rAF → setTimeout），必须等它跑完再汇总 */
+setTimeout(function () {
+  console.log(process.exitCode ? '\n❌ 测试未全部通过' : '\n🎉 全部测试通过');
+}, 120);

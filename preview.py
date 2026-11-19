@@ -274,12 +274,14 @@ def mock_monitor():
                 {"name": "+12V", "value": 12.06},
             ],
             "disks": [
-                {"name": "sda", "model": "WDC WD40EFZX-68AWUN0", "temp": 36.0,
+                # slot = 机箱物理插槽（fnmonitor 的 diskSlot 口径，来自 iDRAC）
+                {"name": "sda", "slot": 1, "model": "WDC WD40EFZX-68AWUN0", "temp": 36.0,
                  "size": 4000787030016, "sizeText": "3.6 TB", "type": "HDD"},
-                {"name": "sdb", "model": "Samsung SSD 980 PRO 1TB", "temp": 41.0,
+                {"name": "sdb", "slot": 2, "model": "Samsung SSD 980 PRO 1TB", "temp": 41.0,
                  "size": 1000204886016, "sizeText": "931.5 GB", "type": "SSD"},
                 {"name": "nvme0n1", "model": "Samsung SSD 980 PRO 1TB", "temp": 40.0,
-                 "size": 1000204886016, "sizeText": "931.5 GB", "type": "SSD"},
+                 "size": 1000204886016, "sizeText": "931.5 GB", "type": "SSD",
+                 "state": "standby", "standby": True},
             ],
         },
         "storage": {
@@ -300,9 +302,9 @@ def mock_monitor():
             }],
             "raid": [],
             "disks": [
-                {"name": "sda", "model": "WDC WD40EFZX-68AWUN0", "temp": 36.0,
+                {"name": "sda", "loc": 1, "model": "WDC WD40EFZX-68AWUN0", "temp": 36.0,
                  "size": 4000787030016, "sizeText": "3.6 TB", "type": "HDD"},
-                {"name": "sdb", "model": "Samsung SSD 980 PRO 1TB", "temp": 41.0,
+                {"name": "sdb", "loc": 2, "model": "Samsung SSD 980 PRO 1TB", "temp": 41.0,
                  "size": 1000204886016, "sizeText": "931.5 GB", "type": "SSD"},
             ],
         },
@@ -411,12 +413,24 @@ def mock_power_stats():
 
     真机上由 history_collect.energy_stats() 从 SQLite 的 power 指标梯形积分；
     本机预览按同样的口径造一份假数据，用于验证能耗板块的用电与电费展示。
+
+    v1.1.43：补齐月 / 年推算字段（month_proj_* / year_proj_* / avg_w），
+    对齐 fnmonitor 总览四格「本月预计电费」「全年估算」所需的数据。
     """
     rate = 0.6
     now = time.time()
     boot_kwh = 68.4 * 1036440 / 3.6e6
     today_kwh = 1.2847
     month_kwh = 21.6390
+    avg_w = 31.5
+    # 本月剩余天数：按当月最后一天算
+    import calendar
+    import datetime
+    now_dt = datetime.datetime.fromtimestamp(now)
+    remain_days = (calendar.monthrange(now_dt.year, now_dt.month)[1] - now_dt.day)
+    month_proj_kwh = round(month_kwh + avg_w * remain_days * 86400 / 3.6e9, 4)
+    year_proj_kwh = round(avg_w * 8.76, 1)
+    eff = rate
     return {
         "success": True,
         "today_kwh": today_kwh,
@@ -426,8 +440,44 @@ def mock_power_stats():
         "month_yuan": round(month_kwh * rate, 2),
         "rate_yuan_per_kwh": rate,
         "basis": "history",
+        # v1.1.43：月 / 年推算
+        "month_proj_kwh": month_proj_kwh,
+        "month_proj_yuan": round(month_proj_kwh * eff, 2),
+        "month_proj_remain_days": remain_days,
+        "year_proj_kwh": year_proj_kwh,
+        "year_proj_yuan": round(year_proj_kwh * eff, 2),
+        "avg_w": avg_w,
+        "avg_basis": "近 3 天平均",
+        "eff_rate_yuan_per_kwh": eff,
         "ts": int(now),
     }
+
+
+def mock_power_daily(days=30):
+    """每日用电量聚合（对齐 fnmonitor 的 /api/daily 口径）。
+
+    真机上由 history_collect.daily_energy() 从 power 历史梯形积分按自然日分桶；
+    本机预览造一份形态一致的假数据（近 N 天，每天略有起伏）。
+    """
+    import datetime
+    n = max(1, min(30, int(days or 30)))
+    now = datetime.datetime.now()
+    out = []
+    base = 1.05
+    for i in range(n - 1, -1, -1):
+        d = now - datetime.timedelta(days=i)
+        # 用确定性伪随机（同一天永远同一个值），避免每次刷新图都在跳
+        seed = (d.year * 10000 + d.month * 100 + d.day) % 97
+        kwh = round(base + (seed % 40) / 100.0, 4)
+        power_h = 24.0 if i else 20.5
+        out.append({
+            "day": "%04d-%02d-%02d" % (d.year, d.month, d.day),
+            "kwh": kwh,
+            "cost": round(kwh * 0.6, 2),
+            "power_h": power_h,
+            "has_data": True,
+        })
+    return {"days": out, "rate_yuan_per_kwh": 0.6, "success": True}
 
 
 # --------------------------------------------------------------------------
@@ -565,6 +615,14 @@ class Handler(BaseHTTPRequestHandler):
         if name == "power/stats":
             # 用电量与电费统计（能耗板块用）
             return self.send_json(mock_power_stats())
+
+        if name == "power/daily":
+            # 每日用电量聚合（能耗板块的柱状图用）
+            try:
+                _days = int(query.get("days", ["30"])[0] or 30)
+            except Exception:
+                _days = 30
+            return self.send_json(mock_power_daily(_days))
 
 
         if name == "apply":
