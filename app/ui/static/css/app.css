@@ -2425,107 +2425,10 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
 /* 宽表（物理磁盘）独占整行，避免挤在窄列里 */
 .mon-item-wide { grid-column: 1 / -1; }
 
-/* ---- 软 RAID 区块 ----
-   早前软 RAID 用普通 .mon-item 卡片，被塞进 .mon-grid 的一格里，
-   宽度只有 280~320px，和上方通栏的 NAS 机箱图完全不在一个量级，
-   看起来像「半张卡」。现在改成：
-     .mon-raid          通栏区块（与 .mon-nas 同级，宽度 100%）
-     .mon-raid-grid     阵列卡片横向网格，每张卡与盘位卡片同宽
-     .mon-raid-card     单个阵列卡：设备名 + 级别 + 状态 + 成员盘位
-   阵列少时（1~3 组）自动铺满整行，不再挤成窄条。 */
-.mon-raid {
-  grid-column: 1 / -1;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: .85rem .95rem .95rem;
-}
-.mon-raid-head {
-  display: flex;
-  align-items: baseline;
-  gap: .5rem;
-  margin-bottom: .7rem;
-}
-.mon-raid-title {
-  font-size: .84rem;
-  color: var(--text-secondary);
-  font-weight: 600;
-}
-.mon-raid-count {
-  margin-left: auto;
-  font-size: 1.12rem;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-.mon-raid-grid {
-  display: grid;
-  /* 与 .mon-bays 同构：列数由 JS 的 --raid-cols 决定，每列等分整行。
-     这样阵列卡的宽度和上方盘位卡片完全一致（同样的列数 + 同样的
-     minmax(0, 1fr) 等分逻辑），不会再出现「一半宽」的观感。
-
-     左右 .9rem 内缩是为了对齐 .mon-chassis 的内边距 ——
-     盘位卡片位于机箱底板内，RAID 网格要落在同一条基准线上，
-     两者的实际宽度才会严格相等（而不是差 9px）。 */
-  grid-template-columns: repeat(var(--raid-cols, 4), minmax(0, 1fr));
-  gap: .5rem;
-  margin: 0 .9rem;
-}
-.mon-raid-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: .6rem .7rem;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: .45rem;
-}
-.mon-raid-card-head {
-  display: flex;
-  align-items: center;
-  gap: .4rem;
-  min-width: 0;
-}
-.mon-raid-dev {
-  font-size: .84rem;
-  font-weight: 700;
-  color: var(--text-primary);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-.mon-raid-ratio {
-  margin-left: auto;
-  font-size: .78rem;
-  color: var(--text-secondary);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-/* 成员盘位：横向排布的迷你盘位条 */
-.mon-raid-members {
-  display: flex;
-  flex-wrap: wrap;
-  gap: .3rem;
-}
-.mon-raid-member {
-  font-size: .7rem;
-  padding: .12rem .38rem;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: var(--bg-hover);
-  color: var(--text-secondary);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-.mon-raid-member.ok {
-  background: var(--success-soft);
-  color: var(--success);
-  border-color: color-mix(in srgb, var(--success) 35%, transparent);
-}
-.mon-raid-member.crit {
-  background: var(--danger-soft);
-  color: var(--danger);
-  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
-}
+/* ⚠️ v1.1.47：删除了软 RAID 区块的整套 CSS（.mon-raid / .mon-raid-grid /
+   .mon-raid-card / .mon-raid-head / .mon-raid-title / .mon-raid-count /
+   .mon-raid-dev / .mon-raid-ratio / .mon-raid-members / .mon-raid-member）。
+   用户要求「删除软RAID卡片显示」，前端渲染块已同步移除（monitor.js）。
 
 /* ---- 每核负载 ---- */
 .mon-cores {
@@ -2590,16 +2493,7 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
 .mon-chip.warn { background: var(--warning-soft); color: var(--warning); border-color: color-mix(in srgb, var(--warning) 35%, transparent); }
 .mon-chip.crit { background: var(--danger-soft);  color: var(--danger);  border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
 
-/* RAID 级别徽章（raid0/raid1/raid5…）
-   —— 用中性灰而非状态色：级别本身没有「好/坏」之分，
-      颜色留给 active 状态与成员健康，避免三色徽章读起来像告警。 */
-.mon-chip.mon-raid-lvl {
-  background: var(--bg-hover);
-  color: var(--text-secondary);
-  border-color: var(--border-strong);
-  font: 600 .7rem/1.3 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  letter-spacing: .02em;
-}
+/* ⚠️ v1.1.47：软 RAID 卡片已删除，级别徽章 .mon-chip.mon-raid-lvl 一并移除。 */
 
 /* ---- 存储：SMART 告警计数 ---- */
 .mon-smart-flag {

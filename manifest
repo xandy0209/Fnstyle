@@ -1,5 +1,5 @@
 appname               = fnstyle
-version               = 1.1.46
+version               = 1.1.47
 display_name          = FnStyle
 desc                  = 集中管理飞牛个性化设置与丰富主题库：网站标题、登录框、LOGO、壁纸、毛玻璃、任务栏等独立配置，内置多源主题库，支持一键应用到 fnOS 系统，卸载后自动还原系统默认样式。
 platform              = all
@@ -15,5 +15,5 @@ desktop_applaunchname = fnstyle.main
 service_port          = 9910
 checkport             = false
 ctl_stop              = true
-changelog             = 1.1.46：修复温度趋势图主板温度线消失 —— 用户反馈抽屉里「温度」图只有 CPU 一条线，主板图例显示 --。NAS 实机探针核实：数据链路完好（temp.mbTemp = 38.0，temp_mb 1h 历史 60 个点，CHART_GROUPS.temp.metrics 已含 temp,temp_mb），问题出在前端数据装载 —— v1.1.44 把 CPU / 主板温度合并为单图双线时只改了 series 定义，compute.js 的 drawCharts / drawPanelCharts 仍按 d.key 只取一条指标，setData([pts]) 只喂了一列，LineChart 的 cols[1]（主板列）永远是空数组。修复：两处数据装载改为按 series[].m 逐系列从历史响应取数（单系列 def 的 m == key，对 CPU / 内存 / 功耗图完全兼容），本地 Playwright 实测双线齐全（CPU 40.3℃ 蓝线 + 主板 29.5℃ 紫线）。verify 新增 v1.1.46 断言 6 项。
-checksum              = 4a3e0b003c23dcd7b140fef176707c31
+changelog             = 1.1.47：① **修复温度测点计数与列表不一致** —— 用户反馈「顶部统计的是16个温度测点，为什么下方显示的只有15个呢？」NAS 实机核实：temps 12 条中有 2 条 type='disk' 的 drivetemp 条目（就是硬盘本身，列表已在硬盘段单独显示），列表渲染时被排除，而抽屉副标题公式 temps.length + disks + cpu 把它们重复计入、又漏了「主板」→ 12+3+1=16 vs 列表 15。修复：monitor.js 新增 tempPointCount 全站唯一口径函数（= 列表实际行数：CPU + 主板 + 非磁盘有效传感器 + 有效硬盘），抽屉副标题与主页总览计数都改调它，「顶部说几个、下面就显示几行」。② **删除软 RAID 卡片显示** —— 按用户要求移除 monitor.js 的 st.raid 渲染块与整套 .mon-raid* CSS（.mon-raid/.mon-raid-grid/.mon-raid-card 等 13 条规则及级别徽章 .mon-chip.mon-raid-lvl），后端 /proc/mdstat 数据仍采集、仅前端不再呈现；verify 中 v1.1.34 / v1.1.40 的软 RAID 断言重写为删除性断言（带 RAID 脏数据渲染 0 张卡片且不抛异常）。前端 790 项全通过。
+checksum              = 1406cb47450239306d96bfebe237c0d4

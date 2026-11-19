@@ -408,11 +408,11 @@ if (html) {
     ['盘位显示型号', 'WDC WD40EFZX'],
     ['盘位显示存储空间标签', '存储空间 vol1'],
     // 其余板块
-    ['软 RAID', '软 RAID'],
+    /* ⚠️ v1.1.47：软 RAID 卡片已按用户要求删除，
+       「软 RAID」标题不再出现在渲染结果里（见 v1.1.40→v1.1.47 区块） */
     ['阵列卡', '阵列卡'],
     ['休眠标记', '休眠'],
     ['故障盘分级', '故障'],
-    ['成员盘故障 (F)', '(F)'],
     // 负载色阶（参照 fnmonitor「负载色阶」）：进度条与点阵都从绿渐变到红
     ['进度条铺色阶渐变', 'background-image:linear-gradient(90deg, var(--r-g)'],
     ['进度条色标-黄绿', 'var(--r-y)'],
@@ -1500,34 +1500,25 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
   const css = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'css', 'app.css'), 'utf8');
   let bad = 0;
 
-  /* --- 源码级：RAID 卡片要渲染 layout 与 raidState --- */
-  const srcRules = [
-    ['渲染 RAID 级别（layout）', /r\.layout\s*\?/],
-    ['渲染健康位图（raidState）', /r\.raidState/],
-    ['RAID 级别用专用徽章类', /mon-raid-lvl/],
-    /* 健康位图着色规则：出现 _ 或 F 判为异常 */
-    ['健康位图异常判定含 _ 与 F', /unhealthy\s*=\s*bits\.indexOf\('_'\)\s*>=\s*0\s*\|\|\s*bits\.indexOf\('F'\)\s*>=\s*0/],
+  /* --- 源码级 / 渲染级：软 RAID 卡片已删除（v1.1.47）---
+     用户要求「删除软RAID卡片显示」。
+     渲染级用带 raid 数据的 fixture 验证：不渲染卡片、也不抛异常。 */
+  const raidDelRules = [
+    ['monitor.js 不再存在软 RAID 渲染块（st.raid 分支）',
+      /if \(st\.raid && st\.raid\.length\)/.test(src) === false],
+    ['monitor.js 不再引用 mon-raid 系列类名',
+      /mon-raid/.test(src) === false],
+    ['CSS 不再存在 .mon-raid 系列规则定义',
+      /^\s*\.mon-raid[^\s{]*\s*\{/m.test(css) === false],
+    ['CSS 不再存在 RAID 级别徽章规则',
+      /^\s*\.mon-chip\.mon-raid-lvl \{/m.test(css) === false],
   ];
-  srcRules.forEach(([label, ok]) => {
+  raidDelRules.forEach(([label, ok]) => {
     console.log((ok ? '  ✓ ' : '  ✗ ') + label);
     if (!ok) bad++;
   });
 
-  /* --- CSS：口径说明必须覆盖全局 .empty 的 padding --- */
-  const cssRules = [
-    ['口径说明显式覆盖 padding', /\.mon-slog-scope \{[^}]*padding:\s*[\d.]+rem 0 0/.test(css)],
-    ['口径说明覆盖 text-align', /\.mon-slog-scope \{[^}]*text-align:\s*left/.test(css)],
-    /* .empty 本身的 padding 保持不变（别去动全局空状态样式） */
-    ['全局 .empty 样式未被改动', /\.empty \{[^}]*padding: 2\.6rem 1rem/.test(css)],
-    ['RAID 级别徽章样式存在', /\.mon-chip\.mon-raid-lvl \{/.test(css)],
-    ['RAID 级别徽章用中性灰底', /\.mon-chip\.mon-raid-lvl \{[^}]*background: var\(--bg-hover\)/.test(css)],
-  ];
-  cssRules.forEach(([label, ok]) => {
-    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
-    if (!ok) bad++;
-  });
-
-  /* --- 渲染级：真实把 RAID 数据塞进去，看渲染结果 --- */
+  /* 渲染级：塞入 4 组 RAID 脏数据 → 卡片不出现、渲染不炸 */
   const raidData = {
     storage: {
       available: true,
@@ -1536,11 +1527,8 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       raid: [
         { device: 'md0', state: 'active', layout: 'raid1', active: 1, total: 1,
           members: ['sda1[0]'], raidState: 'U' },
-        { device: 'md127', state: 'active', layout: 'raid10', active: 2, total: 2,
-          members: ['sdb1[0]', 'sdb2[1]'], raidState: 'UU' },
         { device: 'md2', state: 'inactive', layout: 'raid5', active: 1, total: 2,
           members: ['sdc1[0]', 'sdd1[1](F)'], raidState: '_U' },
-        /* 缺字段的脏数据不能炸 */
         { device: 'md3', state: 'active', active: 1, total: 1, members: ['sde1[0]'] },
       ],
     },
@@ -1550,35 +1538,18 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     try {
       global.window.FnStyleMonitor.__renderForTest(raidData);
     } catch (e) {
-      console.error('  ❌ RAID 渲染抛异常:', e.message);
+      console.error('  ❌ 带 RAID 数据渲染抛异常:', e.message);
       bad++;
       return '';
     }
     return els.monStorage ? els.monStorage.innerHTML : '';
   })();
-
-  const hasLvl = raidHtml.indexOf('mon-raid-lvl') >= 0 && raidHtml.indexOf('>raid1<') >= 0;
-  console.log((hasLvl ? '  ✓ ' : '  ✗ ') + '渲染结果含 RAID 级别徽章');
-  if (!hasLvl) bad++;
-
-  const hasState = raidHtml.indexOf('[U]') >= 0 && raidHtml.indexOf('[UU]') >= 0
-    && raidHtml.indexOf('[_U]') >= 0;
-  console.log((hasState ? '  ✓ ' : '  ✗ ') + '渲染结果含成员健康位图');
-  if (!hasState) bad++;
-
-  /* 异常位图（带 _）必须用 crit 类着色 */
-  const critBits = /mon-raid-member crit[^>]*>\[_U\]</.test(raidHtml);
-  console.log((critBits ? '  ✓ ' : '  ✗ ') + '异常健康位图标红');
-  if (!critBits) bad++;
-
-  /* inactive 阵列状态标黄 */
-  const warnState = /mon-badge warn[^>]*>inactive</.test(raidHtml);
-  console.log((warnState ? '  ✓ ' : '  ✗ ') + '非 active 阵列状态标黄');
-  if (!warnState) bad++;
-
-  /* 缺 layout / raidState 的脏数据不能抛异常 */
-  const noCrash = typeof raidHtml === 'string' && raidHtml.indexOf('md3') >= 0;
-  console.log((noCrash ? '  ✓ ' : '  ✗ ') + '缺少 layout/raidState 时不报错且正常渲染');
+  const noRaidCard = typeof raidHtml === 'string'
+    && raidHtml.indexOf('软 RAID') < 0 && raidHtml.indexOf('mon-raid') < 0;
+  console.log((noRaidCard ? '  ✓ ' : '  ✗ ') + '带 RAID 数据渲染时不出现软 RAID 卡片');
+  if (!noRaidCard) bad++;
+  const noCrash = typeof raidHtml === 'string' && raidHtml.length > 0;
+  console.log((noCrash ? '  ✓ ' : '  ✗ ') + '带 RAID 脏数据渲染不报错');
   if (!noCrash) bad++;
 
   /* --- 口径说明的 DOM 高度不该有大片空白 ---
@@ -2123,56 +2094,32 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
   if (bad) { console.error('❌ v1.1.40 断言失败 ' + bad + ' 项'); process.exitCode = 1; }
 })();
 
-/* ---------- v1.1.40：软 RAID 改为通栏区块 + 阵列卡片与盘位卡片等宽 ---------- */
-(function checkRaidWideLayout() {
-  console.log('\n--- 软 RAID 通栏布局（v1.1.40）---');
+/* ---------- v1.1.40→v1.1.47：软 RAID 卡片已按用户要求删除 ----------
+   v1.1.40 曾把软 RAID 改成通栏区块；v1.1.47 用户要求「删除软RAID卡片显示」，
+   渲染块与整套 CSS（.mon-raid*）已物理删除，本块改为锁定删除后的形态：
+   ① 源码不再含渲染块与类名引用；② CSS 规则定义清零；
+   ③ 带 RAID 数据渲染不出现卡片、不报错（脏数据容错保留）。 */
+(function checkRaidRemoved() {
+  console.log('\n--- 软 RAID 卡片删除（v1.1.40 历史断言已随 v1.1.47 重写）---');
   const mon = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'js', 'monitor.js'), 'utf8');
   const css3 = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'css', 'app.css'), 'utf8');
   let bad = 0;
 
   const rules = [
-    /* --- JS：不再用普通 item() 卡片 --- */
-    ['RAID 不再用 item() 渲染',
-      !/item\('软 RAID'/.test(mon)],
-    ['改用 mon-raid 通栏区块',
-      /<div class="mon-raid">/.test(mon)],
-    ['通栏区块内含标题与组数',
-      /mon-raid-title">软 RAID</.test(mon) && /mon-raid-count/.test(mon)],
-    ['每个阵列一张独立卡片',
-      /<div class="mon-raid-card">/.test(mon)],
-    ['阵列网格用 --raid-cols 变量',
-      /mon-raid-grid" style="--raid-cols:/.test(mon)],
-    ['列数规则与盘位一致（1~4）',
-      /raidCols = Math\.min\(Math\.max\(st\.raid\.length, 1\), 4\)/.test(mon)],
-    ['成员盘位用 mon-raid-member',
-      /mon-raid-member/.test(mon)],
-    ['健康位图与成员盘位并排同一行',
-      /mon-raid-members">'\s*\+\s*members\s*\+\s*rs/.test(mon)],
-
-    /* --- CSS：通栏 + 与盘位等宽 --- */
-    ['.mon-raid 通栏（grid-column: 1 / -1）',
-      /\.mon-raid \{[^}]*grid-column:\s*1 \/ -1/.test(css3)],
-    ['.mon-raid-grid 用 repeat(var(--raid-cols), minmax(0, 1fr))',
-      /\.mon-raid-grid \{[^}]*grid-template-columns:\s*repeat\(var\(--raid-cols,\s*4\),\s*minmax\(0,\s*1fr\)\)/.test(css3)],
-    ['阵列网格左右内缩 .9rem 对齐机箱基准线',
-      /\.mon-raid-grid \{[^}]*margin:\s*0 \.9rem/.test(css3)],
-    ['阵列卡有独立卡面样式',
-      /\.mon-raid-card \{[^}]*background: var\(--bg-card\)/.test(css3)],
-    ['成员标签样式存在',
-      /\.mon-raid-member \{/.test(css3)],
-    ['成员标签正常态用 success 底色',
-      /\.mon-raid-member\.ok \{[^}]*background: var\(--success-soft\)/.test(css3)],
-    ['成员标签故障态用 danger 底色',
-      /\.mon-raid-member\.crit \{[^}]*background: var\(--danger-soft\)/.test(css3)],
-    ['软 RAID 不再使用 .mon-row 行式布局',
-      !/mon-row-name">'\s*\+\s*esc\(r\.device/.test(mon)],
+    ['源码不再含 <div class="mon-raid"> 渲染', /<div class="mon-raid">/.test(mon) === false],
+    ['源码不再含 mon-raid-card / mon-raid-grid / mon-raid-member',
+      /mon-raid-card|mon-raid-grid|mon-raid-member/.test(mon) === false],
+    ['源码不再含 raidCols 列数逻辑', /raidCols/.test(mon) === false],
+    ['CSS 不再存在任何 .mon-raid* 规则定义',
+      /^\s*\.mon-raid[^\s{]*\s*\{/m.test(css3) === false],
+    ['CSS 保留删除说明注释（防误判为漏改）', /软 RAID 区块的整套 CSS/.test(css3)],
   ];
   rules.forEach(([label, ok]) => {
     console.log((ok ? '  ✓ ' : '  ✗ ') + label);
     if (!ok) bad++;
   });
 
-  /* --- 渲染级：4 个阵列 → 4 张卡片 --- */
+  /* 渲染级：4 组阵列数据 → 0 张卡片、不抛异常 */
   const raidData = {
     storage: {
       available: true,
@@ -2196,26 +2143,18 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     global.window.FnStyleMonitor.__renderForTest(raidData);
     html = els.monStorage ? els.monStorage.innerHTML : '';
   } catch (e) {
-    console.error('  ❌ RAID 渲染抛异常:', e.message);
+    console.error('  ❌ 带 RAID 数据渲染抛异常:', e.message);
     bad++;
   }
   const cardCount = (html.match(/class="mon-raid-card"/g) || []).length;
-  console.log((cardCount === 4 ? '  ✓ ' : '  ✗ ') + '4 个阵列渲染成 4 张独立卡片（实为 ' + cardCount + '）');
-  if (cardCount !== 4) bad++;
+  console.log((cardCount === 0 ? '  ✓ ' : '  ✗ ') + '带 4 组阵列数据渲染出 0 张 RAID 卡片（实为 ' + cardCount + '）');
+  if (cardCount !== 0) bad++;
 
-  const gridOk = /class="mon-raid-grid" style="--raid-cols:4"/.test(html);
-  console.log((gridOk ? '  ✓ ' : '  ✗ ') + '阵列网格列数为 4（与盘位列数上限一致）');
-  if (!gridOk) bad++;
+  const raidTextGone = html.indexOf('软 RAID') < 0;
+  console.log((raidTextGone ? '  ✓ ' : '  ✗ ') + '渲染结果不再含「软 RAID」文字');
+  if (!raidTextGone) bad++;
 
-  const memberOk = /class="mon-raid-member ok">sda1\[0\]</.test(html);
-  console.log((memberOk ? '  ✓ ' : '  ✗ ') + '成员盘位用 mon-raid-member ok 类');
-  if (!memberOk) bad++;
-
-  const badMember = /class="mon-raid-member crit">sde1\[1\]\(F\)</.test(html);
-  console.log((badMember ? '  ✓ ' : '  ✗ ') + '故障成员盘位标 crit');
-  if (!badMember) bad++;
-
-  if (bad) { console.error('❌ v1.1.40 RAID 布局断言失败 ' + bad + ' 项'); process.exitCode = 1; }
+  if (bad) { console.error('❌ v1.1.40(v1.1.47 重写) 软 RAID 删除断言失败 ' + bad + ' 项'); process.exitCode = 1; }
 })();
 
 /* =====================================================================
@@ -3154,6 +3093,53 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
 
   if (bad) {
     console.error('❌ v1.1.46 断言失败 ' + bad + ' 项');
+    process.exitCode = 1;
+  }
+})();
+
+/* ======================================================================
+   v1.1.47 —— 测点计数与列表行数一致（顶部 16 vs 列表 15）
+   ----------------------------------------------------------------------
+   用户反馈：「顶部统计的是16个温度测点，为什么下方显示的只有15个呢？」
+   NAS 实机核实：temps 12 条中有 2 条 type='disk' 的 drivetemp（就是硬盘，
+   列表已在 disks 段单独显示），列表渲染时被排除；
+   而抽屉副标题公式 temps.length + disks + cpu 把它们重复计入、又漏了主板
+   → 12+3+1=16，列表实际 = CPU+主板+10传感器+3硬盘 = 15。
+   修复：monitor.js 新增 tempPointCount（全站唯一口径 = 列表行数），
+   总览计数与抽屉副标题都调它。
+   ====================================================================== */
+(function () {
+  let bad = 0;
+  console.log('\n--- v1.1.47 测点计数口径统一（= 列表行数）---');
+
+  const monSrc47 = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'js', 'monitor.js'), 'utf8');
+  const compSrc47 = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'js', 'compute.js'), 'utf8');
+
+  const rules47 = [
+    ['monitor.js 定义 tempPointCount（全站唯一口径函数）',
+      /function tempPointCount\(t\) \{/.test(monSrc47)],
+    ['口径排除 temps 中 type=\'disk\' 条目（drivetemp 与硬盘段重复）',
+      /function tempPointCount\(t\) \{[\s\S]{0,600}s\.type === 'disk'/.test(monSrc47)],
+    ['口径排除无读数传感器（value null/空）',
+      /function tempPointCount\(t\) \{[\s\S]{0,800}s\.value === null \|\| s\.value === undefined \|\| s\.value === ''/.test(monSrc47)],
+    ['口径含 CPU 与主板（列表里各有一行）',
+      /function tempPointCount\(t\) \{[\s\S]{0,400}t\.cpuTemp[\s\S]{0,300}t\.mbTemp/.test(monSrc47)],
+    ['tempPointCount 已导出到 FnStyleMonitor',
+      /tempPointCount: tempPointCount,/.test(monSrc47)],
+    ['总览计数改用 tempPointCount（不再 temps.length + disks.length）',
+      /cnt\.textContent = tempPointCount\(t\) \+ ' 个温度测点/.test(monSrc47) &&
+      /cnt\.textContent = \(temps\.length \+ \(t\.disks \|\| \[\]\)\.length\)/.test(monSrc47) === false],
+    ['抽屉副标题改调 FnStyleMonitor.tempPointCount',
+      /window\.FnStyleMonitor && window\.FnStyleMonitor\.tempPointCount/.test(compSrc47) &&
+      /\(temps \+ disks \+ cpu\) \+ ' 个温度测点/.test(compSrc47) === false],
+  ];
+  rules47.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  if (bad) {
+    console.error('❌ v1.1.47 断言失败 ' + bad + ' 项');
     process.exitCode = 1;
   }
 })();

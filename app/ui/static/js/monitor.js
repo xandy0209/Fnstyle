@@ -1294,56 +1294,9 @@
     }
 
     /* --- 软 RAID ---
-       数据源 /proc/mdstat，后端已采集 layout（RAID 级别）与 raidState（健康位图），
-       这两个字段原先被丢掉了 —— 只显示设备名的话，
-       「md0 active 1/1 sda1[0]」既看不出阵列类型，也看不出冗余级别，
-       单盘伪 RAID1（raid1 却只有 1 块成员）这种隐患完全看不出来。
-       现在补上：RAID 级别徽章 + 成员健康位图。
-
-       呈现方式：早前用普通 .mon-item 卡片，被 .mon-grid 挤进一格，
-       宽度只有 280~320px，与上方通栏的 NAS 机箱图完全不在一个量级，
-       看起来像「半张卡」。现在改成独立的通栏区块，
-       每个阵列一张小卡横向排列，宽度与盘位卡片一致。 */
-    if (st.raid && st.raid.length) {
-      /* 列数规则与上方盘位卡片完全一致（都是 1~4 列、上限 4），
-         两套网格用同样的 minmax(0,1fr) 等分整行，
-         所以阵列卡与盘位卡的宽度、间距完全对齐。 */
-      var raidCols = Math.min(Math.max(st.raid.length, 1), 4);
-      var rcards = st.raid.map(function (r) {
-        var cls = (r.state && r.state.indexOf('active') === 0) ? 'ok' : 'warn';
-        var members = (r.members || []).map(function (m) {
-          var bad = m.indexOf('(F)') >= 0;
-          return '<span class="mon-raid-member ' + (bad ? 'crit' : 'ok') + '">' + esc(m) + '</span>';
-        }).join('');
-        /* RAID 级别（raid0/1/5/6/10…）—— 后端已采集，前端原先没渲染 */
-        var layout = r.layout ? '<span class="mon-chip mon-raid-lvl">' + esc(r.layout) + '</span>' : '';
-        /* 成员健康位图 [UUU] / [_U_] —— U=正常，_=缺失或故障 */
-        var rs = '';
-        if (r.raidState) {
-          var bits = String(r.raidState);
-          var unhealthy = bits.indexOf('_') >= 0 || bits.indexOf('F') >= 0;
-          rs = '<span class="mon-raid-member ' + (unhealthy ? 'crit' : 'ok') + '">[' + esc(bits) + ']</span>';
-        }
-        return '<div class="mon-raid-card">' +
-          '<div class="mon-raid-card-head">' +
-            '<span class="mon-raid-dev">' + esc(r.device || r.name || 'md') + '</span>' +
-            layout +
-            '<span class="mon-badge ' + cls + '">' + esc(r.state || '未知') + '</span>' +
-            '<span class="mon-raid-ratio">' + r.active + '/' + r.total + '</span>' +
-          '</div>' +
-          /* 成员盘位与健康位图并排一行，不再让 [U] 单独占一行 */
-          ((members || rs) ? '<div class="mon-raid-members">' + members + rs + '</div>' : '') +
-        '</div>';
-      }).join('');
-      html += '<div class="mon-raid">' +
-        '<div class="mon-raid-head">' +
-          '<span class="mon-raid-title">软 RAID</span>' +
-          '<span class="mon-raid-count">' + st.raid.length + ' 组</span>' +
-        '</div>' +
-        '<div class="mon-raid-grid" style="--raid-cols:' + raidCols + '">' + rcards + '</div>' +
-      '</div>';
-    }
-
+       ⚠️ v1.1.47：按用户要求删除软 RAID 卡片的显示
+       （/proc/mdstat 数据后端仍在采集，仅前端不再呈现；
+         硬 RAID 卡（storcli）段落保留）。 */
     /* --- 硬 RAID 卡（storcli） --- */
     var rc = st.raidcard || {};
     if (rc.type && rc.type !== 'none') {
@@ -1530,6 +1483,38 @@
       return '<span style="left:' + tPos(v) + '%">' + v + '°</span>';
     }).join('') + '</div><span></span></div>';
 
+  /* 温度测点计数（⚠️ v1.1.47 统一口径，全站唯一）
+     口径 = 温度计列表的实际行数：
+       CPU(有效 1 个) + 主板(有效 1 个)
+       + temps 中 type!=='disk' 且有读数的传感器
+       + disks 中有读数的硬盘。
+     ⚠️ 之前两处口径各算各的，导致「顶部计数与列表行数对不上」
+       （用户实机反馈：顶部 16 个，列表只有 15 行）：
+       · 抽屉副标题 compute.js tempSubText = temps.length + disks + cpu
+         —— temps 里 type='disk' 的 drivetemp 条目（就是硬盘本身，
+         列表已单独用 disks 段显示）被重复计入，且漏了「主板」；
+       · 总览计数 monitor.js = temps.length + disks.length
+         —— 同样重复计 drivetemp。
+     修复：计数必须与列表行数一致 —— 「顶部说几个，下面就显示几行」。
+     compute.js 的 tempSubText 也调本函数（monitor.js 先于 compute.js 加载）。 */
+  function tempPointCount(t) {
+    t = t || {};
+    var n = 0;
+    var cpu = t.cpuTemp, mb = t.mbTemp;
+    if (cpu !== null && cpu !== undefined && !isNaN(Number(cpu))) n++;
+    if (mb !== null && mb !== undefined && !isNaN(Number(mb))) n++;
+    (t.temps || []).forEach(function (s) {
+      if (!s || s.type === 'disk') return;
+      if (s.value === null || s.value === undefined || s.value === '') return;
+      n++;
+    });
+    (t.disks || []).forEach(function (x) {
+      if (!x || x.temp === null || x.temp === undefined || x.temp === '') return;
+      n++;
+    });
+    return n;
+  }
+
   function renderTempOverview(d) {
     var box = $('#monTempOverview');
     if (!box) return;
@@ -1681,7 +1666,10 @@
 
     var cnt = $('#monTempCount');
     if (cnt) {
-      cnt.textContent = (temps.length + (t.disks || []).length) + ' 个温度测点 · ' + fans.length + ' 个风扇';
+      /* ⚠️ v1.1.47：改用 tempPointCount 统一口径（与温度计列表行数一致），
+         旧写法 temps.length + disks.length 会把 temps 里 type='disk'
+         的 drivetemp 条目与 disks 段重复相加。 */
+      cnt.textContent = tempPointCount(t) + ' 个温度测点 · ' + fans.length + ' 个风扇';
     }
   }
 
@@ -2624,6 +2612,7 @@
     lastData: function () { return lastData; },
     // 温度 / 能耗抽屉的内容（1:1 对齐 fnmonitor 的 SHEETS.temp / SHEETS.power）
     tempSheetHtml: tempSheetHtml,
+    tempPointCount: tempPointCount,
     powerSheetHtml: powerSheetHtml,
     // 抽屉里的用电与电费需要异步回填
     loadPowerEnergy: loadPowerEnergy,

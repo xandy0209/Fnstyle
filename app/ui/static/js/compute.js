@@ -1096,16 +1096,28 @@
   }
 
   /* 温度与散热抽屉的副标题（对齐 fnmonitor 的 SHEETS.temp.sub）
-     口径：温度测点数（含硬盘）· 风扇数 */
+     ⚠️ v1.1.47：口径改用 monitor.js 的 tempPointCount（全站唯一）。
+     旧公式 temps.length + disks + cpu 有两个 bug（用户实机实测：
+     顶部显示 16 个，列表只有 15 行）：
+       ① temps 里 type='disk' 的 drivetemp 条目（就是硬盘本身，
+          列表已单独用 disks 段显示、不再出现在传感器段）被重复计入；
+       ② 漏了「主板」（列表里有主板一行）。
+     修复后计数 = 列表实际行数，顶部与下方永远一致。 */
   function tempSubText(d) {
     var t = (d && d.temp) || {};
-    var temps = (t.temps || []).length;
-    var disks = (t.disks || []).filter(function (x) {
-      return x && x.temp !== null && x.temp !== undefined && x.temp !== '';
-    }).length;
-    var cpu = (t.cpuTemp === null || t.cpuTemp === undefined) ? 0 : 1;
     var fans = (t.fans || []).length;
-    return (temps + disks + cpu) + ' 个温度测点 · ' + fans + ' 个风扇';
+    var n = (window.FnStyleMonitor && window.FnStyleMonitor.tempPointCount)
+      ? window.FnStyleMonitor.tempPointCount(t)
+      : ((t.temps || []).filter(function (s) {
+          return s && s.type !== 'disk' &&
+            s.value !== null && s.value !== undefined && s.value !== '';
+        }).length +
+        (t.disks || []).filter(function (x) {
+          return x && x.temp !== null && x.temp !== undefined && x.temp !== '';
+        }).length +
+        (t.cpuTemp !== null && t.cpuTemp !== undefined ? 1 : 0) +
+        (t.mbTemp !== null && t.mbTemp !== undefined ? 1 : 0));
+    return n + ' 个温度测点 · ' + fans + ' 个风扇';
   }
 
   /* 能耗抽屉的副标题（对齐 fnmonitor 的 SHEETS.power.sub）*/
