@@ -2003,15 +2003,15 @@
           电压做成 2 列卡片网格 —— 与 fnmonitor 观感完全不同。
           现在统一改成 kv 键值表（与「全部传感器」段一致）。 */
     /* 风扇 —— fnmonitor: kvHTML(fans.map(f => [esc(fanName(f)), `${F.int(f.rpm)} RPM`])) */
-    html += '<div class="mon-sub-sec"><span>风扇</span>' +
+    html += '<div class="mon-cmp-sec"><span>风扇</span>' +
       '<span class="faint">' + fans.length + ' 个</span></div>';
     if (fans.length) {
-      html += '<div class="mon-kv">' + fans.map(function (f) {
+      html += '<div class="mon-dkv">' + fans.map(function (f) {
         var rpm = Number(f.rpm);
         var has = f.rpm !== null && f.rpm !== undefined && !isNaN(rpm);
-        return '<div class="mon-kv-row">' +
-          '<span>' + esc(f.name || '风扇') + '</span>' +
-          '<span>' + (has ? fmtInt(rpm) + ' RPM' : '—') + '</span></div>';
+        return '<div class="mon-dkv-row">' +
+          '<span class="k">' + esc(f.name || '风扇') + '</span>' +
+          '<span class="v">' + (has ? fmtInt(rpm) + ' RPM' : '—') + '</span></div>';
       }).join('') + '</div>';
     } else {
       html += '<div class="mon-info">未检测到可读取的风扇转速传感器' +
@@ -2020,32 +2020,32 @@
     }
 
     /* 电压 —— fnmonitor: kvHTML(volts.map(v => [esc(v.name), `${F.d2(v.value)} V`])) */
-    html += '<div class="mon-sub-sec"><span>电压</span>' +
+    html += '<div class="mon-cmp-sec"><span>电压</span>' +
       '<span class="faint">' + volts.length + ' 个</span></div>';
     if (volts.length) {
-      html += '<div class="mon-kv">' + volts.map(function (v) {
+      html += '<div class="mon-dkv">' + volts.map(function (v) {
         var val = Number(v.value);
         var has = v.value !== null && v.value !== undefined && !isNaN(val);
-        return '<div class="mon-kv-row">' +
-          '<span>' + esc(v.name) + '</span>' +
-          '<span>' + (has ? fmt2(val) + ' V' : '—') + '</span></div>';
+        return '<div class="mon-dkv-row">' +
+          '<span class="k">' + esc(v.name) + '</span>' +
+          '<span class="v">' + (has ? fmt2(val) + ' V' : '—') + '</span></div>';
       }).join('') + '</div>';
     } else {
       html += '<div class="mon-info">未读取到电压数据。</div>';
     }
 
-    html += '<div class="mon-sub-sec"><span>全部传感器</span>' +
+    html += '<div class="mon-cmp-sec"><span>全部传感器</span>' +
       '<span class="faint">' + temps.length + ' 个</span></div>';
     if (temps.length) {
-      html += '<div class="mon-kv">' + temps.map(function (s) {
+      html += '<div class="mon-dkv">' + temps.map(function (s) {
         var extra = '';
         if (s.max !== null && s.max !== undefined) {
           extra += '<div class="sub">上限 ' + fmt1(s.max) + ' ℃</div>';
         }
         var tag = SENSOR_TN[s.type] || s.type || '其它';
-        return '<div class="mon-kv-row">' +
-          '<span>' + esc(s.name) + '<span class="mon-sensor-tag">' + esc(tag) + '</span></span>' +
-          '<span>' + fmt1(s.value) + ' ℃' + extra + '</span></div>';
+        return '<div class="mon-dkv-row">' +
+          '<span class="k">' + esc(s.name) + '<span class="mon-sensor-tag">' + esc(tag) + '</span></span>' +
+          '<span class="v">' + fmt1(s.value) + ' ℃' + extra + '</span></div>';
       }).join('') + '</div>';
     } else {
       html += '<div class="mon-info">sensors 未返回温度' +
@@ -2194,30 +2194,31 @@
     if (p.nics !== null && p.nics !== undefined) {
       detail.push(['网卡', p.nics + ' 口 · 约 ' + fmt1(p.nics * 5) + ' W']);
     }
-    html += '<div class="mon-sub-sec"><span>部件明细</span>' +
+    html += '<div class="mon-cmp-sec"><span>部件明细</span>' +
       '<span class="faint">' + (isRapl ? 'RAPL 实测' : '模型估算') + '</span></div>';
-    html += '<div class="mon-kv">' + detail.map(function (kv) {
-      return '<div class="mon-kv-row"><span>' + esc(kv[0]) + '</span><span>' + kv[1] + '</span></div>';
+    html += '<div class="mon-dkv">' + detail.map(function (kv) {
+      return '<div class="mon-dkv-row"><span class="k">' + esc(kv[0]) + '</span>' +
+        '<span class="v">' + kv[1] + '</span></div>';
     }).join('') + '</div>';
 
     /* --- ⑤ 用电与电费（异步加载） --- */
-    html += '<div class="mon-sub-sec"><span>用电与电费</span>' +
+    html += '<div class="mon-cmp-sec"><span>用电与电费</span>' +
       '<span class="faint" data-pwr-rate></span></div>';
-    html += '<div class="mon-kv" data-pwr-energy><div class="mon-kv-row">' +
-      '<span>今日</span><span>统计加载中…</span></div></div>';
+    html += '<div class="mon-dkv" data-pwr-energy><div class="mon-dkv-row">' +
+      '<span class="k">今日</span><span class="v">统计加载中…</span></div></div>';
 
     /* --- ⑥ 估算参数 --- */
     var ep = p.estimation_params || {};
     if (ep.tdp_w !== undefined || ep.disk_typical_w !== undefined) {
-      html += '<div class="mon-sub-sec"><span>估算参数</span></div>';
-      html += '<div class="mon-kv">' +
-        '<div class="mon-kv-row"><span>CPU TDP（无 RAPL 时）</span><span>' +
+      html += '<div class="mon-cmp-sec"><span>估算参数</span></div>';
+      html += '<div class="mon-dkv">' +
+        '<div class="mon-dkv-row"><span class="k">CPU TDP（无 RAPL 时）</span><span class="v">' +
           (ep.tdp_w !== undefined ? ep.tdp_w + ' W' : '—') + '</span></div>' +
-        '<div class="mon-kv-row"><span>单盘典型功耗</span><span>' +
+        '<div class="mon-dkv-row"><span class="k">单盘典型功耗</span><span class="v">' +
           (ep.disk_typical_w !== undefined ? ep.disk_typical_w + ' W' : '—') + '</span></div>' +
-        '<div class="mon-kv-row"><span>网卡固定功耗</span><span>' +
+        '<div class="mon-dkv-row"><span class="k">网卡固定功耗</span><span class="v">' +
           (ep.nic_fixed_w !== undefined ? ep.nic_fixed_w + ' W' : '—') + '</span></div>' +
-        '<div class="mon-kv-row"><span>主板 / 其他底座</span><span>' +
+        '<div class="mon-dkv-row"><span class="k">主板 / 其他底座</span><span class="v">' +
           (ep.base_w !== undefined ? ep.base_w + ' W' : '—') + '</span></div>' +
       '</div>';
     }
@@ -2314,11 +2315,11 @@
       var host = box.querySelector('[data-pwr-energy]');
       if (!host) return;
       host.innerHTML =
-        '<div class="mon-kv-row"><span>今日</span><span>' +
+        '<div class="mon-dkv-row"><span class="k">今日</span><span class="v">' +
           fmtKwh(j.today_kwh) + ' kWh · ' + fmtYuan(j.today_yuan) + ' 元</span></div>' +
-        '<div class="mon-kv-row"><span>本月</span><span>' +
+        '<div class="mon-dkv-row"><span class="k">本月</span><span class="v">' +
           fmtKwh(j.month_kwh) + ' kWh · ' + fmtYuan(j.month_yuan) + ' 元</span></div>' +
-        '<div class="mon-kv-row"><span>开机以来（按当前功率估）</span><span>' +
+        '<div class="mon-dkv-row"><span class="k">开机以来（按当前功率估）</span><span class="v">' +
           fmtKwh(j.boot_kwh) + ' kWh</span></div>';
     }).catch(function () { /* 静默失败：保留「统计加载中…」 */ });
   }

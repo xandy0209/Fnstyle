@@ -1947,7 +1947,15 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
         .temp-cells b{display:block;margin-top:8px;font-size:18px;font-weight:600}
       i.e. **4 格一行 + 普通字号 18px**，数字小而克制，不是 32px 巨号。
       640px 断点才降为 2 列（fnmonitor 1226 行）。
-   分割线沿用 gap:1px + 底色 --border 的「连体」做法（与 .stat-cells 一致）。 */
+   分割线沿用 gap:1px + 底色 --border 的「连体」做法（与 .stat-cells 一致）。
+   ⚠️ v1.1.45 修正三处（用户反馈「红框中的卡片…太高了不协调 / 挨太紧」）：
+      ① 圆角 6px → **var(--radius)（10px）**，与抽屉内其它卡片
+         （.mon-thermo / .mon-cmp-chart-card / .mon-dw-card）统一
+      ② 内边距 20px 24px → **12px 16px**，格子高度 91px → 约 74px
+      ③ 上下各加 **14px 间距**，不再与 hero / 温度计卡片贴死
+   注：.mon-drawer-body > * + * { margin-top: 0 } 优先级同为 0,1,0 但后声明，
+      会把这里的 margin-top 清零 → 需靠文件后段的
+      `.mon-drawer-body > .mon-cells { margin-top: 14px }`（0,2,0）覆盖。 */
 .mon-cells {
   grid-column: 1 / -1;
   display: grid;
@@ -1955,12 +1963,14 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
   gap: 1px;
   background: var(--border);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius);
   overflow: hidden;
+  margin-top: 14px;
+  margin-bottom: 14px;
 }
 .mon-cell {
   background: var(--bg-card);
-  padding: 1.25rem 1.5rem;
+  padding: 12px 16px;
   min-width: 0;
 }
 .mon-cell-eyebrow {
@@ -1973,10 +1983,10 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
 /* 18px —— 与 fnmonitor 的 .temp-cells b 一致（不是 32px 大数字） */
 .mon-cell b {
   display: block;
-  margin-top: .5rem;
+  margin-top: .375rem;
   font-size: 1.125rem;
   font-weight: 600;
-  line-height: 1.3;
+  line-height: 1.25;
   letter-spacing: 0;
   font-variant-numeric: tabular-nums;
   color: var(--text-primary);
@@ -1989,8 +1999,9 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
   grid-column: 1 / -1;
   background: var(--bg-card);
   border: 1px solid var(--border);
-  /* 14px —— 与 .mon-kv 同款圆角，抽屉内卡片保持一致 */
-  border-radius: 14px;
+  /* 圆角统一为 var(--radius) —— 与抽屉内其它卡片
+     （.mon-cells / .mon-cmp-chart-card / .mon-dw-card）保持一致 */
+  border-radius: var(--radius);
   padding: 1.5rem;
 }
 /* 行高 padding 10px —— 与 fnmonitor 的 .thermo-row 一致 */
@@ -2153,7 +2164,10 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
   grid-column: 1 / -1;
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  /* ⚠️ v1.1.45：圆角 6px（--radius-sm）→ var(--radius)（10px），
+     与抽屉内其它卡片（.mon-cells / .mon-thermo / .mon-cmp-chart-card /
+     .mon-dw-card）统一 —— 用户要求「所有抽屉卡片样式保持一致」。 */
+  border-radius: var(--radius);
   padding: 1.5rem;
 }
 .mon-stack {
@@ -2209,89 +2223,33 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
   color: var(--text-primary);
 }
 
-/* ---- 分节小标题（对齐 fnmonitor 的 .sheet-sec）----
-   ⚠️ v1.1.44 修正两处：
-     ① **去掉 ::before 的 3px 竖条** —— fnmonitor 的 .sheet-sec 是纯文字
-        （362 行 / 741 行：只有 flex + 字号 + 字重 + color，没有前缀装饰）。
-        之前加的竖条在浅色主题下被渲染成一个「↑」箭头，很扎眼。
-     ② gap 由 .375rem 改为 6px（fnmonitor 741 行 align-items:center;gap:6px）。 */
-.mon-sub-sec {
-  grid-column: 1 / -1;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  margin-top: 1.5rem;
-  margin-bottom: -.75rem;
-  font-size: .78125rem;
-  font-weight: 700;
-  letter-spacing: .01em;
-  color: var(--text-secondary);
-}
-.mon-sub-sec > span:first-of-type { margin-right: auto; }
-.mon-sub-sec .faint {
-  font-weight: 400;
-  font-size: .75rem;
-  color: var(--text-muted);
-}
+/* ⚠️ v1.1.45：删除了 .mon-sub-sec 这一套重复的分节标题样式。
+   温度 / 能耗抽屉原来的「风扇」「电压」「全部传感器」「部件明细」
+   「用电与电费」「估算参数」用的是 .mon-sub-sec，
+   而处理器 / 内存 / 显卡抽屉用的是 .mon-cmp-sec ——
+   两套并存导致「同样的分节标题在不同抽屉里长得不一样」。
 
-/* ---- 键值明细表（对齐 fnmonitor 的 kvHTML → .card.pad.kv-card + dl.kv）----
-   fnmonitor 权威实现（3400 行）：
-     kvHTML = rows => `<div class="card pad kv-card"><dl class="kv">…</dl></div>`
-     .card{background:var(--card);border-radius:var(--r-lg)}
-     .card.pad{padding:var(--s6)}                    ← 24px 内距
-     .card.kv-card{padding-top:8px;padding-bottom:8px}  ← 上下压缩到 8px
-     .kv{display:grid;grid-template-columns:auto 1fr;gap:0}
-     .kv dt,.kv dd{padding:11px 0;border-top:1px solid var(--line);font-size:var(--fs-sm)}
-     .kv dt{color:var(--ink-2);padding-right:var(--s6)}    ← 24px 右间距
-     .kv dd{text-align:right;font-variant-numeric:tabular-nums}
-   ⚠️ v1.1.44：之前 FnStyle 的 kv 表**没有卡片外框**（直接贴在抽屉底色上），
-   且首行也带 border-top —— 与 fnmonitor 的「卡片 + 首行无顶线」不一致。 */
-.mon-kv {
-  grid-column: 1 / -1;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  /* 14px —— fnmonitor 的 --r-md（卡片圆角）。抽屉里的 kv 卡片用这个值，
-     比全站 --radius(10px) 更柔和，接近 fnmonitor --r-lg(26px) 的观感。 */
-  border-radius: 14px;
-  padding: .5rem 1.5rem;
-}
-.mon-kv-row {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 0;
-  align-items: baseline;
-  /* fnmonitor .kv dt,.kv dd{padding:11px 0} —— 行距靠 padding 撑开，
-     不是靠 border。 */
-  padding: 11px 0;
-}
-/* 首行不画顶线（fnmonitor 的 .kv dt/dd 是 border-top，
-   但 kv-card 的 padding-top 只有 8px，首行顶线紧贴卡片上沿很怪 —— 
-   这里跟 fnmonitor 一致：整行都有 border-top，
-   但用 :first-child 去掉首行的，视觉更干净）。 */
-.mon-kv-row + .mon-kv-row {
-  border-top: 1px solid var(--border);
-}
-.mon-kv-row > span:first-child {
-  color: var(--text-secondary);
-  font-size: .8125rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  padding-right: 1.5rem;   /* 24px —— 与 fnmonitor 的 .kv dt 一致 */
-}
-.mon-kv-row > span:last-child {
-  color: var(--text-primary);
-  text-align: right;
-  font-size: .8125rem;
-  font-variant-numeric: tabular-nums;
-  overflow-wrap: anywhere;
-}
-.mon-kv-row .sub {
-  font-size: .75rem;
-  color: var(--text-muted);
-  margin-top: .1875rem;
-}
+   用户要求：「所有的抽屉中的卡片的样式保持一致嘛，不能乱」。
+   本版把温度 / 能耗抽屉统一改用 .mon-cmp-sec（已改 JS 类名），
+   并删除 .mon-sub-sec，让 .mon-cmp-sec 成为全站唯一的分节标题样式：
+     · 左侧 3px 竖条（var(--accent)）
+     · font-weight 600 / color var(--text-primary)
+     · margin 1.25rem 0 .55rem（上方 20px / 下方 8.8px）
+   注：fnmonitor 的 .sheet-sec 本身是纯文字无竖条，
+   但 FnStyle 全站统一用竖条式分节标题（.mon-cmp-sec 早于本轮就已存在），
+   故以 FnStyle 内部一致性优先，不再单独维护第二套。 */
+
+/* ⚠️ v1.1.45：删除了 .mon-kv 这一套重复的键值表样式。
+   之前温度 / 能耗抽屉用 .mon-kv，处理器 / 内存 / 显卡抽屉用 .mon-dkv，
+   两套并存导致「同样的键值表在不同抽屉里长得不一样」。
+
+   用户原话：「所有的抽屉中的卡片的样式保持一致嘛，不能乱」。
+   本版**不再只是把两套的数值改成一样**（那样下一轮改样式又会长歪），
+   而是彻底合并成一套 —— 全站抽屉统一用 .mon-dkv：
+     · 删掉 .mon-kv / .mon-kv-row 全部规则
+     · JS 中所有 class="mon-kv" / class="mon-kv-row" 改为 .mon-dkv / .mon-dkv-row
+     · .mon-dkv 补上 .mon-kv 独有的 .sub（传感器「上限 xx ℃」次行）样式
+   基准规格见文件下方 .mon-dkv 定义处（处理器抽屉早就在用，视觉已定型）。 */
 
 /* ---- 说明条（对齐 fnmonitor 的 .note.info）---- */
 .mon-info {
@@ -3235,6 +3193,20 @@ html.mon-scroll-lock body {
    避免每个块都加一遍外边距导致节奏不齐。 */
 .mon-drawer-body > * + * { margin-top: 0; }
 
+/* ⚠️ v1.1.45：上面的通用规则把温度抽屉各区块的间距全清零了
+   （实测 gapAbove = 0，四格卡片与 hero 大数字区贴死）。
+   这里给温度 / 能耗抽屉的四个主要区块单独留出间距，
+   与处理器抽屉的节奏（分节标题 margin 20px / 8.8px）对齐：
+     hero  → 四格：14px
+     四格  → 温度计 / 趋势图：14px
+   .mon-drawer-body > * + * 的优先级是 0,1,0；
+   这里用 0,2,0 覆盖它。 */
+.mon-drawer-body > .mon-cells { margin-top: 14px; }
+.mon-drawer-body > .mon-thermo { margin-top: 14px; }
+.mon-drawer-body > .mon-cmp-charts { margin-top: 14px; }
+.mon-drawer-body > .mon-stack-wrap { margin-top: 14px; }
+.mon-drawer-body > .mon-cmp-sec { margin-top: 20px; }
+
 /* ---- 卡片容器（对齐 fnmonitor 的 .card.pad）---- */
 .mon-dw-card {
   background: var(--bg-card);
@@ -3898,9 +3870,18 @@ html.mon-scroll-lock body {
     var(--text-muted) 0 1.3px, transparent 1.3px 3.2px);
 }
 
-/* 键值表（详情抽屉用）
-   注意：这里用 .mon-dkv 独立命名，避免与板块侧的 .mon-kv
-   （对齐 fnmonitor 的 .kv：dl 语义 + border-top 分隔）相互覆盖。 */
+/* 键值表（**全站详情抽屉唯一**的键值表样式）
+   ⚠️ v1.1.45：这是唯一权威定义。
+     · 处理器 / 内存 / 显卡抽屉（compute.js kvHtml）
+     · 温度 / 能耗抽屉（monitor.js）
+     全部使用 .mon-dkv / .mon-dkv-row + .k / .v 子类，
+     保证「同样的键值表在所有抽屉里长得一模一样」。
+
+   规格（与处理器抽屉一致，视觉已定型）：
+     · 无卡片外框，直接排在分节标题下方
+     · 行间 border-bottom 分隔，末行无分隔线
+     · 行内距 .5rem 0
+     · 键列 .k = --text-muted，值列 .v = --text-primary 右对齐 */
 .mon-dkv { display: flex; flex-direction: column; }
 .mon-dkv-row {
   display: flex;
@@ -3912,14 +3893,26 @@ html.mon-scroll-lock body {
   font-size: .82rem;
 }
 .mon-dkv-row:last-child { border-bottom: none; }
-.mon-dkv-row .k { color: var(--text-muted); white-space: nowrap; }
+.mon-dkv-row .k {
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .mon-dkv-row .v {
   color: var(--text-primary);
   text-align: right;
   word-break: break-word;
   min-width: 0;
+  font-variant-numeric: tabular-nums;
 }
 .mon-dkv-row .v.dim { color: var(--text-muted); }
+/* 传感器「上限 xx ℃」次行（温度抽屉专用） */
+.mon-dkv-row .sub {
+  font-size: .75rem;
+  color: var(--text-muted);
+  margin-top: .1875rem;
+}
 
 /* 进程列表 */
 .mon-proc {

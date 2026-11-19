@@ -2262,8 +2262,8 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       /mon-thermo-mark/.test(monSrc)],
     ['刻度尺使用 mon-thermo-scale',
       /mon-thermo-scale/.test(monSrc)],
-    ['分节标题使用 mon-sub-sec',
-      /mon-sub-sec/.test(monSrc)],
+    ['分节标题统一使用 mon-cmp-sec（与处理器抽屉一致）',
+      /mon-cmp-sec/.test(monSrc) && !/mon-sub-sec/.test(monSrc)],
     ['风扇分节存在', /<span>风扇<\/span>/.test(monSrc)],
     ['电压分节存在', /<span>电压<\/span>/.test(monSrc)],
     ['全部传感器分节存在', /<span>全部传感器<\/span>/.test(monSrc)],
@@ -2293,8 +2293,8 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       /mon-stack/.test(monSrc)],
     ['图例使用 mon-legend',
       /mon-legend/.test(monSrc)],
-    ['部件明细使用 mon-kv',
-      /mon-kv/.test(monSrc)],
+    ['部件明细使用 mon-dkv（与处理器抽屉同一套键值表）',
+      /mon-dkv/.test(monSrc)],
     ['部件分解函数 powerParts 存在',
       /function powerParts\(p\)/.test(monSrc)],
     ['部件含 CPU 封装 / 内存 / 硬盘 / 主板与其他',
@@ -2305,8 +2305,8 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     ['用电统计走 /api/power/stats',
       /\/api\/power\/stats/.test(monSrc)],
     ['能耗统计有今日 / 本月 / 开机以来三行',
-      /<span>今日<\/span>/.test(monSrc) &&
-      /<span>本月<\/span>/.test(monSrc) &&
+      /<span class="k">今日<\/span>/.test(monSrc) &&
+      /<span class="k">本月<\/span>/.test(monSrc) &&
       /开机以来/.test(monSrc)],
     ['口径区分 RAPL 实测与 TDP 估算',
       /RAPL 实测/.test(monSrc) && /TDP 估算/.test(monSrc)],
@@ -2387,10 +2387,10 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       /\.mon-stack \{/.test(cssSrc)],
     ['.mon-legend 图例样式存在',
       /\.mon-legend \{/.test(cssSrc)],
-    ['.mon-sub-sec 分节标题样式存在',
-      /\.mon-sub-sec \{/.test(cssSrc)],
-    ['.mon-kv 键值明细样式存在',
-      /\.mon-kv \{/.test(cssSrc)],
+    ['.mon-cmp-sec 分节标题样式存在（全站唯一）',
+      /\.mon-cmp-sec \{/.test(cssSrc) && !/\.mon-sub-sec \{/.test(cssSrc)],
+    ['.mon-dkv 键值明细样式存在（全站唯一）',
+      /\.mon-dkv \{/.test(cssSrc) && !/^\s*\.mon-kv\s*\{/m.test(cssSrc)],
     ['.mon-info 说明条样式存在',
       /\.mon-info \{/.test(cssSrc)],
     ['.mon-sensor-tag 传感器类型标签样式存在',
@@ -2516,10 +2516,10 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       /20°/.test(tempHtml) && /100°/.test(tempHtml)],
     ['风扇分节渲染（kv 键值表，对齐 fnmonitor kvHTML）',
       /<span>风扇<\/span>/.test(tempHtml) &&
-      /class="mon-kv-row"><span>cpu fan<\/span><span>1420 RPM<\/span>/.test(tempHtml)],
+      /class="mon-dkv-row"><span class="k">cpu fan<\/span><span class="v">1420 RPM<\/span>/.test(tempHtml)],
     ['电压分节渲染（kv 键值表，对齐 fnmonitor kvHTML）',
       /<span>电压<\/span>/.test(tempHtml) &&
-      /class="mon-kv-row"><span>Vcore<\/span><span>1\.28 V<\/span>/.test(tempHtml)],
+      /class="mon-dkv-row"><span class="k">Vcore<\/span><span class="v">1\.28 V<\/span>/.test(tempHtml)],
     ['全部传感器分节渲染',
       /<span>全部传感器<\/span>/.test(tempHtml)],
     ['传感器带类型标签',
@@ -2575,8 +2575,8 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
      .fan          → .mon-fan        40px 圆形图标 + 名称 + 24px RPM
      .stack        → .mon-stack      gap 2px / 高 12px / min-width 2px / 首尾圆角
      .legend       → .mon-legend     gap 6px 18px / 色块 8px
-     .kv           → .mon-kv         dl 语义 / border-top 分隔
-     .sheet-sec    → .mon-sub-sec    3px 竖条 + 负 margin
+     .kv           → .mon-dkv        与处理器抽屉同一套键值表
+     .sheet-sec    → .mon-cmp-sec    3px 竖条（全站统一）
      .sheet-seg    → 段控件          板块级右对齐（抽屉级仍居中）
    ===================================================================== */
 (function () {
@@ -2620,8 +2620,8 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       /\.mon-cells \{[^}]*grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\)/.test(cssSrc)],
     ['.mon-cells 用 1px gap + 边框底色做分隔线（fnmonitor 手法）',
       /\.mon-cells \{[^}]*gap:\s*1px[^}]*background:\s*var\(--border\)/.test(cssSrc)],
-    ['.mon-cell padding 1.25rem 1.5rem（= 20px 24px）',
-      /\.mon-cell \{[^}]*padding:\s*1\.25rem 1\.5rem/.test(cssSrc)],
+    ['.mon-cell padding 12px 16px（v1.1.45 按需求调小，高度 91px → 74px）',
+      /\.mon-cell \{[^}]*padding:\s*12px 16px/.test(cssSrc)],
     ['.mon-cell 数字 1.125rem = 18px（fnmonitor .temp-cells b font-size:18px）',
       /\.mon-cell b \{[^}]*font-size:\s*1\.125rem/.test(cssSrc)],
     ['.mon-cell 数字 tabular-nums 等宽',
@@ -2682,18 +2682,16 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       /\.mon-legend \{[^}]*gap:\s*6px 18px/.test(cssSrc)],
     ['.mon-legend 色块 8px（fnmonitor .legend i 8px）',
       /\.mon-legend > span > i \{[^}]*width:\s*8px[^}]*height:\s*8px/.test(cssSrc)],
-    ['.mon-sub-sec 无竖条前缀（fnmonitor .sheet-sec 是纯文字，无 ::before）',
-      !/\.mon-sub-sec::before \{/.test(cssSrc)],
-    ['.mon-sub-sec 负 margin 让内容贴近标题（fnmonitor margin-bottom:-12px）',
-      /\.mon-sub-sec \{[^}]*margin-bottom:\s*-\.75rem/.test(cssSrc)],
-    ['.mon-kv 行分隔用 border-top（fnmonitor .kv dt/dd border-top）',
-      /\.mon-kv-row \+ \.mon-kv-row \{\s*border-top:/.test(cssSrc)],
-    ['.mon-kv 栅格 auto 1fr（fnmonitor .kv grid-template-columns:auto 1fr）',
-      /\.mon-kv-row \{[^}]*grid-template-columns:\s*auto minmax\(0,\s*1fr\)/.test(cssSrc)],
-    ['.mon-kv 行距靠 padding 11px（fnmonitor .kv dt/dd padding:11px 0）',
-      /\.mon-kv-row \{[^}]*padding:\s*11px 0/.test(cssSrc)],
-    ['.mon-kv 右侧值 tabular-nums 右对齐',
-      /\.mon-kv-row > span:last-child \{[^}]*text-align:\s*right[^}]*font-variant-numeric:\s*tabular-nums/.test(cssSrc)],
+    ['分节标题全站统一 .mon-cmp-sec（.mon-sub-sec 已彻底删除）',
+      /\.mon-cmp-sec \{[^}]*border-left:\s*3px solid var\(--accent\)/.test(cssSrc) &&
+      !/\.mon-sub-sec \{/.test(cssSrc)],
+    ['.mon-dkv 行分隔用 border-bottom（末行无分隔线）',
+      /\.mon-dkv-row \{[^}]*border-bottom:\s*1px solid var\(--border\)/.test(cssSrc) &&
+      /\.mon-dkv-row:last-child \{ border-bottom: none; \}/.test(cssSrc)],
+    ['.mon-dkv 行内距 .5rem 0',
+      /\.mon-dkv-row \{[^}]*padding:\s*\.5rem 0/.test(cssSrc)],
+    ['.mon-dkv 右侧值 tabular-nums 右对齐',
+      /\.mon-dkv-row \.v \{[^}]*text-align:\s*right[^}]*font-variant-numeric:\s*tabular-nums/.test(cssSrc)],
     ['.mon-info 对齐 fnmonitor .note.info（fill-1 底 + ink-2 字）',
       /\.mon-info \{[^}]*background:\s*var\(--bg-hover\)/.test(cssSrc)],
     ['.mon-sensor-tag 对齐 fnmonitor .pill（24px 高 + 999px 圆角）',
@@ -2710,12 +2708,13 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
   const isoRules = [
     ['抽屉堆叠条改用 .mon-dstack（避免与板块 .mon-stack 冲突）',
       /class="mon-dstack"/.test(compSrc) && /\.mon-dstack \{/.test(cssSrc)],
-    ['抽屉键值表改用 .mon-dkv（避免与板块 .mon-kv 冲突）',
-      /class="mon-dkv"/.test(compSrc) && /\.mon-dkv \{/.test(cssSrc)],
+    ['抽屉键值表统一使用 .mon-dkv（compute.js 与 monitor.js 共用）',
+      /class="mon-dkv"/.test(compSrc) && /class="mon-dkv"/.test(monSrc) &&
+      /\.mon-dkv \{/.test(cssSrc)],
     ['CSS 中不再存在会覆盖板块样式的旧 .mon-stack 定义',
       /\.mon-stack \{[^}]*height:\s*14px/.test(cssSrc) === false],
-    ['CSS 中不再存在会覆盖板块样式的旧 .mon-kv 定义',
-      /\.mon-kv \{ display: flex;/.test(cssSrc) === false],
+    ['CSS 中不再存在会覆盖样式的旧 .mon-kv 定义（v1.1.45 已彻底合并）',
+      /^\s*\.mon-kv\s*\{/m.test(cssSrc) === false],
   ];
   isoRules.forEach(([label, ok]) => {
     console.log((ok ? '  ✓ ' : '  ✗ ') + label);
@@ -2725,7 +2724,7 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
   /* ---------- 源码级：JS 结构 ---------- */
   const jsRules = [
     ['风扇渲染为 kv 键值表（fnmonitor kvHTML）',
-      /class="mon-kv-row"/.test(monSrc) &&
+      /class="mon-dkv-row"/.test(monSrc) &&
       /esc\(f\.name \|\| '风扇'\)/.test(monSrc) &&
       /fmtInt\(rpm\) \+ ' RPM'/.test(monSrc)],
     ['风扇转速显示为「N RPM」（fnmonitor F.int(rpm) + RPM）',
@@ -2979,8 +2978,8 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       !/class="mon-volt"/.test(monSrc44) &&
       /fmt2\(val\) \+ ' V'/.test(monSrc44)],
     ['全部传感器沿用 kv 表',
-      /class="mon-kv-row"/.test(monSrc44)],
-    ['分节标题去掉 3px 竖条（fnmonitor .sheet-sec 是纯文字）',
+      /class="mon-dkv-row"/.test(monSrc44)],
+    ['分节标题去掉自加的 ::before 竖条（改由 .mon-cmp-sec 统一提供）',
       !/\.mon-sub-sec::before \{/.test(cssSrc44)],
     /* ---- ⑤ 主页温度趋势图移除 ---- */
     ['panelChartsHtml 支持 onlyKeys 白名单',
@@ -2996,8 +2995,8 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     /* ---- 额外：抽屉底色层次 ---- */
     ['抽屉底色用 var(--bg)（fnmonitor .sheet{background:var(--bg)}）',
       /\.mon-drawer \{[^}]*background:\s*var\(--bg\)/.test(cssSrc44)],
-    ['kv 卡片圆角 14px（fnmonitor --r-md）',
-      /\.mon-kv \{[^}]*border-radius:\s*14px/.test(cssSrc44)],
+    ['键值表已并入 .mon-dkv（v1.1.45 起全站唯一，无独立 .mon-kv）',
+      /\.mon-dkv \{/.test(cssSrc44) && !/^\s*\.mon-kv\s*\{/m.test(cssSrc44)],
   ];
   rules44.forEach(([label, ok]) => {
     console.log((ok ? '  ✓ ' : '  ✗ ') + label);
@@ -3006,6 +3005,111 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
 
   if (bad) {
     console.error('❌ v1.1.44 断言失败 ' + bad + ' 项');
+    process.exitCode = 1;
+  }
+})();
+
+/* ======================================================================
+   v1.1.45 —— 抽屉卡片样式统一（圆角 / 高度 / 间距 / 分节标题）
+   ----------------------------------------------------------------------
+   用户反馈：
+     「如图温度与散热抽屉中如图红框中的卡片调整为圆角（与下方卡片的一致），
+       同时调整卡片高度调小，目前的太高了不协调，
+       而且调整与下方卡片和上方信息的间距，目前挨太紧了；
+       如图卡片的标题显示的不对，请参考处理器抽屉中的卡片的标题样式调整，
+       所有的抽屉中的卡片的样式保持一致嘛，不能乱」
+
+   本块把「一致性」锁死 —— 关键点不是把两套样式改成同样的数值，
+   而是**合并成一套**，防止下一轮改样式又长歪：
+     ① 四格统计卡圆角 = var(--radius)（10px），与下方卡片一致
+     ② 四格统计卡高度调小（padding 12px 16px）
+     ③ 区块间距 14px（不再与 hero / 温度计贴死）
+     ④ 分节标题全站统一 .mon-cmp-sec（含 3px 竖条）
+     ⑤ 键值表全站统一 .mon-dkv（删除 .mon-kv 整套，JS 全部改类名）
+     ⑥ 抽屉内所有卡片圆角统一 var(--radius)
+   ====================================================================== */
+(function () {
+  let bad = 0;
+  console.log('\n--- v1.1.45 抽屉卡片样式统一 ---');
+
+  const cssSrc45 = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'css', 'app.css'), 'utf8');
+  const monSrc45 = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'js', 'monitor.js'), 'utf8');
+  const compSrc45 = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'js', 'compute.js'), 'utf8');
+
+  const rules45 = [
+    /* ---- ① 四格统计卡圆角统一 ---- */
+    ['四格统计卡圆角 = var(--radius)（与下方卡片一致）',
+      /\.mon-cells \{[^}]*border-radius:\s*var\(--radius\)/.test(cssSrc45)],
+    ['温度计卡片圆角 = var(--radius)',
+      /\.mon-thermo \{[^}]*border-radius:\s*var\(--radius\)/.test(cssSrc45)],
+    ['趋势图卡片圆角 = var(--radius)',
+      /\.mon-cmp-chart-card \{[^}]*border-radius:\s*var\(--radius\)/.test(cssSrc45)],
+    ['功耗堆叠条卡片圆角 = var(--radius)',
+      /\.mon-stack-wrap \{[^}]*border-radius:\s*var\(--radius\)/.test(cssSrc45)],
+    ['抽屉通用卡片 .mon-dw-card 圆角 = var(--radius)',
+      /\.mon-dw-card \{[^}]*border-radius:\s*var\(--radius\)/.test(cssSrc45)],
+    ['抽屉内不再有卡片使用 --radius-sm（6px）作圆角',
+      !/\.mon-(cells|thermo|stack-wrap|cmp-chart-card|dw-card) \{[^}]*border-radius:\s*var\(--radius-sm\)/.test(cssSrc45)],
+    /* ---- ② 四格统计卡高度调小 ---- */
+    ['四格统计卡内边距 = 12px 16px（实测高度 91px → 74px）',
+      /\.mon-cell \{[^}]*padding:\s*12px 16px/.test(cssSrc45)],
+    ['四格统计卡数字 18px 不变（fnmonitor .temp-cells b）',
+      /\.mon-cell b \{[^}]*font-size:\s*1\.125rem/.test(cssSrc45)],
+    /* ---- ③ 区块间距 14px ---- */
+    ['四格统计卡与上方 hero 间距 14px',
+      /\.mon-drawer-body > \.mon-cells \{ margin-top: 14px; \}/.test(cssSrc45)],
+    ['温度计卡片间距 14px',
+      /\.mon-drawer-body > \.mon-thermo \{ margin-top: 14px; \}/.test(cssSrc45)],
+    ['趋势图容器间距 14px',
+      /\.mon-drawer-body > \.mon-cmp-charts \{ margin-top: 14px; \}/.test(cssSrc45)],
+    ['功耗堆叠条间距 14px',
+      /\.mon-drawer-body > \.mon-stack-wrap \{ margin-top: 14px; \}/.test(cssSrc45)],
+    ['分节标题上方间距 20px（与处理器抽屉节奏一致）',
+      /\.mon-drawer-body > \.mon-cmp-sec \{ margin-top: 20px; \}/.test(cssSrc45)],
+    /* ---- ④ 分节标题统一 .mon-cmp-sec ---- */
+    ['CSS 中 .mon-sub-sec 整套已删除',
+      !/\.mon-sub-sec\s*\{/.test(cssSrc45) && !/\.mon-sub-sec::before\s*\{/.test(cssSrc45)],
+    ['JS 中不再出现 mon-sub-sec',
+      !/mon-sub-sec/.test(monSrc45)],
+    ['温度/能耗抽屉改用 .mon-cmp-sec',
+      /class="mon-cmp-sec"/.test(monSrc45)],
+    ['.mon-cmp-sec 保留 3px 竖条（处理器抽屉基准）',
+      /\.mon-cmp-sec \{[^}]*border-left:\s*3px solid var\(--accent\)/.test(cssSrc45)],
+    ['.mon-cmp-sec 标题为 primary 色 + 600 字重',
+      /\.mon-cmp-sec \{[^}]*font-weight:\s*600[^}]*color:\s*var\(--text-primary\)/.test(cssSrc45)],
+    /* ---- ⑤ 键值表统一 .mon-dkv ---- */
+    ['CSS 中 .mon-kv 整套已删除（真正合并，不是改数值）',
+      !/^\s*\.mon-kv\s*\{/m.test(cssSrc45) && !/^\s*\.mon-kv-row\s*\{/m.test(cssSrc45)],
+    ['JS 中不再出现 mon-kv',
+      !/mon-kv/.test(monSrc45)],
+    ['温度抽屉风扇段改用 .mon-dkv',
+      /class="mon-dkv"/.test(monSrc45)],
+    ['抽屉键值行结构统一为 .k / .v 子类',
+      /<span class="k">/.test(monSrc45) && /<span class="v">/.test(monSrc45)],
+    ['compute.js 与 monitor.js 共用 .mon-dkv',
+      /class="mon-dkv"/.test(compSrc45) && /class="mon-dkv"/.test(monSrc45)],
+    ['.mon-dkv 无卡片外框（无 background / border-radius）',
+      /\.mon-dkv \{[^}]*display:\s*flex[^}]*flex-direction:\s*column/.test(cssSrc45) &&
+      !/\.mon-dkv \{[^}]*background:/.test(cssSrc45)],
+    ['.mon-dkv 行内距 .5rem 0',
+      /\.mon-dkv-row \{[^}]*padding:\s*\.5rem 0/.test(cssSrc45)],
+    ['.mon-dkv 行分隔用 border-bottom（末行无）',
+      /\.mon-dkv-row \{[^}]*border-bottom:\s*1px solid var\(--border\)/.test(cssSrc45) &&
+      /\.mon-dkv-row:last-child \{ border-bottom: none; \}/.test(cssSrc45)],
+    ['.mon-dkv 键列 .k 为 muted 色',
+      /\.mon-dkv-row \.k \{[^}]*color:\s*var\(--text-muted\)/.test(cssSrc45)],
+    ['.mon-dkv 值列 .v 为 primary 色 + 右对齐',
+      /\.mon-dkv-row \.v \{[^}]*color:\s*var\(--text-primary\)[^}]*text-align:\s*right/.test(cssSrc45)],
+    ['.mon-dkv 补上 .sub 次行（传感器上限）',
+      /\.mon-dkv-row \.sub \{/.test(cssSrc45)],
+  ];
+  rules45.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  if (bad) {
+    console.error('❌ v1.1.45 断言失败 ' + bad + ' 项');
     process.exitCode = 1;
   }
 })();
