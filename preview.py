@@ -23,11 +23,13 @@
 import argparse
 import hashlib
 import json
+import math
 import mimetypes
 import os
 import re
 import shutil
 import sys
+import time
 import time
 import urllib.parse
 import urllib.request
@@ -322,6 +324,58 @@ def mock_monitor_empty():
     }
 
 
+# 历史序列的可用范围（秒），与 fnmonitor 的 _RANGE_SECONDS 一致
+_HISTORY_RANGE_SEC = {
+    "10m": 600, "1h": 3600, "6h": 21600,
+    "24h": 86400, "7d": 604800, "all": 0,
+}
+
+
+def mock_monitor_history(range_="1h", metrics="cpu,load1"):
+    """构造处理器历史序列（趋势图用）。
+
+    真机上后端每 60 秒写一条 SQLite 记录；本机预览按同样的形态生成
+    一条假曲线：CPU 在 30~85% 之间波动（有峰值、有低谷，能看出阈值线
+    与峰值标注的效果），负载在 0.2~2.5 之间波动。
+    """
+    seconds = _HISTORY_RANGE_SEC.get(range_, 3600)
+    if seconds <= 0:
+        seconds = 7 * 86400
+    # 采样间隔 60 秒；点太多前端会糊，所以长范围按 5~10 分钟抽稀
+    step = 60
+    if seconds > 6 * 3600:
+        step = 300
+    if seconds > 24 * 3600:
+        step = 1800
+    count = max(2, min(720, seconds // step))
+
+    now = time.time()
+    start = now - (count - 1) * step
+    names = [m.strip() for m in (metrics or "cpu,load1").split(",") if m.strip()]
+
+    series = {}
+    for i, name in enumerate(names):
+        pts = []
+        for k in range(count):
+            ts = start + k * step
+            if name == "cpu":
+                # 两段正弦叠加 + 趋势，制造出有峰有谷的形态
+                phase = (k / max(1, count - 1)) * 6.0
+                v = 52 + 26 * math.sin(phase + i) + 12 * math.sin(phase * 2.3)
+                if k == int(count * 0.62):
+                    v = 93.5          # 制造一个高峰，验证峰值标注
+                v = max(1.0, min(99.0, v))
+            elif name == "load1":
+                v = 1.1 + 0.9 * math.sin((k / max(1, count - 1)) * 4.0 + i)
+                v = max(0.0, v)
+            else:
+                v = 50.0
+            pts.append([round(ts, 2), round(v, 2)])
+        series[name] = pts
+
+    return {"success": True, "range": range_, "series": series}
+
+
 # --------------------------------------------------------------------------
 # HTTP
 # --------------------------------------------------------------------------
@@ -445,6 +499,14 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
             return self.send_json(mock_monitor()) if os.environ.get("MON_FULL") else self.send_json(mock_monitor_empty())
+
+        if name == "monitor/history":
+            # 处理器历史序列（趋势图数据源）
+            # 真机上由 monitor_collect/history_collect 写 SQLite 后查询；
+            # 本机预览生成一条形态一致的假曲线，用于验证图表渲染。
+            return self.send_json(mock_monitor_history(
+                (query.get("range", ["1h"])[0] or "1h"),
+                (query.get("metrics", ["cpu,load1"])[0] or "cpu,load1")))
 
 
         if name == "apply":

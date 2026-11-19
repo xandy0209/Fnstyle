@@ -1651,7 +1651,7 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     ['monitor.js 暴露 lockScroll', /lockScroll: lockPageScroll/.test(mon)],
     ['monitor.js 暴露 unlockScroll', /unlockScroll: unlockPageScroll/.test(mon)],
     ['renderCore 委托给 FnStyleCompute', /window\.FnStyleCompute && window\.FnStyleCompute\.render/],
-    ['版本号已 bump 到 1.1.35', /v1\.1\.35/.test(html)],
+    ['版本号已 bump 到 1.1.36', /v1\.1\.36/.test(html)],
   ];
   wireRules.forEach(([label, ok]) => {
     console.log((ok ? '  ✓ ' : '  ✗ ') + label);
@@ -1810,6 +1810,164 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
   }
 
   if (bad) { console.error('❌ v1.1.35 断言失败 ' + bad + ' 项'); process.exitCode = 1; }
+})();
+
+/* ---------- v1.1.36：处理器抽屉趋势图 + 每核使用率口径修正 ---------- */
+(function checkTrendCharts() {
+  console.log('\n--- 处理器抽屉趋势图与每核口径修正（v1.1.36）---');
+  const fs3 = require('fs');
+  const path3 = require('path');
+  const base = path3.join(__dirname, '..', 'app', 'ui');
+  const CHART = path3.join(base, 'static', 'js', 'chart.js');
+  const CMP = path3.join(base, 'static', 'js', 'compute.js');
+  const CSS = path3.join(base, 'static', 'css', 'app.css');
+  const HTML = path3.join(base, 'index.html');
+  const MON = path3.join(base, 'monitor_collect.py');
+  const HIST = path3.join(base, 'history_collect.py');
+  const SRV = path3.join(base, 'fnstyle_server.py');
+  const CGI = path3.join(base, 'index.cgi');
+  const STOR = path3.join(base, 'storage_collect.py');
+
+  const chart = fs3.readFileSync(CHART, 'utf8');
+  const cmp = fs3.readFileSync(CMP, 'utf8');
+  const css = fs3.readFileSync(CSS, 'utf8');
+  const html = fs3.readFileSync(HTML, 'utf8');
+  const mon = fs3.readFileSync(MON, 'utf8');
+  const hist = fs3.readFileSync(HIST, 'utf8');
+  const srv = fs3.readFileSync(SRV, 'utf8');
+  const cgi = fs3.readFileSync(CGI, 'utf8');
+  const stor = fs3.readFileSync(STOR, 'utf8');
+  let bad = 0;
+
+  const rules = [
+    /* ---- ① chart.js：LineChart 组件 ---- */
+    ['chart.js 定义 LineChart', /function LineChart\(host, opt\)/],
+    ['chart.js 导出 LineChart', /window\.FnStyleChart\s*=\s*\{[\s\S]{0,200}LineChart:\s*LineChart/],
+    ['chart.js 导出范围切换段控件', /makeRangeSeg:\s*makeRangeSeg/],
+    ['单调三次样条 monoPath', /function monoPath\(xs, ys\)/],
+    ['niceStep 取整刻度', /function niceStep\(raw\)/],
+    ['网格线 grid-l', /class="grid-l"/],
+    ['左轴刻度文字 axis-t', /class="axis-t"/],
+    ['面积填充 path.ar', /class="ar"/],
+    ['实时点 live-pt', /class="live-pt"/],
+    ['阈值线 clip-path 裁剪', /clipPath[\s\S]{0,200}clip-path="url\(#/],
+    ['峰值标注 peak-t', /class="peak-t"/],
+    ['悬停提示 tip', /mon-chart-tip/],
+    ['六档范围（10m/1h/6h/24h/7d/all）',
+      /\['10m', '10分钟'\], \['1h', '1小时'\], \['6h', '6小时'\][\s\S]{0,120}\['24h', '24小时'\], \['7d', '7天'\], \['all', '全部'\]/],
+    ['RANGE_SEC 与 fnmonitor 一致',
+      /'10m': 600, '1h': 3600, '6h': 21600,[\s\S]{0,80}'24h': 86400, '7d': 604800, all: 0/],
+    ['destroy() 解除 ResizeObserver 观察', /LineChart\.prototype\.destroy\s*=\s*function[\s\S]{0,300}unobserve/],
+    ['保留 fnmonitor 许可声明', /fnmonitor[\s\S]{0,200}MIT License/],
+
+    /* ---- ② compute.js：抽屉接入 ---- */
+    ['compute.js 定义两张趋势图', /var CPU_CHARTS = \[[\s\S]{0,600}key: 'cpu'[\s\S]{0,600}key: 'load1'/],
+    ['CPU 图 0~100 固定刻度', /key: 'cpu'[\s\S]{0,200}yMin: 0, yMax: 100/],
+    ['CPU 图带峰值标注', /key: 'cpu'[\s\S]{0,300}peak: true/],
+    ['CPU 图阈值 85/95', /thresholds: function[\s\S]{0,200}CPU_WARN[\s\S]{0,120}CPU_CRIT/],
+    ['CPU_WARN = 85', /var CPU_WARN = 85/],
+    ['CPU_CRIT = 95', /var CPU_CRIT = 95/],
+    ['负载图起点为 0', /key: 'load1'[\s\S]{0,200}yMin: 0/],
+    ['抽屉插入趋势图容器', /secHtml\('每核使用率'\) \+ cores \+[\s\S]{0,80}cpuChartsHtml\(\)/],
+    ['initCharts 创建 LineChart 实例', /new window\.FnStyleChart\.LineChart\(host/],
+    ['图表高度 180px', /height: 180/],
+    ['打开抽屉时初始化图表', /initCharts\(body\)/],
+    ['关闭抽屉时销毁图表', /destroyCharts\(\)/],
+    ['拉取历史序列用 api/monitor/history', /api\/monitor\/history/],
+    ['请求带 metrics 与 range', /metrics=' \+ encodeURIComponent\(metrics\)[\s\S]{0,120}range=' \+ encodeURIComponent\(range\)/],
+    ['范围切换时重新拉取', /loadCharts\(r\)/],
+    ['过期响应丢弃', /chartState !== st \|\| st\.range !== range/],
+    ['空状态文案', /暂无数据 · 后台每 60 秒记录一条历史/],
+
+    /* ---- ③ CSS ---- */
+    ['趋势图卡片样式 .mon-cmp-chart-card', /\.mon-cmp-chart-card\s*\{/],
+    ['画布样式 .mon-chart', /\.mon-chart\s*\{/],
+    ['网格线样式', /\.mon-chart \.grid-l\s*\{/],
+    ['轴刻度样式', /\.mon-chart \.axis-t\s*\{/],
+    ['阈值线样式', /\.mon-chart \.th-l\s*\{/],
+    ['峰值标注样式', /\.mon-chart \.peak-t\s*\{/],
+    ['实时点样式', /\.mon-chart \.live-pt/],
+    ['悬浮提示样式', /\.mon-chart-tip\s*\{/],
+    ['空状态样式', /\.mon-chart-empty\s*\{/],
+    ['⚠️ 空状态必须显式声明 [hidden]', /\.mon-chart-empty\[hidden\]\s*\{\s*display:\s*none/],
+    ['阈值/峰值文字加描边', /paint-order:\s*stroke fill/],
+    ['段控件样式 .mon-seg', /\.mon-seg\s*\{/],
+    ['段控件滑块 .thumb', /\.mon-seg \.thumb\s*\{/],
+
+    /* ---- ④ 后端：历史存储 ---- */
+    ['storage_collect 建 metrics 表',
+      /CREATE TABLE IF NOT EXISTS metrics \(\s*ts REAL NOT NULL, metric TEXT NOT NULL, value REAL NOT NULL\)/],
+    ['storage_collect 建 idx_metric_ts 索引',
+      /CREATE INDEX IF NOT EXISTS idx_metric_ts ON metrics\(metric, ts\)/],
+    ['写入列序为 (ts, metric, value)',
+      /INSERT INTO metrics\(ts, metric, value\) VALUES\(\?,\?,\?\)/],
+    ['查询走 idx_metric_ts', /WHERE metric=\? AND ts>=\?[\s\S]{0,120}ORDER BY ts DESC LIMIT \?/],
+    ['保留期默认 7 天', /HISTORY_RETENTION_DAYS = 7/],
+    ['history_collect 存在', /class HistoryWriter/],
+    ['history_collect 采样间隔 60 秒', /HISTORY_INTERVAL = 60/],
+    ['history_collect 写 cpu 指标', /\(now, "cpu", round\(float\(percent\), 2\)\)/],
+    ['history_collect 写 load1 指标（loadavg[0]）', /\(now, "load1", round\(float\(loadavg\[0\]\), 2\)\)/],
+    ['history_collect 无有效值不写', /if not rows:\s*\n\s*return False/],
+
+    /* ---- ⑤ 后端：HTTP 接口 ---- */
+    ['fnstyle_server 注册 /api/monitor/history', /if p == "\/api\/monitor\/history":/],
+    ['fnstyle_server 实现 _handle_monitor_history', /def _handle_monitor_history\(self\)/],
+    ['接口支持多指标一次取回', /metrics_raw = \(q\.get\("metrics"/],
+    ['非法 range 回落 1h', /if range_ not in _RANGE_SECONDS:/],
+    ['指标名白名单（防注入）', /allowed = \("cpu", "load1", "mem"\)/],
+    ['实时值兜底', /def _append_live\(self, pts, metric, snap\)/],
+    ['fnstyle_server 范围表与 fnmonitor 一致',
+      /"10m": 600, "1h": 3600, "6h": 21600,[\s\S]{0,80}"24h": 86400, "7d": 604800, "all": 0/],
+    ['index.cgi 转发 /api/monitor/history', /\/api\/monitor\/history\)/],
+
+    /* ---- ⑥ 每核使用率口径修正（本次的核心 bug 修复） ---- */
+    ['按 /proc/stat 前 8 字段解析', /total = \[int\(x\) for x in parts\[1:9\]\]/],
+    ['每核同样取前 8 字段', /cores\.append\(\[int\(x\) for x in parts\[1:9\]\]\)/],
+    ['cpuN 严格按数字后缀匹配', /re\.match\(r"\^cpu\\d\+\$", parts\[0\]\)/],
+    ['idle = parts[3] + parts[4]', /prev_idle = prev\[3\] \+ \(prev\[4\] if len\(prev\) > 4 else 0\)/],
+    ['结果保留 1 位小数（与 fnmonitor 一致）', /round\(max\(0\.0, 100\.0 \* \(1\.0 - idle_delta \/ float\(total_delta\)\)\), 1\)/],
+    ['collect_cpu 复用 _cpu_percent（不另写一套算法）',
+      /def collect_cpu\(\)[\s\S]{0,3000}_cpu_percent\(prev, list\(total_line\)\)/],
+    ['基线存完整 8 字段时间片列表', /_CPU_STATE\["last"\] = list\(total_line\)/],
+    ['每核基线存完整时间片列表', /_CPU_STATE\["cores"\] = \[list\(n\) for n in core_lines\]/],
+    ['每核也走 _cpu_percent', /_cpu_percent\(prev_cores\[i\], list\(core_lines\[i\]\)\)/],
+
+    /* ---- ⑦ 版本与接入 ---- */
+    ['index.html 引入 chart.js', /<script src="static\/js\/chart\.js"><\/script>/],
+    ['版本号已 bump 到 1.1.36', /v1\.1\.36/.test(html)],
+  ];
+
+  rules.forEach(([label, ok]) => {
+    const res = typeof ok === 'string' ? ok : (ok instanceof RegExp ? ok.test(chart + cmp + css + html + mon + hist + srv + cgi + stor) : !!ok);
+    console.log((res ? '  ✓ ' : '  ✗ ') + label);
+    if (!res) bad++;
+  });
+
+  /* ---- ⑧ chart.js 的正则要单独在 chart.js 上跑（避免被其它文件误命中） ---- */
+  const chartOnly = [
+    ['chart.js 定义 LineChart', /function LineChart\(host, opt\)/],
+    ['chart.js 导出 LineChart', /window\.FnStyleChart\s*=\s*\{[\s\S]{0,200}LineChart:\s*LineChart/],
+    ['单调三次样条 monoPath', /function monoPath\(xs, ys\)/],
+    ['niceStep 取整刻度', /function niceStep\(raw\)/],
+    ['六档范围定义', /RANGES = \[[\s\S]{0,300}\['all', '全部'\]/],
+    ['RANGE_SEC 与 fnmonitor 一致',
+      /'10m': 600, '1h': 3600, '6h': 21600,[\s\S]{0,60}'24h': 86400, '7d': 604800, all: 0/],
+    ['destroy() 解除观察', /prototype\.destroy = function[\s\S]{0,300}unobserve/],
+    ['许可声明保留', /fnmonitor[\s\S]{0,200}MIT License/],
+  ];
+  chartOnly.forEach(([label, re]) => {
+    const ok = re.test(chart);
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label + '（chart.js 专项）');
+    if (!ok) bad++;
+  });
+
+  /* ---- ⑨ app.js 版本号（单独读文件） ---- */
+  const appjs = fs3.readFileSync(path3.join(base, 'static', 'js', 'app.js'), 'utf8');
+  const appOk = /APP_VERSION = '1\.1\.36'/.test(appjs);
+  console.log((appOk ? '  ✓ ' : '  ✗ ') + 'app.js 版本号 1.1.36');
+  if (!appOk) bad++;
+
+  if (bad) { console.error('❌ v1.1.36 断言失败 ' + bad + ' 项'); process.exitCode = 1; }
 })();
 
 console.log(process.exitCode ? '\n❌ 测试未全部通过' : '\n🎉 全部测试通过');

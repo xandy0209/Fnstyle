@@ -521,6 +521,152 @@
       (extra ? '<span class="faint">' + esc(extra) + '</span>' : '') + '</div>';
   }
 
+  /* ---------------------------------------------------------------------
+     处理器抽屉的趋势图（1:1 对齐 fnmonitor 的 sheetCharts）
+     ---------------------------------------------------------------------
+     fnmonitor 在处理器抽屉里放两张图：
+       ① 「CPU 使用率」      0~100%，带警告/严重阈值虚线 + 峰值标注
+       ② 「系统负载（1 分钟）」起点 0，无阈值
+     两张图共用一个范围切换控件（10分钟/1小时/6小时/24小时/7天/全部），
+     切换后一次性拉取两个指标的历史序列。
+
+     数据来自 GET api/monitor/history?metrics=cpu,load1&range=xxx
+     —— 后台每 60 秒写一条，首次打开时通常还没有历史，
+        后端会附加当前实时值兜底，曲线不会空着。
+     --------------------------------------------------------------------- */
+
+  /* 阈值：与 fnmonitor 的 TH_SPEC 默认值一致（cpuWarn 85 / cpuCrit 95） */
+  var CPU_WARN = 85;
+  var CPU_CRIT = 95;
+
+  /* 图表定义（与 fnmonitor 的 TREND_DEFS[0] 及 SHEETS.cpu 对应） */
+  var CPU_CHARTS = [
+    {
+      key: 'cpu',
+      title: 'CPU 使用率',
+      yMin: 0, yMax: 100,
+      yTick: function (v) { return v + '%'; },
+      peak: true,
+      thresholds: function () {
+        return [{ v: CPU_WARN, lv: 'warn' }, { v: CPU_CRIT, lv: 'crit' }];
+      },
+      series: [{
+        m: 'cpu', label: 'CPU', color: 'var(--spark-1)',
+        fmt: function (v) { return [fmtInt(v), '%']; }
+      }]
+    },
+    {
+      key: 'load1',
+      title: '系统负载（1 分钟）',
+      yMin: 0,
+      yTick: function (v) { return String(v); },
+      series: [{
+        m: 'load1', label: '负载', color: 'var(--spark-1)',
+        fmt: function (v) { return [fmt2(v), '']; }
+      }]
+    }
+  ];
+
+  function cpuChartsHtml() {
+    var cards = CPU_CHARTS.map(function (c, i) {
+      return '<div class="mon-cmp-chart-card">' +
+        '<div class="mon-cmp-chart-head">' +
+        '<div class="mon-cmp-chart-title">' + esc(c.title) + '</div>' +
+        '<div class="mon-cmp-chart-legend" data-cleg="' + i + '"></div>' +
+        '</div>' +
+        '<div data-cch="' + i + '"></div>' +
+        '</div>';
+    }).join('');
+    return '<div class="mon-cmp-charts" data-charts>' +
+      '<div class="mon-cmp-chart-seg" data-cseg></div>' + cards + '</div>';
+  }
+
+  /* 图表实例管理：抽屉每次打开重建，关闭时销毁 */
+  var chartState = null;
+
+  function destroyCharts() {
+    if (chartState) {
+      chartState.charts.forEach(function (c) { try { c.destroy(); } catch (e) {} });
+      chartState = null;
+    }
+  }
+
+  function initCharts(body) {
+    destroyCharts();
+    var wrap = body.querySelector('[data-charts]');
+    if (!wrap || !window.FnStyleChart) return;
+
+    var segHost = wrap.querySelector('[data-cseg]');
+    var charts = CPU_CHARTS.map(function (d, i) {
+      var host = body.querySelector('[data-cch="' + i + '"]');
+      var legend = body.querySelector('[data-cleg="' + i + '"]');
+      if (!host) return null;
+      return new window.FnStyleChart.LineChart(host, {
+        series: d.series,
+        yMin: d.yMin,
+        yMax: d.yMax,
+        yTick: d.yTick,
+        peak: d.peak,
+        thresholds: d.thresholds,
+        height: 180,
+        legend: legend,
+        empty: function () {
+          return '暂无数据 · 后台每 60 秒记录一条历史，稍后自动出现';
+        }
+      });
+    }).filter(Boolean);
+
+    var range = '1h';
+    chartState = { charts: charts, range: range, res: null, body: body };
+
+    if (segHost) {
+      segHost.appendChild(window.FnStyleChart.makeRangeSeg(range, function (r) {
+        loadCharts(r);
+      }));
+    }
+    loadCharts(range);
+  }
+
+  /* 拉取历史序列并绘制 */
+  function loadCharts(range) {
+    if (!chartState) return;
+    var st = chartState;
+    st.range = range;
+    fetchHistory('cpu,load1', range).then(function (res) {
+      /* 期间用户可能又切了范围 —— 丢弃过期响应 */
+      if (!chartState || chartState !== st || st.range !== range) return;
+      st.res = res;
+      drawCharts();
+    });
+  }
+
+  function drawCharts() {
+    if (!chartState || !chartState.res) return;
+    var res = chartState.res;
+    var span = window.FnStyleChart.RANGE_SEC[chartState.range] || 0;
+    CPU_CHARTS.forEach(function (d, i) {
+      var c = chartState.charts[i];
+      if (!c) return;
+      var pts = (res.series && res.series[d.key]) || [];
+      c.setData([pts], span);
+    });
+  }
+
+  /* 拉取历史序列（返回 {range, series:{metric:[[ts,v],...]}}） */
+  function fetchHistory(metrics, range) {
+    var base = 'api/monitor/history';
+    var url = base + '?metrics=' + encodeURIComponent(metrics) +
+      '&range=' + encodeURIComponent(range);
+    return fetch(url, { method: 'GET', headers: {} })
+      .then(function (r) {
+        return r.text().then(function (txt) {
+          try { return JSON.parse(txt); }
+          catch (e) { return { success: false, series: {} }; }
+        });
+      })
+      .catch(function () { return { success: false, series: {} }; });
+  }
+
   function kvHtml(rows) {
     return '<div class="mon-kv">' + rows.map(function (r) {
       var v = r[1];
@@ -604,6 +750,10 @@
       var pc = (d.cpu && d.cpu.coresPercent) || [];
       var host = body.querySelector('[data-dcores]');
       if (host && pc.length) setDetailCores(host, pc);
+      /* 处理器抽屉的两张趋势图（等抽屉滑入后才有实际宽度） */
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () { initCharts(body); });
+      });
     }
   }
 
@@ -617,6 +767,9 @@
       }
     }
     computeOpen = false;
+    /* 图表实例要显式销毁：ResizeObserver 持有元素引用，
+       不清理的话抽屉反复开关会累积监听。 */
+    destroyCharts();
     setTimeout(function () {
       if (!computeOpen) ov.hidden = true;
     }, 320);
@@ -710,6 +863,7 @@
       '<div class="right"><span class="mon-cmp-eyebrow">负载 1 / 5 / 15</span>' +
       '<b class="tnum">' + esc(la) + '</b></div></div>' +
       secHtml('每核使用率') + cores +
+      cpuChartsHtml() +
       secHtml('占用最高的进程', '每 15 秒刷新') +
       '<div class="mon-kv" data-procs>' +
       procRowsHtml((d && d.procs) || [], 'cpu') + '</div>' +

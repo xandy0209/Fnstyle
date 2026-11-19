@@ -2298,6 +2298,38 @@ PY
         exit 0
         ;;
 
+    /api/monitor/history)
+        # 处理器历史序列（趋势图数据源）：?metric=cpu&range=1h
+        # 或多指标一次取回：?metrics=cpu,load1&range=1h
+        # 同样转发给本机 9910 —— 历史库在采集服务那边（CGI 进程不持有连接）。
+        MH_METRIC=$(query_get "$QUERY" metric)
+        MH_METRIC=$(url_decode "$MH_METRIC")
+        MH_METRICS=$(query_get "$QUERY" metrics)
+        MH_METRICS=$(url_decode "$MH_METRICS")
+        MH_RANGE=$(query_get "$QUERY" range)
+        MH_RANGE=$(url_decode "$MH_RANGE")
+        [ -z "$MH_RANGE" ] && MH_RANGE=1h
+        case "$MH_RANGE" in
+            10m|1h|6h|24h|7d|all) ;;
+            *) MH_RANGE=1h ;;
+        esac
+        MH_URL="http://127.0.0.1:9910/api/monitor/history?range=${MH_RANGE}"
+        if [ -n "$MH_METRIC" ]; then
+            MH_URL="${MH_URL}&metric=${MH_METRIC}"
+        fi
+        if [ -n "$MH_METRICS" ]; then
+            MH_URL="${MH_URL}&metrics=${MH_METRICS}"
+        fi
+        MH_FILE="${TMPDIR:-/tmp}/fnstyle_mhist.$$"
+        if curl -s --max-time 15 -o "$MH_FILE" "$MH_URL" 2>/dev/null && [ -s "$MH_FILE" ]; then
+            http_json_file_nobom "200 OK" "$MH_FILE"
+        else
+            http_json "503 Service Unavailable" '{"success":false,"error":"监控服务未就绪，请确认应用服务已启动"}'
+        fi
+        rm -f "$MH_FILE"
+        exit 0
+        ;;
+
     /api/storage/scan)
         # 手动触发一次硬盘巡检（POST）。巡检要跑 smartctl，耗时可达十几秒，
         # 所以统一转发给本机 9910 的采集服务执行。

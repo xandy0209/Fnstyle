@@ -53,6 +53,13 @@ except Exception as _e:  # pragma: no cover
     log_line = "[monitor] 采集模块加载失败：%s" % _e
     print(log_line, flush=True)
 
+# 历史序列的可用范围（秒）。与 fnmonitor 的 _RANGE_SECONDS 一致。
+# all=0 表示查询保留期内全部。
+_RANGE_SECONDS = {
+    "10m": 600, "1h": 3600, "6h": 21600,
+    "24h": 86400, "7d": 604800, "all": 0,
+}
+
 # ----------------------------- 路径配置 -----------------------------
 UI_DIR = os.environ.get("FNSTYLE_UI_DIR", "/var/apps/fnstyle/target/ui")
 CGI_SCRIPT = os.path.join(UI_DIR, "index.cgi")
@@ -422,6 +429,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_update_start()
         if p == "/api/monitor":
             return self._handle_monitor()
+        if p == "/api/monitor/history":
+            return self._handle_monitor_history()
         if p == "/api/storage/scan":
             return self._handle_storage_scan()
         if p == "/api/storage/history":
@@ -500,6 +509,101 @@ class Handler(BaseHTTPRequestHandler):
         snap["available"] = True
         self._send_json(200, snap)
         return True
+
+    def _handle_monitor_history(self):
+        """处理器历史序列：GET /api/monitor/history?metric=cpu&range=1h
+
+        也支持多指标一次取回：?metrics=cpu,load1&range=1h
+        （抽屉里两张图要同时画，一次往返比两次快）。
+
+        返回格式对齐 fnmonitor 的 /api/history：
+          单指标 → {"metric": "cpu", "range": "1h", "points": [[ts, v], ...]}
+          多指标 → {"range": "1h", "series": {"cpu": [[ts,v],...], "load1": [...]}}
+
+        ⚠️ 实时兜底：历史为空或最新点过旧时，附加当前实时值 ——
+        后台每 60 秒才写一条，页面刚打开时常常一条历史都还没有，
+        没有兜底的话趋势图会一直空着。
+        """
+        if _MONITOR is None or _mc is None:
+            self._send_json(503, {"success": False, "error": "监控模块不可用"})
+            return True
+
+        q = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+        range_ = (q.get("range", ["1h"])[0] or "1h").strip()
+        if range_ not in _RANGE_SECONDS:
+            range_ = "1h"
+
+        metric = (q.get("metric", [""])[0] or "").strip()
+        metrics_raw = (q.get("metrics", [""])[0] or "").strip()
+        names = []
+        if metrics_raw:
+            names = [m.strip() for m in metrics_raw.split(",") if m.strip()]
+        elif metric:
+            names = [metric]
+        if not names:
+            self._send_json(400, {"success": False,
+                                   "error": "缺少 metric 或 metrics 参数"})
+            return True
+        # 只放行已知指标，避免把 history 表当成任意查询入口
+        allowed = ("cpu", "load1", "mem")
+        names = [n for n in names if n in allowed]
+        if not names:
+            self._send_json(400, {"success": False, "error": "不支持的指标名"})
+            return True
+
+        try:
+            import history_collect
+        except Exception:
+            history_collect = None
+
+        snap = _MONITOR.snapshot()
+        series = {}
+        for name in names:
+            pts = []
+            if history_collect is not None:
+                try:
+                    pts = history_collect.query_history(name, range_)
+                except Exception:
+                    pts = []
+            pts = self._append_live(pts, name, snap)
+            series[name] = pts
+
+        if len(names) == 1 and metric:
+            self._send_json(200, {"success": True, "metric": names[0],
+                                  "range": range_, "points": series[names[0]]})
+        else:
+            self._send_json(200, {"success": True, "range": range_, "series": series})
+        return True
+
+    def _append_live(self, pts, metric, snap):
+        """历史为空或最新点过旧时，附加当前实时值（对齐 fnmonitor 的兜底）。"""
+        try:
+            live = self._live_value(metric, snap)
+            if live is None:
+                return pts
+            now = time.time()
+            latest = pts[-1][0] if pts else 0
+            if now - latest > 60:
+                return list(pts) + [[now, round(float(live), 2)]]
+        except Exception:
+            pass
+        return pts
+
+    def _live_value(self, metric, snap):
+        """从最新实时快照取指定指标的当前值。"""
+        try:
+            if not snap:
+                return None
+            if metric == "cpu":
+                return (snap.get("cpu") or {}).get("percent")
+            if metric == "load1":
+                load = (snap.get("cpu") or {}).get("loadavg") or []
+                return load[0] if load else None
+            if metric == "mem":
+                return (snap.get("mem") or {}).get("percent")
+        except Exception:
+            pass
+        return None
 
     def _handle_update_start(self):
         body = self._read_body()

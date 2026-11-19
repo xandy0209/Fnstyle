@@ -377,6 +377,59 @@ def read_cpu_topology():
     return cores, threads or cores, sockets
 
 
+def _proc_stat_cpu_times(stat):
+    """解析 /proc/stat 的 CPU 时间片，返回 (汇总行, 每核行)。
+
+    口径与 fnmonitor 的 read_cpu_times() 一致：
+      · 取**前 8 个字段** user/nice/system/idle/iowait/irq/softirq/steal
+      · steal 计入总量（虚拟机被宿主机占用的时间），guest/guest_nice
+        已含在 user 里，不重复计入
+      · cpuN 严格按数字后缀匹配，避免误收其他以 cpu 开头的行
+    """
+    total = None
+    cores = []
+    for line in stat.splitlines():
+        parts = line.split()
+        if not parts:
+            continue
+        if parts[0] == "cpu":
+            try:
+                total = [int(x) for x in parts[1:9]]
+            except ValueError:
+                total = None
+        elif re.match(r"^cpu\d+$", parts[0]):
+            try:
+                cores.append([int(x) for x in parts[1:9]])
+            except ValueError:
+                pass
+    return total, cores
+
+
+def _cpu_percent(prev, curr):
+    """两次采样差分算使用率（%），与 fnmonitor 的 calc_cpu_percent() 一致。
+
+    ⚠️ 旧实现有个隐蔽 bug：用正则 groups() 取值时，把 cpuN 的**核心号**
+    也当成了时间片，导致 idle 索引整体错位一格（读到 system 而不是 idle），
+    每核使用率被系统性低估。现在改为按列表下标取，口径与 fnmonitor 相同。
+
+    口径要点（与 fnmonitor 逐位一致）：
+      - idle = parts[3](idle) + parts[4](iowait)
+      - total = 全部 8 个字段之和（含 steal）
+      - 返回值 round(..., 1)，保留 1 位小数
+    """
+    if not prev or not curr:
+        return None
+    if len(prev) < 4 or len(curr) < 4:
+        return None
+    prev_idle = prev[3] + (prev[4] if len(prev) > 4 else 0)
+    curr_idle = curr[3] + (curr[4] if len(curr) > 4 else 0)
+    total_delta = sum(curr) - sum(prev)
+    idle_delta = curr_idle - prev_idle
+    if total_delta <= 0:
+        return None
+    return round(max(0.0, 100.0 * (1.0 - idle_delta / float(total_delta))), 1)
+
+
 def collect_cpu():
     """CPU 使用率：/proc/stat 两次采样差分。
 
@@ -384,53 +437,51 @@ def collect_cpu():
     """
     out = {"available": False}
     stat = read_text("/proc/stat", 8192)
-    m = re.search(r"^cpu\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)(?:\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+))?",
-                  stat, re.M)
-    if not m:
+    total_line, core_lines = _proc_stat_cpu_times(stat)
+    if not total_line:
         return out
-    nums = [int(x) for x in m.groups() if x is not None]
-    idle = (nums[3] if len(nums) > 3 else 0) + (nums[4] if len(nums) > 4 else 0)
-    total = sum(nums)
-    cpu_total = 0
-    cpu_idle = 0
+    # 汇总行缺失时用各核之和兜底（fnmonitor 同样以各核为准）
+    if not total_line:
+        total_line = [sum(c[i] for c in core_lines) if core_lines else 0]
+
+    cpu_total = sum(total_line)
+    cpu_idle = (total_line[3] if len(total_line) > 3 else 0) + \
+               (total_line[4] if len(total_line) > 4 else 0)
     per_core = []
-    for line in re.finditer(r"^cpu(\d+)\s+(\d+)\s+(\d+)\s+(\d+)(?:\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+))?",
-                             stat, re.M):
-        n = [int(x) for x in line.groups() if x is not None]
-        core_total = sum(n)
-        core_idle = (n[3] if len(n) > 3 else 0) + (n[4] if len(n) > 4 else 0)
-        cpu_total += core_total
-        cpu_idle += core_idle
-        per_core.append((core_total, core_idle))
+    for n in core_lines:
+        per_core.append((sum(n),
+                         (n[3] if len(n) > 3 else 0) + (n[4] if len(n) > 4 else 0)))
     if not per_core:
-        per_core = [(total, idle)]
+        per_core = [(cpu_total, cpu_idle)]
 
     now = time.monotonic()
     prev = _CPU_STATE["last"]
     prev_t = _CPU_STATE["lastTime"]
     prev_cores = _CPU_STATE["cores"]
-    _CPU_STATE["last"] = (cpu_total, cpu_idle)
-    _CPU_STATE["cores"] = per_core
+
+    # ⚠️ 基线必须存**完整的 8 字段时间片列表**，不能存 (total, idle) 元组 ——
+    #    _cpu_percent() 要按 fnmonitor 的口径分别取 parts[3]/parts[4] 算 idle，
+    #    只存汇总值就算不出「idle + iowait」的真实差额。
+    _CPU_STATE["last"] = list(total_line)
+    _CPU_STATE["cores"] = [list(n) for n in core_lines]
     _CPU_STATE["lastTime"] = now
 
     if prev is not None and prev_t is not None:
         dt = now - prev_t
-        d_total = cpu_total - prev[0]
-        d_idle = cpu_idle - prev[1]
-        if d_total > 0 and dt > 0:
-            out["percent"] = _pct(d_total - d_idle, d_total)
-            out["available"] = True
+        if dt > 0:
+            # 汇总口径必须走 _cpu_percent（与 fnmonitor 逐位一致），
+            # 不要在这里另写一套 —— 两套算法必然会出现 1 位小数的差异。
+            pct = _cpu_percent(prev, list(total_line))
+            if pct is not None:
+                out["percent"] = pct
+                out["available"] = True
 
         # 每核使用率（仅在前后核数一致时计算）
-        if prev_cores and len(prev_cores) == len(per_core):
+        if prev_cores and len(prev_cores) == len(core_lines):
             cores = []
-            for i in range(len(per_core)):
-                dc = per_core[i][0] - prev_cores[i][0]
-                di = per_core[i][1] - prev_cores[i][1]
-                if dc > 0:
-                    cores.append(_pct(dc - di, dc))
-                else:
-                    cores.append(0)
+            for i in range(len(core_lines)):
+                pc = _cpu_percent(prev_cores[i], list(core_lines[i]))
+                cores.append(0.0 if pc is None else pc)
             out["coresPercent"] = cores
 
     # CPU 型号
@@ -861,6 +912,7 @@ class MonitorCollector(object):
         self._cache = {}
         self._thread = None
         self._stop = threading.Event()
+        self._history = None
 
     def snapshot(self):
         with self._lock:
@@ -874,9 +926,35 @@ class MonitorCollector(object):
         self._thread.start()
         # 启动硬盘巡检线程（定时全盘扫 SMART，独立于 3 秒采集循环）
         _storage_monitor()
+        # 启动历史写入线程（每 60 秒一条，供处理器抽屉的趋势图使用）
+        self._start_history()
+
+    def _start_history(self):
+        """启动历史写入线程（趋势图数据源）。
+
+        独立成线程而不是塞进采集循环：历史采样周期是 60 秒（与实时采集的
+        3 秒不同），且写库是磁盘 IO，不该拖慢实时采集。
+        """
+        if self._history is not None:
+            return
+        try:
+            import history_collect
+        except Exception:
+            return
+        try:
+            self._history = history_collect.HistoryWriter(
+                get_snapshot=self.snapshot)
+            self._history.start()
+        except Exception:
+            self._history = None
 
     def stop(self):
         self._stop.set()
+        if self._history is not None:
+            try:
+                self._history.stop()
+            except Exception:
+                pass
         m = _storage_monitor()
         if m:
             try:

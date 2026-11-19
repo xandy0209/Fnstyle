@@ -2029,3 +2029,139 @@ def smartctl_temp(dev):
             if m:
                 return int(m.group(1))
     return None
+
+# ==================== 历史指标存储（趋势图数据源） ====================
+#
+# 趋势图需要「一段时间内的连续采样值」。fnmonitor 用的是 SQLite 的
+# metrics 表（ts / metric / value 三列），每 60 秒写一条，保留 7 天。
+#
+# 本实现与 fnmonitor 的差异：
+#   - 不新建数据库文件，而是复用既有的 storage.db（同一块盘、同一份
+#     备份/清理策略，不额外占空间）；
+#   - 只写处理器抽屉真正需要的两个指标：cpu（使用率 %）与 load1（1 分钟负载）。
+#     内存趋势图不在本次需求内，不写 mem，避免无用的库体积增长。
+#
+# 表结构与 fnmonitor 保持一致（迁移自 fnmonitor，MIT License）：
+#   metrics(ts REAL NOT NULL, metric TEXT NOT NULL, value REAL NOT NULL)
+#   idx_metric_ts ON metrics(metric, ts)
+
+# 各范围对应的秒数（与 fnmonitor 的 _RANGE_SECONDS 一致）
+RANGE_SECONDS = {
+    "10m": 600,
+    "1h": 3600,
+    "6h": 21600,
+    "24h": 86400,
+    "7d": 604800,
+    "all": 0,          # 0 = 保留期内全部
+}
+
+# 历史保留天数（与 fnmonitor 的 retention_days 一致）
+HISTORY_RETENTION_DAYS = 7
+
+# 采样间隔（秒）。与 fnmonitor 的 history_interval 一致。
+HISTORY_INTERVAL = 60
+
+
+class HistoryStore(object):
+    """处理器历史指标存储：写入 + 查询。
+
+    表结构与读写口径对齐 fnmonitor 的 HistoryStore（MIT License）：
+      - 写入按 (ts, metric, value) 三列，顺序不能错 —— 历史上 fnmonitor
+        曾把 (metric, ts, value) 写反，导致查询 WHERE metric=? AND ts>=?
+        永远查不到，趋势图每次都从零开始。
+      - 查询走 idx_metric_ts 索引（metric, ts），取最新 limit 行再反转回升序。
+    """
+
+    def __init__(self, db_path=None):
+        self.db_path = db_path
+
+    # ---------- 连接 ----------
+
+    def _connect(self, write=False):
+        conn = sqlite3.connect(self.db_path, timeout=10)
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+        except Exception:
+            pass
+        if write:
+            # WAL 下 synchronous=NORMAL：断电最多丢最后一个事务（监控数据可接受），
+            # 显著减少 fsync，对机械硬盘更友好。
+            try:
+                conn.execute("PRAGMA synchronous=NORMAL")
+                conn.execute("PRAGMA journal_size_limit=67108864")
+            except Exception:
+                pass
+        conn.execute("""CREATE TABLE IF NOT EXISTS metrics (
+                       ts REAL NOT NULL, metric TEXT NOT NULL, value REAL NOT NULL)""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_metric_ts ON metrics(metric, ts)")
+        conn.commit()
+        return conn
+
+    # ---------- 写入 ----------
+
+    def write(self, rows):
+        """写入一批指标。rows 为 [(ts, metric, value), ...]。
+
+        单条失败不影响其它条 —— 监控数据丢一条无所谓，不能因此让采集线程挂掉。
+        """
+        if not rows or not self.db_path:
+            return False
+        try:
+            conn = self._connect(write=True)
+            try:
+                conn.executemany(
+                    "INSERT INTO metrics(ts, metric, value) VALUES(?,?,?)", rows)
+                conn.commit()
+            finally:
+                conn.close()
+            return True
+        except Exception:
+            return False
+
+    # ---------- 查询 ----------
+
+    def query(self, metric, seconds, limit=7200):
+        """查询某指标在指定时间窗内的序列点，返回 [(ts, value), ...]（时间升序）。
+
+        seconds=0 表示查询全部保留期内的历史（「全部」范围）。
+        """
+        if not self.db_path:
+            return []
+        try:
+            conn = self._connect()
+            try:
+                if not seconds:
+                    limit = 43200   # 30 天 × 每分钟 1 条
+                cutoff = (time.time() - seconds) if seconds else 0
+                # 取最新 limit 行再反转回升序，避免超大数据量拖慢查询
+                cur = conn.execute(
+                    "SELECT ts, value FROM metrics WHERE metric=? AND ts>=? "
+                    "ORDER BY ts DESC LIMIT ?", (metric, cutoff, limit))
+                return cur.fetchall()[::-1]
+            finally:
+                conn.close()
+        except Exception:
+            return []
+
+    # ---------- 清理 ----------
+
+    def cleanup(self, retention_days=None):
+        """删除超出保留期的历史点（默认 7 天）。
+
+        ⚠️ retention_days=0 表示「立即清掉全部」，必须显式判 None ——
+        用 `retention_days or DEFAULT` 会把 0 当成假值，误用默认 7 天。
+        """
+        if not self.db_path:
+            return 0
+        days = HISTORY_RETENTION_DAYS if retention_days is None else retention_days
+        try:
+            cutoff = time.time() - days * 86400
+            conn = self._connect(write=True)
+            try:
+                cur = conn.execute("DELETE FROM metrics WHERE ts < ?", (cutoff,))
+                conn.commit()
+                return cur.rowcount or 0
+            finally:
+                conn.close()
+        except Exception:
+            return 0
