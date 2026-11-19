@@ -1651,7 +1651,7 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     ['monitor.js 暴露 lockScroll', /lockScroll: lockPageScroll/.test(mon)],
     ['monitor.js 暴露 unlockScroll', /unlockScroll: unlockPageScroll/.test(mon)],
     ['renderCore 委托给 FnStyleCompute', /window\.FnStyleCompute && window\.FnStyleCompute\.render/],
-    ['版本号已 bump 到 1.1.38', /v1\.1\.38/.test(html)],
+    ['版本号已 bump 到 1.1.39', /v1\.1\.39/.test(html)],
   ];
   wireRules.forEach(([label, ok]) => {
     console.log((ok ? '  ✓ ' : '  ✗ ') + label);
@@ -1934,7 +1934,7 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
 
     /* ---- ⑦ 版本与接入 ---- */
     ['index.html 引入 chart.js', /<script src="static\/js\/chart\.js"><\/script>/],
-    ['版本号已 bump 到 1.1.38', /v1\.1\.38/.test(html)],
+    ['版本号已 bump 到 1.1.39', /v1\.1\.39/.test(html)],
   ];
 
   rules.forEach(([label, ok]) => {
@@ -1963,8 +1963,8 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
 
   /* ---- ⑨ app.js 版本号（单独读文件） ---- */
   const appjs = fs3.readFileSync(path3.join(base, 'static', 'js', 'app.js'), 'utf8');
-  const appOk = /APP_VERSION = '1\.1\.38'/.test(appjs);
-  console.log((appOk ? '  ✓ ' : '  ✗ ') + 'app.js 版本号 1.1.38');
+  const appOk = /APP_VERSION = '1\.1\.39'/.test(appjs);
+  console.log((appOk ? '  ✓ ' : '  ✗ ') + 'app.js 版本号 1.1.39');
   if (!appOk) bad++;
 
   /* ---- ⑩ v1.1.37：CPU 采样窗口 0.25s → 10s（与 fnmonitor 对齐） ---- */
@@ -2012,8 +2012,8 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     }
   }
 
-  /* ---- ⑫ v1.1.38：三卡片铺满 + 段控件下移 + 内存趋势图 ---- */
-  console.log('\n--- 三卡片铺满 / 段控件下移 / 内存趋势图（v1.1.38）---');
+  /* ---- ⑫ v1.1.38/1.1.39：三卡片铺满 + 段控件定位 + 内存趋势图 ---- */
+  console.log('\n--- 三卡片铺满 / 段控件定位 / 内存趋势图（v1.1.38~1.1.39）---');
   const cmp3 = fs3.readFileSync(path3.join(base, 'static', 'js', 'compute.js'), 'utf8');
   const css3 = fs3.readFileSync(path3.join(base, 'static', 'css', 'app.css'), 'utf8');
   const hist3 = fs3.readFileSync(path3.join(base, 'history_collect.py'), 'utf8');
@@ -2027,16 +2027,25 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     ['mon-grid-3 仅用于处理器板块',
       /class="mon-grid mon-grid-3" id="monCore"/.test(html)],
 
-    /* --- ② 段控件移到趋势图卡片底部 --- */
+    /* --- ② 段控件位置（v1.1.39：移到图表组顶部居中） --- */
     ['chartsHtml 通用图表组函数', /function chartsHtml\(groupKey\)/.test(cmp3)],
-    ['段控件挂在最后一张图表卡片内',
-      /var last = defs\.length - 1;[\s\S]{0,300}\(i === last\)[\s\S]{0,120}data-cseg/.test(cmp3)],
-    ['段控件不再浮在图表组上方',
-      !/\.mon-cmp-charts" data-charts[^>]*>'\s*\+\s*'<div class="mon-cmp-chart-seg"/.test(cmp3)],
-    ['段控件样式改为卡片内下沿（顶部边框线）',
-      /\.mon-cmp-chart-seg\s*\{[^}]*margin-top:[^}]*padding-top:[^}]*border-top:\s*1px solid/.test(css3)],
-    ['段控件不再用 margin-bottom 外挂',
-      !/\.mon-cmp-chart-seg\s*\{[^}]*margin-bottom/.test(css3)],
+    ['段控件在图表组顶部（卡片之前）',
+      /'<div class="mon-cmp-chart-seg" data-cseg><\/div>' \+ cards/.test(cmp3)],
+    ['段控件不再挂在任何卡片内部',
+      !/mon-cmp-chart-card[\s\S]{0,400}?><div class="mon-cmp-chart-seg"/.test(cmp3)
+        && !/<div class="mon-cmp-chart-card">[\s\S]{0,300}mon-cmp-chart-seg/.test(cmp3)],
+    ['段控件样式为居中（justify-content:center）',
+      /\.mon-cmp-chart-seg\s*\{[^}]*justify-content:\s*center/.test(css3)],
+    ['段控件与下方卡片保留间距（margin-bottom）',
+      /\.mon-cmp-chart-seg\s*\{[^}]*margin-bottom:\s*\.1rem/.test(css3)],
+    ['段控件不再用 margin-top 外挂',
+      !/\.mon-cmp-chart-seg\s*\{[^}]*margin-top/.test(css3)],
+    ['段控件不再有卡片内部分隔线（border-top）',
+      !/\.mon-cmp-chart-seg\s*\{[^}]*border-top/.test(css3)],
+    ['段控件收缩到内容宽度（fit-content）',
+      /\.mon-cmp-chart-seg \.mon-seg\s*\{\s*width:\s*fit-content/.test(css3)],
+    ['已移除 :has() 卡片底部留白规则',
+      !/\.mon-cmp-chart-card:has\(/.test(css3)],
 
     /* --- ③ 内存抽屉补「内存使用率」趋势图 --- */
     ['定义 MEM_CHARTS 内存使用率图表',
@@ -2058,13 +2067,23 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       /rows\.append\(\(now,\s*"mem"/.test(hist3)],
     ['后端 mem 指标取自 mem.percent',
       /mem_percent = mem\.get\("percent"\)/.test(hist3)],
+
+    /* --- ④ 移除处理器板块标题栏的「N 项可用」 --- */
+    ['index.html 已删除 monCoreCount 元素',
+      !/id="monCoreCount"/.test(html)],
+    ['index.html 处理器板块标题栏无 theme-count',
+      !/处理器 \/ 内存 \/ 显卡<\/h2>\s*<div class="spacer"><\/div>\s*<span class="theme-count"/.test(html)],
+    ['monitor.js 已删除计数更新逻辑',
+      !/monCoreCount/.test(mon)],
+    ['renderCore 不再统计可用项数',
+      !/if \(d\.cpu && d\.cpu\.available\) n\+\+/.test(mon)],
   ];
   v38.forEach(([label, ok]) => {
     console.log((ok ? '  ✓ ' : '  ✗ ') + label);
     if (!ok) bad++;
   });
 
-  if (bad) { console.error('❌ v1.1.38 断言失败 ' + bad + ' 项'); process.exitCode = 1; }
+  if (bad) { console.error('❌ v1.1.39 断言失败 ' + bad + ' 项'); process.exitCode = 1; }
 })();
 
 console.log(process.exitCode ? '\n❌ 测试未全部通过' : '\n🎉 全部测试通过');

@@ -3409,23 +3409,23 @@ html.mon-scroll-lock body {
   gap: .85rem;
   margin-top: .35rem;
 }
-/* 范围切换段控件：放在**最后一张图表卡片内部、画布下方**。
-   用一条细分隔线与图表区隔开，视觉上属于卡片的一部分。 */
+/* 范围切换段控件：放在**图表组顶部、所有卡片之前**，水平居中。
+   处理器抽屉里它落在第一张「CPU 使用率」卡片的上方中间；
+   内存抽屉只有一张图，同样在该卡片上方居中。 */
 .mon-cmp-chart-seg {
   display: flex;
-  justify-content: flex-start;
-  margin-top: .7rem;
-  padding-top: .6rem;
-  border-top: 1px solid var(--border);
+  justify-content: center;
+  margin-bottom: .1rem;
 }
+/* .mon-seg 本身是 inline-flex，作为 flex item 时显式收缩到内容宽度，
+   否则 justify-content:center 居中的会是拉伸后的整行宽 */
+.mon-cmp-chart-seg .mon-seg { width: fit-content; }
 .mon-cmp-chart-card {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: .85rem 1rem .6rem;
 }
-/* 带段控件的卡片底部留白稍大一点 */
-.mon-cmp-chart-card:has(.mon-cmp-chart-seg) { padding-bottom: .75rem; }
 .mon-cmp-chart-head {
   display: flex;
   align-items: flex-start;

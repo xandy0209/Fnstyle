@@ -589,26 +589,24 @@
   };
 
   /* 图表组的 HTML。
-     ⚠️ 范围切换段控件放在**最后一张图表卡片的底部**（卡片内、画布下方），
-        而不是像 fnmonitor 那样浮在图表组上方 —— 需求指定的位置。
-        多张图时，段控件只出现一次，挂在最后一张卡片下。 */
+     ⚠️ 范围切换段控件放在**图表组顶部、所有卡片之前**，水平居中 ——
+        处理器抽屉里它正好落在第一张「CPU 使用率」卡片的上方中间；
+        内存抽屉只有一张图，同样在该卡片上方居中。
+        多张图时段控件只出现一次（放在组顶部，不重复到每张卡片里）。 */
   function chartsHtml(groupKey) {
     var grp = CHART_GROUPS[groupKey] || CHART_GROUPS.cpu;
     var defs = grp.defs;
-    var last = defs.length - 1;
     var cards = defs.map(function (c, i) {
-      var seg = (i === last)
-        ? '<div class="mon-cmp-chart-seg" data-cseg></div>' : '';
       return '<div class="mon-cmp-chart-card">' +
         '<div class="mon-cmp-chart-head">' +
         '<div class="mon-cmp-chart-title">' + esc(c.title) + '</div>' +
         '<div class="mon-cmp-chart-legend" data-cleg="' + i + '"></div>' +
         '</div>' +
         '<div data-cch="' + i + '"></div>' +
-        seg +
         '</div>';
     }).join('');
-    return '<div class="mon-cmp-charts" data-charts="' + groupKey + '">' + cards + '</div>';
+    return '<div class="mon-cmp-charts" data-charts="' + groupKey + '">' +
+      '<div class="mon-cmp-chart-seg" data-cseg></div>' + cards + '</div>';
   }
 
   /* 图表实例管理：抽屉每次打开重建，关闭时销毁 */

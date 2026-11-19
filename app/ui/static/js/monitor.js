@@ -1397,12 +1397,6 @@
     } else {
       box.innerHTML = '<div class="mon-cmp-note">处理器 / 内存 / 显卡模块未加载</div>';
     }
-    var n = 0;
-    if (d.cpu && d.cpu.available) n++;
-    if (d.mem && d.mem.available) n++;
-    if (d.gpu && d.gpu.available && d.gpu.gpus && d.gpu.gpus.length) n++;
-    var cnt = $('#monCoreCount');
-    if (cnt) cnt.textContent = n ? n + ' 项可用' : '不可用';
   }
 
   /* ---------------- 3. 温度和散热 ---------------- */
