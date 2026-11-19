@@ -3114,6 +3114,50 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
   }
 })();
 
+/* ======================================================================
+   v1.1.46 —— 温度趋势图主板线消失修复（多系列数据装载）
+   ----------------------------------------------------------------------
+   用户反馈：「如图温度趋势图上为什么没有主板的温度，请核实」
+   核实结论（NAS 实机探针）：数据链路完好 —— mbTemp = 38.0，
+   temp_mb 1h 历史 60 个点，CHART_GROUPS.temp.metrics 也含 temp,temp_mb。
+   根因在前端：v1.1.44 合并双线图时只改了 series 定义，
+   drawCharts / drawPanelCharts 仍按 d.key 只取一条指标 →
+   setData([pts]) 只喂一列，LineChart 的 cols[1]（主板）永远空数组。
+   本块锁死修复：数据装载必须按 series[].m 逐系列取。
+   ====================================================================== */
+(function () {
+  let bad = 0;
+  console.log('\n--- v1.1.46 温度趋势图双线数据装载修复 ---');
+
+  const compSrc46 = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'js', 'compute.js'), 'utf8');
+
+  const rules46 = [
+    ['drawCharts 按 series[].m 逐系列取数据',
+      /var data = \(d\.series \|\| \[\]\)\.map\(function \(s\) \{\s*return \(res\.series && res\.series\[s\.m\]\) \|\| \[\];/.test(compSrc46)],
+    ['drawPanelCharts 按 series[].m 逐系列取数据（含 tf 变换）',
+      /var data = \(d\.series \|\| \[\]\)\.map\(function \(s\) \{\s*var p = \(res\.series && res\.series\[s\.m\]\) \|\| \[\];/.test(compSrc46)],
+    ['不再存在按 d.key 单列装载的旧写法（setData([pts])）',
+      /c\.setData\(\[pts\], span\)/.test(compSrc46) === false],
+    ['温度图双系列定义（temp/CPU + temp_mb/主板）',
+      /m:\s*'temp',\s*label:\s*'CPU'/.test(compSrc46) &&
+      /m:\s*'temp_mb',\s*label:\s*'主板'/.test(compSrc46)],
+    ['temp 组 metrics 请求含 temp,temp_mb',
+      /temp:\s*\{ defs: TEMP_CHARTS, metrics:\s*'temp,temp_mb' \}/.test(compSrc46)],
+    ['LineChart.setData 接受多列（cols）数据（chart.js 契约）',
+      /LineChart\.prototype\.setData = function \(cols, span\)/.test(
+        fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'js', 'chart.js'), 'utf8'))],
+  ];
+  rules46.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  if (bad) {
+    console.error('❌ v1.1.46 断言失败 ' + bad + ' 项');
+    process.exitCode = 1;
+  }
+})();
+
 /* 抽屉滑入动画断言是异步的（两帧 rAF → setTimeout），必须等它跑完再汇总 */
 setTimeout(function () {
   console.log(process.exitCode ? '\n❌ 测试未全部通过' : '\n🎉 全部测试通过');

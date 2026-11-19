@@ -1,5 +1,5 @@
 appname               = fnstyle
-version               = 1.1.45
+version               = 1.1.46
 display_name          = FnStyle
 desc                  = 集中管理飞牛个性化设置与丰富主题库：网站标题、登录框、LOGO、壁纸、毛玻璃、任务栏等独立配置，内置多源主题库，支持一键应用到 fnOS 系统，卸载后自动还原系统默认样式。
 platform              = all
@@ -15,5 +15,5 @@ desktop_applaunchname = fnstyle.main
 service_port          = 9910
 checkport             = false
 ctl_stop              = true
-changelog             = 1.1.45：抽屉卡片样式统一 —— ① **四格统计卡圆角统一为 var(--radius)（10px）**，此前是 6px（--radius-sm），与下方温度计卡片的 14px 三方不一致，用户要求「调整为圆角（与下方卡片的一致）」；② **四格统计卡高度调小**：内边距由 20px 24px 改为 **12px 16px**，实测格子高度 91px → **74px**（用户反馈「目前的太高了不协调」）；③ **区块间距拉开**：四格卡与上方 hero 大数字区、与下方温度计卡片之间各留 **14px** 间距（此前被 .mon-drawer-body > * + * { margin-top: 0 } 清零，两边贴死），并以 0,2,0 优先级覆盖该通用规则；④ **分节标题全站统一**：温度 / 能耗抽屉的「风扇」「电压」「全部传感器」「部件明细」「用电与电费」「估算参数」原用 .mon-sub-sec，处理器 / 内存 / 显卡抽屉原用 .mon-cmp-sec，两套并存导致同样的标题在不同抽屉里长得不一样 —— 现 6 处 JS 全部改用 .mon-cmp-sec，并**删除整套 .mon-sub-sec CSS**，使 .mon-cmp-sec（左侧 3px accent 竖条 / 600 字重 / primary 色 / 上 20px 下 8.8px）成为全站唯一分节标题样式；⑤ **键值表真正合并成一套**：此前温度抽屉 .mon-kv（白卡 + border-top + 11px 内距）与处理器抽屉 .mon-dkv（无外框 + border-bottom + .5rem 内距）是**两套独立 CSS**，即使数值调成一样，下一轮改样式仍会分叉 —— 现**删除 .mon-kv 全部规则**，monitor.js 中 12 处 class 全部改为 .mon-dkv / .mon-dkv-row，并统一 DOM 结构为 <span class="k"> / <span class="v">（与 compute.js 的 kvHtml 一致），同时给 .mon-dkv 补上 .mon-dkv-row .sub（传感器「上限 xx ℃」次行）样式；⑥ **抽屉内所有卡片圆角统一为 var(--radius)（10px）**：.mon-thermo（14px→10px）、.mon-stack-wrap（6px→10px）、.mon-cells / .mon-cmp-chart-card / .mon-dw-card 保持 10px，彻底消除「同一个抽屉里卡片圆角三种值」的割裂感（用户原话：「所有的抽屉中的卡片的样式保持一致嘛，不能乱」）；⑦ verify 新增「v1.1.45 抽屉卡片样式统一」**27 项断言**（含「.mon-kv / .mon-sub-sec 整套已删除」这类**合并性断言**而非仅比对数值，防止样式再次分叉），并重写 v1.1.41 / v1.1.42 / v1.1.44 中 4 项因本轮合并而过时的断言。
-checksum              = 9bc7d3ae231fd534b8cada7e0ee6cce6
+changelog             = 1.1.46：修复温度趋势图主板温度线消失 —— 用户反馈抽屉里「温度」图只有 CPU 一条线，主板图例显示 --。NAS 实机探针核实：数据链路完好（temp.mbTemp = 38.0，temp_mb 1h 历史 60 个点，CHART_GROUPS.temp.metrics 已含 temp,temp_mb），问题出在前端数据装载 —— v1.1.44 把 CPU / 主板温度合并为单图双线时只改了 series 定义，compute.js 的 drawCharts / drawPanelCharts 仍按 d.key 只取一条指标，setData([pts]) 只喂了一列，LineChart 的 cols[1]（主板列）永远是空数组。修复：两处数据装载改为按 series[].m 逐系列从历史响应取数（单系列 def 的 m == key，对 CPU / 内存 / 功耗图完全兼容），本地 Playwright 实测双线齐全（CPU 40.3℃ 蓝线 + 主板 29.5℃ 紫线）。verify 新增 v1.1.46 断言 6 项。
+checksum              = 4a3e0b003c23dcd7b140fef176707c31

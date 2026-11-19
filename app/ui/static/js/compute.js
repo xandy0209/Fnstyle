@@ -839,9 +839,17 @@
     st.defs.forEach(function (d, i) {
       var c = st.charts[i];
       if (!c) return;
-      var pts = (res.series && res.series[d.key]) || [];
-      /* tf 存在则先对数据做变换（如累计用电：瓦 → kWh） */
-      var data = d.tf ? [d.tf(pts)] : [pts];
+      /* ⚠️ v1.1.46：按 series[].m 逐系列取数据（修 v1.1.44 的漏改）。
+         v1.1.44 把温度图合并成单图双线（series = temp/CPU + temp_mb/主板），
+         但这里仍按 d.key 只取一条指标 → setData([pts]) 只喂了一列，
+         LineChart 的 cols[1]（主板）永远是空数组 → 图例显示 --、无线。
+         单系列 def 的 m == key，此改法对 CPU/内存/功耗图完全兼容。 */
+      var data = (d.series || []).map(function (s) {
+        var p = (res.series && res.series[s.m]) || [];
+        /* tf 存在则先对数据做变换（如累计用电：瓦 → kWh） */
+        return d.tf ? d.tf(p) : p;
+      });
+      if (!data.length) data = [[]];
       c.setData(data, span);
     });
   }
@@ -919,8 +927,13 @@
     chartState.defs.forEach(function (d, i) {
       var c = chartState.charts[i];
       if (!c) return;
-      var pts = (res.series && res.series[d.key]) || [];
-      c.setData([pts], span);
+      /* ⚠️ v1.1.46：按 series[].m 逐系列取数据（与 drawPanelCharts 同修）。
+         温度图是单图双线（temp + temp_mb），按 d.key 只取一条会让主板线消失。 */
+      var data = (d.series || []).map(function (s) {
+        return (res.series && res.series[s.m]) || [];
+      });
+      if (!data.length) data = [[]];
+      c.setData(data, span);
     });
   }
 
