@@ -271,6 +271,29 @@
     return String(a.name).localeCompare(String(b.name));
   }
 
+  /* ⚠️ v1.1.49：温度板块的硬盘显示名 —— 用「存储空间 volN」（fnOS 存储空间 N
+     = /volN），没挂载到存储池的盘保留设备名。
+     同一存储空间有多块盘（RAID 池）时标签会撞名，diskDisplayLabels()
+     对重复标签追加设备名「· sda」以示区分。
+     用户反馈：「硬盘名称使用存储空间的名称显示，才好进行区分」。 */
+  function diskDisplayName(x) {
+    if (!x) return '';
+    var v = volOf(x);
+    return v ? ('存储空间 vol' + v) : String(x.name || '');
+  }
+
+  function diskDisplayLabels(list) {
+    var arr = list || [];
+    var raw = arr.map(diskDisplayName);
+    var seen = {};
+    raw.forEach(function (s) { seen[s] = (seen[s] || 0) + 1; });
+    return raw.map(function (s, i) {
+      var d = arr[i];
+      if (seen[s] > 1 && d && d.name) return s + ' · ' + d.name;
+      return s;
+    });
+  }
+
   /* 厂商 + 型号（fnmonitor 同口径：厂商名已含在型号里时不重复） */
   function vendorModel(d) {
     var v = String((d && d.vendor) || '').trim();
@@ -1462,6 +1485,19 @@
     });
   }
 
+  /* ⚠️ v1.1.49：对象名排序比较器（用户要求温度计与传感器列表按名称排序）。
+     规则：西文名（CPU 等）在前，中文名按拼音序（zh-Hans-CN）；
+     numeric 让数字后缀「主板风扇 2 / 10」按数值比较，
+     不会出现「10 排在 2 前」。
+     ⚠️ 不能直接 localeCompare('zh-Hans-CN')：ICU 的中文排序默认把
+     拉丁字符排在汉字之后，CPU 会落到列表末尾，观感不对。 */
+  function cmpName(a, b) {
+    var x = String(a), y = String(b);
+    var xa = /^[\x00-\x7F]/.test(x), ya = /^[\x00-\x7F]/.test(y);
+    if (xa !== ya) return xa ? -1 : 1;
+    return x.localeCompare(y, 'zh-Hans-CN', { numeric: true });
+  }
+
   /* ================= 总览形态：温度与散热 =================
      对齐 fnmonitor defineModule id:'thermal'（源文件 3014 行起）：
        <div class="grid g-thermal">            ← 1.5fr 1fr 两栏
@@ -1600,17 +1636,16 @@
     }
 
     /* 硬盘单独一段（对齐 fnmonitor 的 diskThermo）
-       标签 = 插槽号（没有插槽号就用设备名），休眠盘追加「· 休眠」
-       ⚠️ fnmonitor 的 slot 来自 iDRAC（apply_idrac_slots），FnStyle 无 iDRAC 支持，
-          所以实际始终回退到设备名。 */
+       ⚠️ v1.1.49：标签改用「存储空间 volN」（用户要求以存储空间名区分硬盘），
+          同空间多盘自动追加设备名；休眠盘追加「· 休眠」。
+          旧实现优先插槽号（fnmonitor 的 iDRAC 口径），FnStyle 无 iDRAC，
+          实际始终回退到 sda 之类的设备名，难以分辨是哪块盘。 */
     var diskRows = '';
-    (t.disks || []).forEach(function (x) {
+    var diskLbls = diskDisplayLabels(t.disks);
+    (t.disks || []).forEach(function (x, di) {
       if (x && x.temp !== null && x.temp !== undefined && x.temp !== '') {
         var sleeping = !!(x.standby || x.state === 'standby');
-        var slot = (x.slot !== null && x.slot !== undefined && x.slot !== '')
-          ? Number(x.slot) : null;
-        var lbl = (slot !== null && !isNaN(slot))
-          ? ('插槽 ' + slot) : String(x.name || '');
+        var lbl = diskLbls[di] || String(x.name || '');
         if (sleeping) lbl += ' · 休眠';
         diskRows += ovThermoRow(lbl, Number(x.temp),
           [TH_DISK_TEMP_WARN, TH_DISK_TEMP_CRIT], 'disk', sleeping ? 'faint' : '');
@@ -1680,10 +1715,12 @@
     var dek = $('#monTempDek');
     if (dek) {
       var hot = null;
-      (t.disks || []).forEach(function (x) {
+      var dekDiskLbls = diskDisplayLabels(t.disks);
+      var hotIdx = -1;
+      (t.disks || []).forEach(function (x, di) {
         if (!x || x.temp === null || x.temp === undefined || x.temp === '') return;
         if (x.standby || x.state === 'standby') return;   // 休眠盘不参与最高温
-        if (!hot || Number(x.temp) > Number(hot.temp)) hot = x;
+        if (!hot || Number(x.temp) > Number(hot.temp)) { hot = x; hotIdx = di; }
       });
       var fanAvg = null;
       var running = fans.filter(function (f) { return Number(f.rpm) > 0; });
@@ -1697,7 +1734,8 @@
       } else {
         var parts = [];
         if (cpuTemp !== null && !isNaN(cpuTemp)) parts.push('CPU <b>' + fmtInt(cpuTemp) + '℃</b>');
-        if (hot) parts.push('硬盘最高 ' + fmtInt(hot.temp) + '℃（' + esc(hot.name) + '）');
+        if (hot) parts.push('硬盘最高 ' + fmtInt(hot.temp) + '℃（' +
+          esc(dekDiskLbls[hotIdx] || hot.name) + '）');
         if (fanAvg !== null) parts.push('风扇平均 ' + fmtInt(fanAvg) + ' RPM');
         if (!parts.length) {
           dek.textContent = '未读取到任何温度传感器。';
@@ -1705,14 +1743,6 @@
           dek.innerHTML = parts.join('，') + '。';
         }
       }
-    }
-
-    var cnt = $('#monTempCount');
-    if (cnt) {
-      /* ⚠️ v1.1.47：改用 tempPointCount 统一口径（与温度计列表行数一致），
-         旧写法 temps.length + disks.length 会把 temps 里 type='disk'
-         的 drivetemp 条目与 disks 段重复相加。 */
-      cnt.textContent = tempPointCount(t) + ' 个温度测点 · ' + fans.length + ' 个风扇';
     }
   }
 
@@ -1977,10 +2007,18 @@
         max: s.max, crit: s.crit
       });
     });
-    (t.disks || []).forEach(function (x) {
+    /* v1.1.49：硬盘标签改用「存储空间 volN」（同空间多盘追加设备名） */
+    var sheetDiskLbls = diskDisplayLabels(t.disks);
+    (t.disks || []).forEach(function (x, di) {
       if (!x || x.temp === null || x.temp === undefined || x.temp === '') return;
-      points.push({ k: 'd-' + x.name, label: x.name, v: Number(x.temp), kind: 'disk' });
+      points.push({
+        k: 'd-' + x.name, label: sheetDiskLbls[di] || String(x.name || ''),
+        v: Number(x.temp), kind: 'disk'
+      });
     });
+    /* ⚠️ v1.1.49：各对象按名称排序显示（用户要求），
+       用 cmpName（西文在前 + 中文拼音序 + 数字按数值比较）。 */
+    points.sort(function (a, b) { return cmpName(a.label, b.label); });
 
     if (points.length) {
       var trows = points.map(function (p) {
@@ -2072,16 +2110,30 @@
     html += '<div class="mon-cmp-sec"><span>全部传感器</span>' +
       '<span class="faint">' + temps.length + ' 个</span></div>';
     if (temps.length) {
+      /* ⚠️ v1.1.49：按对象名排序显示（用户要求，中文拼音序 + 数字按数值比较），
+         先排序再算同名序号，保证「CPU 封装 1 / 2」序号与显示顺序一致。
+         type='disk' 的 drivetemp 条目按设备名匹配 t.disks，
+         标签改用「存储空间 volN」（v1.1.49 与温度计口径一致）。 */
+      var kvList = temps.slice().sort(function (a, b) {
+        return cmpName(sensorLabel(a.name), sensorLabel(b.name));
+      });
+      var kvDiskLbls = diskDisplayLabels(t.disks);
+      var kvDiskByName = {};
+      (t.disks || []).forEach(function (x, i) {
+        if (x && x.name) kvDiskByName[String(x.name).toLowerCase()] = kvDiskLbls[i];
+      });
       /* 名称映射为可读对象名（v1.1.48），同名测点自动带序号 */
-      var kvLabels = sensorLabels(temps);
-      html += '<div class="mon-dkv">' + temps.map(function (s, si) {
+      var kvLabels = sensorLabels(kvList);
+      html += '<div class="mon-dkv">' + kvList.map(function (s, si) {
         var extra = '';
         if (s.max !== null && s.max !== undefined) {
           extra += '<div class="sub">上限 ' + fmt1(s.max) + ' ℃</div>';
         }
         var tag = SENSOR_TN[s.type] || s.type || '其它';
+        var kvName = (s.type === 'disk' && kvDiskByName[String(s.name || '').toLowerCase()]) ||
+          kvLabels[si];
         return '<div class="mon-dkv-row">' +
-          '<span class="k">' + esc(kvLabels[si]) + '<span class="mon-sensor-tag">' + esc(tag) + '</span></span>' +
+          '<span class="k">' + esc(kvName) + '<span class="mon-sensor-tag">' + esc(tag) + '</span></span>' +
           '<span class="v">' + fmt1(s.value) + ' ℃' + extra + '</span></div>';
       }).join('') + '</div>';
     } else {

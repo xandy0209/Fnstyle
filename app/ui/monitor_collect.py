@@ -718,16 +718,37 @@ def _to_float(s):
 
 # ==================== 3. 温度和散热 ====================
 
+def _drivetemp_dev_map():
+    """drivetemp 的 hwmon 实例名不带盘名（label 缺失时前端只会看到
+    「drivetemp 1」「drivetemp 2」，分不清是哪块盘）。
+    反查 /sys/block/*/device/hwmon 建立 (hwmon 名 → sd 设备名) 映射。
+    实机（v1.1.49 探针核实）：
+      /sys/block/sda/device/hwmon/hwmon2  →  hwmon2 = sda
+      /sys/block/sdb/device/hwmon/hwmon3  →  hwmon3 = sdb
+      /sys/block/sdc/device/hwmon/hwmon4  →  hwmon4 = sdc
+    映射成功后前端把 sd 名换算成「存储空间 volN」显示。
+    """
+    m = {}
+    for sd in glob.glob("/sys/block/sd[a-z]"):
+        for hw in glob.glob(os.path.join(sd, "device", "hwmon", "hwmon*")):
+            m[os.path.basename(hw)] = os.path.basename(sd)
+    return m
+
+
 def _hwmon_sensors():
     """遍历 /sys/class/hwmon 读取温度、电压与风扇。
 
     返回 (temps, fans, volts)。
     温度条目带 type 分类（cpu/pch/board/acpi/gpu/other）与 max/crit 阈值，
     供前端按 fnmonitor 的口径着色与分组。
+    ⚠️ v1.1.49：drivetemp 实例映射回 sd 设备名（如 sda）并强制 type='disk'，
+    前端据此把它换算成「存储空间 volN」。_sensor_type('sda') 不会命中
+    disk 正则（sda 不含 nvme/ssd/hdd/disk/drive 字样），所以必须显式指定。
     """
     temps = []
     fans = []
     volts = []
+    drv_map = _drivetemp_dev_map()
     for d in sorted(glob.glob("/sys/class/hwmon/hwmon[0-9]*")):
         name = read_text(os.path.join(d, "name"), 128).strip() or os.path.basename(d)
         for tp in sorted(glob.glob(os.path.join(d, "temp[0-9]*_input"))):
@@ -738,13 +759,19 @@ def _hwmon_sensors():
                 continue
             idx = re.search(r"temp(\d+)_input", tp)
             tname = label or ("%s %s" % (name, idx.group(1) if idx else ""))
+            ttype = _sensor_type(tname)
+            if name == "drivetemp":
+                dev = drv_map.get(os.path.basename(d))
+                if dev:
+                    tname = dev
+                ttype = "disk"
             temps.append({
                 "name": tname,
                 "chip": name,
                 "value": round(val / 1000.0, 1),
                 "max": _hwmon_scale(read_int(base + "_max")),
                 "crit": _hwmon_scale(read_int(base + "_crit")),
-                "type": _sensor_type(tname),
+                "type": ttype,
             })
         for fp in sorted(glob.glob(os.path.join(d, "fan[0-9]*_input"))):
             rpm = read_int(fp)

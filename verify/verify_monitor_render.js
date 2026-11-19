@@ -42,7 +42,8 @@ function mkEl(id) {
      旧的 monTemp / monPower 容器已移除（内容移到抽屉） */
   'monTempOverview', 'monTempSide', 'monTempDek',
   'monPowerOverview', 'monPowerStats', 'monPowerDaily', 'monPowerDek',
-  'monTempCount', 'monPowerSource', 'btnMonRefresh', 'monAuto',
+  /* v1.1.49：#monTempCount 统计标签已按用户要求移除，不再是页面元素 */
+  'monPowerSource', 'btnMonRefresh', 'monAuto',
   /* v1.1.41：趋势图宿主容器（独立于内容区，避免每 3 秒轮询被清空） */
   'monTempCharts', 'monPowerCharts',
   'btnMonScan', 'monDrawerOverlay', 'monDrawerTitle', 'monDrawerSub', 'monDrawerBody',
@@ -2397,7 +2398,12 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       ],
       fans: [{ name: 'cpu fan', rpm: 1420 }],
       volts: [{ name: 'Vcore', value: 1.28 }, { name: '+12V', value: 12.06 }],
-      disks: [{ name: 'sda', temp: 36 }, { name: 'sdb', temp: 41 }],
+      /* v1.1.49：硬盘带 vol/mounts（后端 storage_collect 下发），
+         两块盘同属存储空间 vol1 → 标签去歧义为「存储空间 vol1 · sda/sdb」 */
+      disks: [
+        { name: 'sda', temp: 36, vol: 1, mounts: ['/vol1'] },
+        { name: 'sdb', temp: 41, vol: 1, mounts: ['/vol1'] },
+      ],
     },
     power: {
       ok: true, source: 'rapl', total: 68.4,
@@ -3130,9 +3136,13 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       /function tempPointCount\(t\) \{[\s\S]{0,400}t\.cpuTemp[\s\S]{0,300}t\.mbTemp/.test(monSrc47)],
     ['tempPointCount 已导出到 FnStyleMonitor',
       /tempPointCount: tempPointCount,/.test(monSrc47)],
-    ['总览计数改用 tempPointCount（不再 temps.length + disks.length）',
-      /cnt\.textContent = tempPointCount\(t\) \+ ' 个温度测点/.test(monSrc47) &&
-      /cnt\.textContent = \(temps\.length \+ \(t\.disks \|\| \[\]\)\.length\)/.test(monSrc47) === false],
+    /* v1.1.49：#monTempCount 标题栏统计标签整体移除（HTML + JS 更新逻辑），
+       计数逻辑本身（tempPointCount）保留，仍用于抽屉副标题 */
+    ['总览计数元素已移除（标题栏右侧统计标签）',
+      /cnt\.textContent = tempPointCount\(t\)/.test(monSrc47) === false &&
+      /monTempCount/.test(monSrc47) === false],
+    ['tempPointCount 口径函数保留（抽屉副标题仍使用）',
+      /function tempPointCount\(t\) \{/.test(monSrc47)],
     ['抽屉副标题改调 FnStyleMonitor.tempPointCount',
       /window\.FnStyleMonitor && window\.FnStyleMonitor\.tempPointCount/.test(compSrc47) &&
       /\(temps \+ disks \+ cpu\) \+ ' 个温度测点/.test(compSrc47) === false],
@@ -3213,8 +3223,8 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       /var drawerLabels = sensorLabels\(drawerSensors\);/.test(monSrc48)],
     ['名称映射应用于抽屉温度计测点',
       /var drawerLabels = sensorLabels\(drawerSensors\);/.test(monSrc48)],
-    ['名称映射应用于抽屉「全部传感器」kv 表',
-      /var kvLabels = sensorLabels\(temps\);/.test(monSrc48)],
+    ['名称映射应用于抽屉「全部传感器」kv 表（排序后的 kvList）',
+      /var kvLabels = sensorLabels\(kvList\);/.test(monSrc48)],
     ['渲染处不再直接用内核测点名 s.name 作 label',
       /label: s\.name[,\s]/.test(monSrc48) === false &&
       /esc\(s\.name\)\s*\+\s*'\s*<span class="mon-sensor-tag"/.test(monSrc48) === false],
@@ -3226,6 +3236,137 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
 
   if (bad) {
     console.error('❌ v1.1.48 断言失败 ' + bad + ' 项');
+    process.exitCode = 1;
+  }
+})();
+
+/* ======================================================================
+   v1.1.49 —— 温度板块：硬盘名用存储空间名 + 去标题栏统计标签 + 按名排序
+   ----------------------------------------------------------------------
+   用户反馈：
+   ①「硬盘名称使用存储空间的名称显示，才好进行区分」
+      → 新增 diskDisplayName / diskDisplayLabels：t.disks 自带 vol 字段
+        （fnOS 存储空间 N = /volN），标签改为「存储空间 volN」；
+        同一存储空间多块盘（RAID 池）标签撞名时自动追加设备名「· sda」。
+        应用于主页硬盘行 / 摘要行「硬盘最高」/ 抽屉温度计 / 抽屉全部传感器。
+   ②「去掉温度和散热标题栏右侧的统计标签显示」
+      → index.html 删 #monTempCount，monitor.js 删 cnt 更新逻辑。
+   ③「抽屉中温度卡片和传感器卡片中各对象按名称排序显示」
+      → 温度计 points.sort(localeCompare zh-Hans-CN + numeric)；
+        全部传感器先按映射名排序再算同名序号（保证「CPU 封装 1/2」与
+        显示顺序一致）。
+   ====================================================================== */
+(function () {
+  let bad = 0;
+  console.log('\n--- v1.1.49 硬盘存储空间名 + 去统计标签 + 按名排序 ---');
+
+  const monSrc49 = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'js', 'monitor.js'), 'utf8');
+  const htmlSrc49 = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'index.html'), 'utf8');
+  const monPy49 = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'monitor_collect.py'), 'utf8');
+
+  const rules49 = [
+    /* ⓪ 后端：drivetemp hwmon 实例映射回 sd 设备名（实机探针 v1.1.49 核实：
+       /sys/block/sda/device/hwmon/hwmon2 → hwmon2 = sda，label 缺失时
+       前端只会看到「drivetemp 1」，无法对应到盘） */
+    ['采集端定义 _drivetemp_dev_map（反查 /sys/block/*/device/hwmon）',
+      /def _drivetemp_dev_map\(\):/.test(monPy49) &&
+      /sys\/block\/sd\[a-z\]/.test(monPy49) &&
+      /device", "hwmon"/.test(monPy49)],
+    ['采集端 drivetemp 测点改名 sd 设备名并强制 type=\'disk\'',
+      /if name == "drivetemp":/.test(monPy49) &&
+      /drv_map\.get\(os\.path\.basename\(d\)\)/.test(monPy49) &&
+      /ttype = "disk"/.test(monPy49)],
+
+    /* ① 硬盘名 → 存储空间名 */
+    ['monitor.js 定义 diskDisplayName（vol > 0 → 存储空间 volN）',
+      /function diskDisplayName\(x\) \{/.test(monSrc49) &&
+      /'存储空间 vol' \+ v/.test(monSrc49)],
+    ['diskDisplayLabels 同空间多盘自动追加设备名去歧义',
+      /function diskDisplayLabels\(list\) \{/.test(monSrc49) &&
+      /seen\[s\] > 1 && d && d\.name/.test(monSrc49)],
+    ['主页温度卡片硬盘行改用 diskDisplayLabels（不再用插槽号/设备名）',
+      /var diskLbls = diskDisplayLabels\(t\.disks\);/.test(monSrc49) &&
+      /'插槽 ' \+ slot/.test(monSrc49) === false],
+    ['主页摘要行「硬盘最高」用存储空间名',
+      /dekDiskLbls\[hotIdx\] \|\| hot\.name/.test(monSrc49)],
+    ['抽屉温度计硬盘行用存储空间名',
+      /var sheetDiskLbls = diskDisplayLabels\(t\.disks\);/.test(monSrc49) &&
+      /label: sheetDiskLbls\[di\] \|\| String\(x\.name \|\| ''\)/.test(monSrc49)],
+    ['抽屉「全部传感器」type=\'disk\' 条目按设备名匹配存储空间名',
+      /kvDiskByName\[String\(s\.name \|\| ''\)\.toLowerCase\(\)\]/.test(monSrc49)],
+
+    /* ② 去标题栏统计标签 */
+    ['index.html 已移除 #monTempCount 元素',
+      /monTempCount/.test(htmlSrc49) === false],
+    ['monitor.js 已移除 #monTempCount 更新逻辑',
+      /monTempCount/.test(monSrc49) === false],
+
+    /* ③ 按名称排序 */
+    ['monitor.js 定义 cmpName（西文在前 + 中文拼音序）',
+      /function cmpName\(a, b\) \{/.test(monSrc49) &&
+      /localeCompare\(y, 'zh-Hans-CN'/.test(monSrc49)],
+    ['cmpName 带 numeric（数字后缀按数值比较）',
+      /\{ numeric: true \}/.test(monSrc49)],
+    ['抽屉温度计测点按名称排序',
+      /points\.sort\(function \(a, b\) \{ return cmpName\(a\.label, b\.label\); \}\)/.test(monSrc49)],
+    ['抽屉「全部传感器」先排序再算同名序号',
+      /var kvList = temps\.slice\(\)\.sort\(function \(a, b\) \{/.test(monSrc49) &&
+      /cmpName\(sensorLabel\(a\.name\), sensorLabel\(b\.name\)\)/.test(monSrc49)],
+  ];
+  rules49.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* ---- 渲染级：排序结果 + 存储空间名 + 同空间去歧义 ---- */
+  try {
+    const data49 = {
+      temp: {
+        available: true, cpuTemp: 47, mbTemp: 33,
+        temps: [
+          { name: 'acpitz', chip: 'thermal', value: 39, max: null, crit: null, type: 'acpi' },
+          { name: 'coretemp Package id 0', chip: 'coretemp', value: 47, max: 80, crit: 100, type: 'cpu' },
+          { name: 'sda', chip: 'drivetemp', value: 36, max: null, crit: null, type: 'disk' },
+        ],
+        fans: [], volts: [],
+        disks: [
+          { name: 'sda', temp: 36, vol: 1, mounts: ['/vol1'] },
+          { name: 'sdb', temp: 41, vol: 1, mounts: ['/vol1'] },
+        ],
+      },
+    };
+    const h49 = global.window.FnStyleMonitor.tempSheetHtml(data49);
+    const thermoLabels = (h49.match(/mon-thermo-label" title="([^"]*)"/g) || [])
+      .map(s => s.replace(/^mon-thermo-label" title="/, '').replace(/"$/, ''));
+    const pos = n => thermoLabels.indexOf(n);
+    const renderRules49 = [
+      ['硬盘行显示存储空间名（同空间两盘自动带设备名去歧义）',
+        pos('存储空间 vol1 · sda') >= 0 && pos('存储空间 vol1 · sdb') >= 0],
+      ['温度计测点西文名在前（CPU → CPU 封装 → 存储… → 主板…）',
+        pos('CPU') >= 0 && pos('CPU 封装') >= 0 &&
+        pos('CPU') < pos('CPU 封装') &&
+        pos('CPU 封装') < pos('存储空间 vol1 · sda') &&
+        pos('存储空间 vol1 · sdb') < pos('主板') &&
+        pos('主板') < pos('主板 ACPI 温区')],
+      ['「全部传感器」kv 表：drivetemp(sda) 显示为存储空间名',
+        /class="k">存储空间 vol1 · sda<span class="mon-sensor-tag">硬盘</.test(h49)],
+      ['「全部传感器」kv 表按名称排序（CPU 封装 → 存储空间 → 主板 ACPI）',
+        /CPU 封装[\s\S]*?存储空间 vol1 · sda[\s\S]*?主板 ACPI 温区/.test(h49)],
+    ];
+    renderRules49.forEach(([label, ok]) => {
+      console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+      if (!ok) bad++;
+    });
+    if (!renderRules49.every(r => r[1])) {
+      console.log('  ⚠️ 实际温度计顺序: ' + thermoLabels.join(' | '));
+    }
+  } catch (e) {
+    console.error('  ❌ v1.1.49 渲染级断言抛异常: ' + e.message);
+    bad++;
+  }
+
+  if (bad) {
+    console.error('❌ v1.1.49 断言失败 ' + bad + ' 项');
     process.exitCode = 1;
   }
 })();

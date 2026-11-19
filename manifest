@@ -1,5 +1,5 @@
 appname               = fnstyle
-version               = 1.1.48
+version               = 1.1.49
 display_name          = FnStyle
 desc                  = 集中管理飞牛个性化设置与丰富主题库：网站标题、登录框、LOGO、壁纸、毛玻璃、任务栏等独立配置，内置多源主题库，支持一键应用到 fnOS 系统，卸载后自动还原系统默认样式。
 platform              = all
@@ -15,5 +15,5 @@ desktop_applaunchname = fnstyle.main
 service_port          = 9910
 checkport             = false
 ctl_stop              = true
-changelog             = 1.1.48：① **修复抽屉打开后数值冻结** —— 用户反馈「温度与散热抽屉界面打开后其中显示的温度都不变化」。核实：主面板每 3 秒 refresh() 重绘，但计算抽屉（处理器/内存/温度/能耗）只在打开时渲染一次快照，之后 hero/四格/温度计全部冻结。修复：compute.js 新增 updateLive —— 用新数据重渲染抽屉 body，旧 [data-charts] 节点原样搬回（图表实例/已选时间段/段控件全部保留，不重建不闪不丢选择），恢复滚动位置、重填每核点阵、回填电费统计（新增 60 秒结果缓存避免每 3 秒打重接口）、同步副标题；monitor.js refresh() 每轮挂钩。② **传感器名称可读化** —— 用户反馈 acpitz / Package id 0 这类内核测点名「都不知道是什么」。monitor.js 新增 sensorLabel（coretemp Package id 0/x86_pkg_temp → CPU 封装、acpitz → 主板 ACPI 温区、Core N → CPU 核心 N、pch → 芯片组（PCH）、motherboard → 主板、gpu → GPU；sda/nvme0n1 等盘名保留原名）+ sensorLabels（映射后同名测点自动带序号，如 CPU 封装 1/2）+ fanLabel（nct6798 fan1 → 主板风扇 1、cpu fan → CPU 风扇），应用于主页总览传感器行 / 抽屉温度计 / 抽屉传感器 kv / 抽屉风扇 kv 四处。verify 新增 v1.1.48 断言 18 项，前端 808 项全通过。
-checksum              = fcb5a178cecccd15cfdfd7328114eace
+changelog             = 1.1.49：① **硬盘按存储空间名显示** —— 用户反馈「温度和散热中的硬盘名称使用存储空间的名称显示，才好进行区分」。monitor.js 新增 diskDisplayName / diskDisplayLabels：t.disks 自带 vol 字段（fnOS 存储空间 N = /volN），硬盘标签改为「存储空间 volN」；同一存储空间多块盘（RAID 池）标签撞名时自动追加设备名「· sda」去歧义；应用于主页温度卡片硬盘行 / 摘要行「硬盘最高」/ 抽屉温度计 / 抽屉「全部传感器」（drivetemp 条目按设备名匹配 t.disks 换算存储空间名）。② **去掉标题栏右侧统计标签** —— 用户要求移除温度和散热卡片标题栏的「N 个温度测点 · N 个风扇」统计标签：index.html 删 #monTempCount 元素、monitor.js 删对应更新逻辑（tempPointCount 口径函数保留，抽屉副标题仍使用）。③ **抽屉温度卡片与传感器卡片按名称排序** —— 温度计条形图各测点、全部传感器 kv 表均按名称排序（cmpName：西文名在前 + 中文拼音序 zh-Hans-CN + numeric 数字后缀按数值比较；不能直接 localeCompare，ICU 中文排序默认把拉丁字符排在汉字之后）；全部传感器先排序再算同名序号，保证「CPU 封装 1/2」序号与显示顺序一致。verify 新增 v1.1.49 断言 17 项（含渲染级排序/存储空间名/去歧义断言），前端 825 项全通过。
+checksum              = e91a8f0de3c2338d5bc22fd0159ef1e8
