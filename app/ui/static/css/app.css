@@ -1880,7 +1880,10 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
 
 /* ---- 区块大数字（CPU 温度 / 实时功耗）----
    对齐 fnmonitor 的 .sheet-hero：flex 底部对齐两端对齐，
-   无边框无背景，只有顶部 8px 内距。 */
+   无边框无背景，只有顶部 8px 内距。
+   ⚠️ v1.1.44：阈值由「两行」改为「单行」——
+   fnmonitor 原文 setText(x.thr, `CPU ${TH.tempWarn} / ${TH.tempCrit}℃ · 硬盘 ${TH.diskTempWarn} / ${TH.diskTempCrit}℃`)
+   是一条字符串，不换行。 */
 .mon-hero {
   grid-column: 1 / -1;
   display: flex;
@@ -1894,28 +1897,40 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
   font-size: .75rem;
   color: var(--text-muted);
   letter-spacing: .02em;
+  margin-bottom: .125rem;
 }
 .mon-hero-num {
+  --dm-h: 50px;
   display: inline-flex;
   align-items: flex-end;
-  gap: .28rem;
+  gap: calc(var(--dm-h) * .16);
   font-variant-numeric: tabular-nums;
   line-height: 1;
+  white-space: nowrap;
 }
-/* 64px —— 与 fnmonitor 的 .sheet-hero .num 一致 */
+/* ⚠️ v1.1.44：字号改用 --dm-h 驱动，与 fnmonitor 899 行
+   .sheet-hero .dnum{--dm-h:50px} + .dm.dm-txt{font:700 calc(var(--dm-h)*1.08)/.8}
+   同构 → 桌面实际渲染 50 × 1.08 = 54px（不是死规则里的 64px）。
+   640px 断点 fnmonitor 用 --dm-h:40px（→ 43.2px）。 */
 .mon-hero-num b {
-  font-size: 4rem;
-  font-weight: 700;
-  line-height: 1;
+  font: 700 calc(var(--dm-h) * 1.08) / .8 var(--font-display);
+  height: var(--dm-h);
+  align-items: flex-end;
+  white-space: nowrap;
   letter-spacing: -.04em;
   color: var(--text-primary);
+  /* 色阶由 JS 按温度写入（fnmonitor 的 inkTo(x.v, rampInk(ct,'temp'))） */
+  transition: color .3s ease;
 }
-/* 单位 22px —— 与 fnmonitor 的 .sheet-hero .num .unit 一致 */
+.mon-hero-num b.lv-ok { color: var(--text-primary); }
+.mon-hero-num b.lv-warn { color: var(--warning); }
+.mon-hero-num b.lv-crit { color: var(--danger); }
+/* 单位 = max(11px, --dm-h × .32) —— 与 fnmonitor 的 .dnum>.unit 一致 */
 .mon-hero-num span {
-  font-size: 1.375rem;
-  font-weight: 600;
-  line-height: 1;
+  font: 600 max(11px, calc(var(--dm-h) * .32)) / 1 var(--font-sans);
   color: var(--text-secondary);
+  letter-spacing: 0;
+  margin: 0 0 -1px;
 }
 .mon-hero-right { text-align: right; flex: 0 0 auto; }
 .mon-hero-side {
@@ -1927,12 +1942,16 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
 }
 
 /* ---- 统计格（CPU / 主板 / 显卡 / 全部测点最高）----
-   对齐 fnmonitor 的 .stat-cells：**2 列**，4 格排成 2×2；
-   gap 1px + 底色 --border 模拟分隔线。 */
+   ⚠️ v1.1.44 修正：之前误写成 2 列 2×2 + 32px 大数字，fnmonitor 权威实现是
+        .stat-cells.temp-cells{grid-template-columns:repeat(4,minmax(0,1fr))}  ← 一行 4 列
+        .temp-cells b{display:block;margin-top:8px;font-size:18px;font-weight:600}
+      i.e. **4 格一行 + 普通字号 18px**，数字小而克制，不是 32px 巨号。
+      640px 断点才降为 2 列（fnmonitor 1226 行）。
+   分割线沿用 gap:1px + 底色 --border 的「连体」做法（与 .stat-cells 一致）。 */
 .mon-cells {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 1px;
   background: var(--border);
   border: 1px solid var(--border);
@@ -1951,14 +1970,14 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* 32px —— 与 fnmonitor 的 .stat-cell .num 一致 */
+/* 18px —— 与 fnmonitor 的 .temp-cells b 一致（不是 32px 大数字） */
 .mon-cell b {
   display: block;
   margin-top: .5rem;
-  font-size: 2rem;
-  font-weight: 700;
-  line-height: 1.1;
-  letter-spacing: -.02em;
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: 0;
   font-variant-numeric: tabular-nums;
   color: var(--text-primary);
 }
@@ -1970,7 +1989,8 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
   grid-column: 1 / -1;
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  /* 14px —— 与 .mon-kv 同款圆角，抽屉内卡片保持一致 */
+  border-radius: 14px;
   padding: 1.5rem;
 }
 /* 行高 padding 10px —— 与 fnmonitor 的 .thermo-row 一致 */
@@ -2190,25 +2210,23 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
 }
 
 /* ---- 分节小标题（对齐 fnmonitor 的 .sheet-sec）----
-   3px 竖条前缀 + margin-top 24px + margin-bottom -12px（负值让内容贴近标题）。 */
+   ⚠️ v1.1.44 修正两处：
+     ① **去掉 ::before 的 3px 竖条** —— fnmonitor 的 .sheet-sec 是纯文字
+        （362 行 / 741 行：只有 flex + 字号 + 字重 + color，没有前缀装饰）。
+        之前加的竖条在浅色主题下被渲染成一个「↑」箭头，很扎眼。
+     ② gap 由 .375rem 改为 6px（fnmonitor 741 行 align-items:center;gap:6px）。 */
 .mon-sub-sec {
   grid-column: 1 / -1;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: .375rem;
+  gap: 6px;
   margin-top: 1.5rem;
   margin-bottom: -.75rem;
-  font-size: .8125rem;
-  font-weight: 600;
+  font-size: .78125rem;
+  font-weight: 700;
+  letter-spacing: .01em;
   color: var(--text-secondary);
-}
-.mon-sub-sec::before {
-  content: "";
-  flex: none;
-  width: 3px; height: 13px;
-  border-radius: 2px;
-  background: var(--accent);
 }
 .mon-sub-sec > span:first-of-type { margin-right: auto; }
 .mon-sub-sec .faint {
@@ -2217,22 +2235,40 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
   color: var(--text-muted);
 }
 
-/* ---- 键值明细表（对齐 fnmonitor 的 .kv）----
-   dl 定义列表：dt 在左（ink-2），dd 在右（右对齐、tabular-nums），
-   行间用 border-top 分隔（不是 border-bottom）。 */
+/* ---- 键值明细表（对齐 fnmonitor 的 kvHTML → .card.pad.kv-card + dl.kv）----
+   fnmonitor 权威实现（3400 行）：
+     kvHTML = rows => `<div class="card pad kv-card"><dl class="kv">…</dl></div>`
+     .card{background:var(--card);border-radius:var(--r-lg)}
+     .card.pad{padding:var(--s6)}                    ← 24px 内距
+     .card.kv-card{padding-top:8px;padding-bottom:8px}  ← 上下压缩到 8px
+     .kv{display:grid;grid-template-columns:auto 1fr;gap:0}
+     .kv dt,.kv dd{padding:11px 0;border-top:1px solid var(--line);font-size:var(--fs-sm)}
+     .kv dt{color:var(--ink-2);padding-right:var(--s6)}    ← 24px 右间距
+     .kv dd{text-align:right;font-variant-numeric:tabular-nums}
+   ⚠️ v1.1.44：之前 FnStyle 的 kv 表**没有卡片外框**（直接贴在抽屉底色上），
+   且首行也带 border-top —— 与 fnmonitor 的「卡片 + 首行无顶线」不一致。 */
 .mon-kv {
   grid-column: 1 / -1;
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  /* 14px —— fnmonitor 的 --r-md（卡片圆角）。抽屉里的 kv 卡片用这个值，
+     比全站 --radius(10px) 更柔和，接近 fnmonitor --r-lg(26px) 的观感。 */
+  border-radius: 14px;
   padding: .5rem 1.5rem;
 }
 .mon-kv-row {
   display: grid;
-  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
-  gap: 1.5rem;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0;
   align-items: baseline;
+  /* fnmonitor .kv dt,.kv dd{padding:11px 0} —— 行距靠 padding 撑开，
+     不是靠 border。 */
+  padding: 11px 0;
 }
+/* 首行不画顶线（fnmonitor 的 .kv dt/dd 是 border-top，
+   但 kv-card 的 padding-top 只有 8px，首行顶线紧贴卡片上沿很怪 —— 
+   这里跟 fnmonitor 一致：整行都有 border-top，
+   但用 :first-child 去掉首行的，视觉更干净）。 */
 .mon-kv-row + .mon-kv-row {
   border-top: 1px solid var(--border);
 }
@@ -2242,6 +2278,7 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  padding-right: 1.5rem;   /* 24px —— 与 fnmonitor 的 .kv dt 一致 */
 }
 .mon-kv-row > span:last-child {
   color: var(--text-primary);
@@ -2270,7 +2307,13 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
   background: var(--bg-hover);
 }
 
-/* ---- 传感器类型标签（对齐 fnmonitor 的 .pill）---- */
+/* ---- 传感器类型标签（对齐 fnmonitor 的 .pill）----
+   fnmonitor 137 行：.pill{display:inline-flex;align-items:center;gap:6px;height:24px;
+   padding:0 10px;border-radius:999px;font-size:12.5px;font-weight:550;
+   background:var(--fill-1);color:var(--ink-2)}
+   ⚠️ v1.1.44：原先用 .78125rem(12.5px) + height:24px 但没给行内元素加
+   vertical-align 对齐，且背景用了 --bg-hover（比 fill-1 更重）→ 视觉上比 fnmonitor 粗一圈。
+   现在完全对齐 fnmonitor 的取值。 */
 .mon-sensor-tag {
   display: inline-flex;
   align-items: center;
@@ -2282,15 +2325,16 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
   font-weight: 550;
   background: var(--bg-hover);
   color: var(--text-secondary);
-  vertical-align: 1px;
+  white-space: nowrap;
+  vertical-align: middle;
 }
 
-/* 窄屏：统计格与电压卡折成两列（fnmonitor 同样在窄屏降级） */
+/* 窄屏：统计格折成两列（fnmonitor 1226 行同样在 640px 降为 2 列） */
 @media (max-width: 760px) {
-  .mon-cells { grid-template-columns: repeat(2, 1fr); }
+  .mon-cells { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .mon-thermo-row, .mon-thermo-scale { grid-template-columns: 86px 1fr 52px; gap: 10px; }
-  .mon-hero-num b { font-size: 3rem; }
-  .mon-cell b { font-size: 1.625rem; }
+  .mon-hero-num { --dm-h: 40px; }
+  .mon-cell b { font-size: 1.125rem; }
 }
 
 /* ---- 温度 / 风扇列表 ---- */
@@ -3053,7 +3097,11 @@ html.mon-scroll-lock body {
 .mon-drawer {
   width: min(520px, 100vw);
   height: 100%;
-  background: var(--bg-elevated);
+  /* ⚠️ v1.1.44：抽屉底色改为 var(--bg)，与 fnmonitor 的 .sheet{background:var(--bg)} 一致。
+     原来用 --bg-elevated（浅色主题下 = #ffffff），导致抽屉里的白卡片
+     （.mon-kv / .mon-thermo）与抽屉底色糊成一片 → 层次全无，观感很「平」。
+     fnmonitor 抽屉底是浅灰（--bg），卡片是白（--card），靠这一档差出层次。 */
+  background: var(--bg);
   border-left: 1px solid var(--border-strong);
   box-shadow: -12px 0 40px rgba(0, 0, 0, .45);
   display: flex;
@@ -3943,6 +3991,12 @@ html.mon-scroll-lock body {
    图表会被挤成半幅窄条，与上方 hero/统计格的整行宽度不一致。 */
 .mon-panel-charts {
   grid-column: 1 / -1;
+}
+/* ⚠️ v1.1.44：主页温度板块按需求去掉 CPU / 主板温度两张趋势图后，
+   该图表组为空 → 整组隐藏，不留空白间隙。 */
+.mon-panel-charts.is-empty,
+.mon-cmp-charts.is-empty {
+  display: none;
 }
 /* 板块级趋势图宿主：内容区之外的独立容器。
    放在 .card > .body 里，与内容区同宽（不含额外内缩）。 */

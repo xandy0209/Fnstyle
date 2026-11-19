@@ -1873,17 +1873,23 @@
     var cpuTemp = (t.cpuTemp === null || t.cpuTemp === undefined) ? null : Number(t.cpuTemp);
     var mbTemp = (t.mbTemp === null || t.mbTemp === undefined) ? null : Number(t.mbTemp);
 
-    /* --- ① 大数字区：CPU 温度 + 阈值 --- */
+    /* --- ① 大数字区：CPU 温度 + 阈值 ---
+       ⚠️ v1.1.44 对齐 fnmonitor SHEETS.temp.build：
+          阈值是 **单行** 字符串（fnmonitor: setText(x.thr, `CPU ${TH.tempWarn} / ${TH.tempCrit}℃ · 硬盘 ${TH.diskTempWarn} / ${TH.diskTempCrit}℃`)），
+          之前 FnStyle 写成两行（<br>），观感上右侧被撑高、显得笨重。
+          eyebrow 文案也改成 fnmonitor 的「CPU」（不是「CPU 温度」）。 */
+    var cpuLv = tempLevel(cpuTemp);
     html += '<div class="mon-hero">' +
       '<div class="mon-hero-left">' +
-        '<div class="mon-hero-eyebrow">CPU 温度</div>' +
-        '<div class="mon-hero-num"><b>' + (cpuTemp === null ? '—' : fmt1(cpuTemp)) + '</b>' +
+        '<div class="mon-hero-eyebrow">CPU</div>' +
+        '<div class="mon-hero-num"><b class="lv-' + (cpuLv === 'high' ? 'crit' : cpuLv) + '">' +
+        (cpuTemp === null ? '—' : fmt1(cpuTemp)) + '</b>' +
         '<span>℃</span></div>' +
       '</div>' +
       '<div class="mon-hero-right">' +
         '<div class="mon-hero-eyebrow">阈值</div>' +
-        '<div class="mon-hero-side">CPU ' + TH_TEMP_WARN + ' / ' + TH_TEMP_CRIT + '℃<br>' +
-        '硬盘 ' + TH_DISK_TEMP_WARN + ' / ' + TH_DISK_TEMP_CRIT + '℃</div>' +
+        '<div class="mon-hero-side">CPU ' + TH_TEMP_WARN + ' / ' + TH_TEMP_CRIT +
+        '℃ · 硬盘 ' + TH_DISK_TEMP_WARN + ' / ' + TH_DISK_TEMP_CRIT + '℃</div>' +
       '</div>' +
     '</div>';
 
@@ -1989,42 +1995,42 @@
       html += window.FnStyleCompute.chartsHtml('temp');
     }
 
-    /* --- ⑤ 分节明细：风扇 / 电压 / 全部传感器 --- */
-    /* 风扇 —— 对齐 fnmonitor 的 .fan（40px 圆形图标 + 名称 + 大号转速） */
+    /* --- ⑤ 分节明细：风扇 / 电压 / 全部传感器 ---
+       ⚠️ v1.1.44 对齐 fnmonitor SHEETS.temp.update：
+          风扇 / 电压 / 全部传感器 三段在 fnmonitor 里**都用 kvHTML() 键值表**
+          （<div class="card pad kv-card"><dl class="kv">…</dl></div>），
+          之前 FnStyle 把风扇做成「40px 圆形图标 + 大号转速」的卡片列表、
+          电压做成 2 列卡片网格 —— 与 fnmonitor 观感完全不同。
+          现在统一改成 kv 键值表（与「全部传感器」段一致）。 */
+    /* 风扇 —— fnmonitor: kvHTML(fans.map(f => [esc(fanName(f)), `${F.int(f.rpm)} RPM`])) */
+    html += '<div class="mon-sub-sec"><span>风扇</span>' +
+      '<span class="faint">' + fans.length + ' 个</span></div>';
     if (fans.length) {
-      html += '<div class="mon-sub-sec"><span>风扇</span><span class="faint">' + fans.length + ' 个</span></div>';
-      html += '<div class="mon-fans">' + fans.map(function (f) {
+      html += '<div class="mon-kv">' + fans.map(function (f) {
         var rpm = Number(f.rpm);
         var has = f.rpm !== null && f.rpm !== undefined && !isNaN(rpm);
-        /* 转速越高转得越快；fnmonitor 用 2400/rpm 换算动画周期 */
-        var spin = has && rpm > 0 ? (2400 / Math.max(300, rpm)).toFixed(2) + 's' : '0s';
-        return '<div class="mon-fan">' +
-          '<span class="mon-fan-ico">' + fanIcon(spin) + '</span>' +
-          '<div class="mon-fan-body">' +
-            '<div class="mon-fan-name">' + esc(f.name || '风扇') + '</div>' +
-            '<div class="mon-fan-rpm">' + (has ? fmtInt(rpm) : '—') +
-              '<span>RPM</span></div>' +
-          '</div>' +
-        '</div>';
+        return '<div class="mon-kv-row">' +
+          '<span>' + esc(f.name || '风扇') + '</span>' +
+          '<span>' + (has ? fmtInt(rpm) + ' RPM' : '—') + '</span></div>';
       }).join('') + '</div>';
     } else {
-      html += '<div class="mon-sub-sec"><span>风扇</span></div>';
       html += '<div class="mon-info">未检测到可读取的风扇转速传感器' +
         '（已适配标准 hwmon、IPMI/BMC、ThinkPad ACPI 与 0xA20 硬件监控邮箱（只读）；' +
         '仍无数值通常表示该机型固件未向系统开放风扇数据）。</div>';
     }
 
-    /* 电压 —— 对齐 fnmonitor 的 .volts（2 列网格卡片，底色 card-sunk） */
+    /* 电压 —— fnmonitor: kvHTML(volts.map(v => [esc(v.name), `${F.d2(v.value)} V`])) */
+    html += '<div class="mon-sub-sec"><span>电压</span>' +
+      '<span class="faint">' + volts.length + ' 个</span></div>';
     if (volts.length) {
-      html += '<div class="mon-sub-sec"><span>电压</span><span class="faint">' + volts.length + ' 个</span></div>';
-      html += '<div class="mon-volts">' + volts.map(function (v) {
-        return '<div class="mon-volt">' +
-          '<div class="mon-volt-eyebrow">' + esc(v.name) + '</div>' +
-          '<b>' + fmt2(v.value) + '<span> V</span></b>' +
-        '</div>';
+      html += '<div class="mon-kv">' + volts.map(function (v) {
+        var val = Number(v.value);
+        var has = v.value !== null && v.value !== undefined && !isNaN(val);
+        return '<div class="mon-kv-row">' +
+          '<span>' + esc(v.name) + '</span>' +
+          '<span>' + (has ? fmt2(val) + ' V' : '—') + '</span></div>';
       }).join('') + '</div>';
     } else {
-      html += '<div class="mon-sub-sec"><span>电压</span></div>';
       html += '<div class="mon-info">未读取到电压数据。</div>';
     }
 
@@ -2231,14 +2237,17 @@
   function renderPanelCharts(d) {
     if (!window.FnStyleCompute) return;
     var groups = [
-      { host: '#monTempCharts', key: 'temp' },
+      /* ⚠️ v1.1.44：主页「温度和散热」板块按需求去掉
+         CPU 温度 / 主板温度两张趋势图卡片 → onlyKeys 传空数组。
+         抽屉内的温度趋势图保留（走 chartsHtml，不经过这里）。 */
+      { host: '#monTempCharts', key: 'temp', only: [] },
       { host: '#monPowerCharts', key: 'power' }
     ];
     groups.forEach(function (g) {
       var host = $(g.host);
       if (!host) return;
       if (!host.querySelector('[data-pcharts="' + g.key + '"]')) {
-        host.innerHTML = window.FnStyleCompute.panelChartsHtml(g.key);
+        host.innerHTML = window.FnStyleCompute.panelChartsHtml(g.key, g.only);
         requestAnimationFrame(function () {
           requestAnimationFrame(function () {
             window.FnStyleCompute.initPanelCharts(host, g.key);

@@ -2324,8 +2324,11 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       /var TEMP_CHARTS = \[/.test(compSrc)],
     ['定义 POWER_CHARTS 能耗趋势图组',
       /var POWER_CHARTS = \[/.test(compSrc)],
-    ['温度趋势图含 CPU 温度与主板温度两张',
-      /title: 'CPU 温度'/.test(compSrc) && /title: '主板温度'/.test(compSrc)],
+    ['温度趋势图把 CPU 与主板合并为一张（fnmonitor TREND_DEFS[3]）',
+      /title: '温度'/.test(compSrc) &&
+      /m: 'temp', label: 'CPU'/.test(compSrc) &&
+      /m: 'temp_mb', label: '主板'/.test(compSrc) &&
+      !/title: 'CPU 温度'/.test(compSrc) && !/title: '主板温度'/.test(compSrc)],
     ['能耗趋势图含整机功耗与累计用电两张',
       /title: '整机功耗'/.test(compSrc) &&
       /title: '累计用电（所选范围）'/.test(compSrc)],
@@ -2368,8 +2371,8 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
   const cssRules = [
     ['.mon-hero 通栏大数字区样式存在',
       /\.mon-hero \{[^}]*grid-column:\s*1 \/ -1/.test(cssSrc)],
-    ['.mon-cells 四格统计样式存在（2 列 2×2，对齐 fnmonitor .stat-cells）',
-      /\.mon-cells \{[^}]*grid-template-columns:\s*repeat\(2,\s*1fr\)/.test(cssSrc)],
+    ['.mon-cells 四格统计为一行 4 列（fnmonitor .temp-cells repeat(4,minmax(0,1fr))）',
+      /\.mon-cells \{[^}]*grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\)/.test(cssSrc)],
     ['.mon-thermo 温度计容器样式存在',
       /\.mon-thermo \{/.test(cssSrc)],
     ['.mon-thermo-row 三列栅格（标签/条/值）',
@@ -2394,8 +2397,8 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       /\.mon-sensor-tag \{/.test(cssSrc)],
     ['趋势图宿主容器样式存在',
       /\.mon-panel-chart-host \{/.test(cssSrc)],
-    ['窄屏时四格统计降为两列',
-      /@media \(max-width: 760px\)[\s\S]*?\.mon-cells \{[^}]*repeat\(2,\s*1fr\)/.test(cssSrc)],
+    ['窄屏时四格统计降为两列（fnmonitor 640px .temp-cells repeat(2,minmax(0,1fr))）',
+      /@media \(max-width: 760px\)[\s\S]*?\.mon-cells \{[^}]*repeat\(2,\s*minmax\(0,\s*1fr\)\)/.test(cssSrc)],
   ];
   cssRules.forEach(([label, ok]) => {
     console.log((ok ? '  ✓ ' : '  ✗ ') + label);
@@ -2490,8 +2493,11 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
   }
 
   const renderRules = [
-    ['温度 hero 显示 CPU 温度大数字',
-      /mon-hero-num"><b>47\.0<\/b>/.test(tempHtml)],
+    ['温度 hero 显示 CPU 温度大数字（带色阶 class）',
+      /mon-hero-num"><b class="lv-/.test(tempHtml) && /47\.0<\/b>/.test(tempHtml)],
+    ['温度 hero 阈值单行显示（fnmonitor 单条字符串，不换行）',
+      /CPU 60 \/ 75℃ · 硬盘 50 \/ 58℃/.test(tempHtml) &&
+      !/<br>/.test(tempHtml.split('mon-hero-side')[1].split('</div>')[0])],
     ['温度 hero 显示阈值（CPU / 硬盘）',
       /CPU 60 \/ 75℃/.test(tempHtml) && /硬盘 50 \/ 58℃/.test(tempHtml)],
     ['四格统计齐全（CPU / 主板 / 显卡 / 全部测点最高）',
@@ -2508,15 +2514,12 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       /mon-thermo-mark/.test(tempHtml)],
     ['温度计刻度尺 20°~100°',
       /20°/.test(tempHtml) && /100°/.test(tempHtml)],
-    ['风扇分节渲染（图标条目 + 名称 + 大号 RPM）',
+    ['风扇分节渲染（kv 键值表，对齐 fnmonitor kvHTML）',
       /<span>风扇<\/span>/.test(tempHtml) &&
-      /class="mon-fan-ico"/.test(tempHtml) &&
-      /class="mon-fan-rpm">1420<span>RPM<\/span>/.test(tempHtml)],
-    ['电压分节渲染（2 列卡片）',
+      /class="mon-kv-row"><span>cpu fan<\/span><span>1420 RPM<\/span>/.test(tempHtml)],
+    ['电压分节渲染（kv 键值表，对齐 fnmonitor kvHTML）',
       /<span>电压<\/span>/.test(tempHtml) &&
-      /class="mon-volts"/.test(tempHtml) &&
-      /class="mon-volt"/.test(tempHtml) &&
-      /1\.28<span> V<\/span>/.test(tempHtml)],
+      /class="mon-kv-row"><span>Vcore<\/span><span>1\.28 V<\/span>/.test(tempHtml)],
     ['全部传感器分节渲染',
       /<span>全部传感器<\/span>/.test(tempHtml)],
     ['传感器带类型标签',
@@ -2595,10 +2598,14 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       /\.mon-hero \{[^}]*padding:\s*\.5rem 0 0/.test(cssSrc)],
     ['.mon-hero 底部对齐 + 两端对齐（align-items:flex-end）',
       /\.mon-hero \{[^}]*align-items:\s*flex-end[^}]*justify-content:\s*space-between/.test(cssSrc)],
-    ['.mon-hero 大数字 4rem = 64px（fnmonitor .sheet-hero .num）',
-      /\.mon-hero-num b \{[^}]*font-size:\s*4rem/.test(cssSrc)],
-    ['.mon-hero 单位 1.375rem = 22px（fnmonitor .unit）',
-      /\.mon-hero-num span \{[^}]*font-size:\s*1\.375rem/.test(cssSrc)],
+    ['.mon-hero 大数字由 --dm-h 驱动（fnmonitor .sheet-hero .dnum{--dm-h:50px}）',
+      /\.mon-hero-num \{[^}]*--dm-h:\s*50px/.test(cssSrc) &&
+      /\.mon-hero-num b \{[^}]*font:\s*700 calc\(var\(--dm-h\) \* 1\.08\)/.test(cssSrc)],
+    ['.mon-hero 单位由 --dm-h 派生（fnmonitor .dnum>.unit max(11px,--dm-h*.32)）',
+      /\.mon-hero-num span \{[^}]*max\(11px, calc\(var\(--dm-h\) \* \.32\)\)/.test(cssSrc)],
+    ['.mon-hero 大数字带温度色阶 class（lv-ok / lv-warn / lv-crit）',
+      /\.mon-hero-num b\.lv-warn \{/.test(cssSrc) &&
+      /\.mon-hero-num b\.lv-crit \{/.test(cssSrc)],
     ['.mon-hero 右侧区块右对齐',
       /\.mon-hero-right \{[^}]*text-align:\s*right/.test(cssSrc)],
   ];
@@ -2609,14 +2616,14 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
 
   /* ---------- CSS 级：统计格（对齐 fnmonitor .stat-cells）---------- */
   const cellRules = [
-    ['.mon-cells 为 2 列（fnmonitor repeat(2,1fr)）',
-      /\.mon-cells \{[^}]*grid-template-columns:\s*repeat\(2,\s*1fr\)/.test(cssSrc)],
+    ['.mon-cells 为一行 4 列（fnmonitor .temp-cells repeat(4,minmax(0,1fr))）',
+      /\.mon-cells \{[^}]*grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\)/.test(cssSrc)],
     ['.mon-cells 用 1px gap + 边框底色做分隔线（fnmonitor 手法）',
       /\.mon-cells \{[^}]*gap:\s*1px[^}]*background:\s*var\(--border\)/.test(cssSrc)],
     ['.mon-cell padding 1.25rem 1.5rem（= 20px 24px）',
       /\.mon-cell \{[^}]*padding:\s*1\.25rem 1\.5rem/.test(cssSrc)],
-    ['.mon-cell 数字 2rem = 32px（fnmonitor .stat-cell .num）',
-      /\.mon-cell b \{[^}]*font-size:\s*2rem/.test(cssSrc)],
+    ['.mon-cell 数字 1.125rem = 18px（fnmonitor .temp-cells b font-size:18px）',
+      /\.mon-cell b \{[^}]*font-size:\s*1\.125rem/.test(cssSrc)],
     ['.mon-cell 数字 tabular-nums 等宽',
       /\.mon-cell b \{[^}]*font-variant-numeric:\s*tabular-nums/.test(cssSrc)],
   ];
@@ -2675,14 +2682,16 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       /\.mon-legend \{[^}]*gap:\s*6px 18px/.test(cssSrc)],
     ['.mon-legend 色块 8px（fnmonitor .legend i 8px）',
       /\.mon-legend > span > i \{[^}]*width:\s*8px[^}]*height:\s*8px/.test(cssSrc)],
-    ['.mon-sub-sec 3px 竖条（fnmonitor .sheet-sec::before）',
-      /\.mon-sub-sec::before \{[^}]*width:\s*3px[^}]*height:\s*13px/.test(cssSrc)],
+    ['.mon-sub-sec 无竖条前缀（fnmonitor .sheet-sec 是纯文字，无 ::before）',
+      !/\.mon-sub-sec::before \{/.test(cssSrc)],
     ['.mon-sub-sec 负 margin 让内容贴近标题（fnmonitor margin-bottom:-12px）',
       /\.mon-sub-sec \{[^}]*margin-bottom:\s*-\.75rem/.test(cssSrc)],
     ['.mon-kv 行分隔用 border-top（fnmonitor .kv dt/dd border-top）',
       /\.mon-kv-row \+ \.mon-kv-row \{\s*border-top:/.test(cssSrc)],
     ['.mon-kv 栅格 auto 1fr（fnmonitor .kv grid-template-columns:auto 1fr）',
-      /\.mon-kv-row \{[^}]*grid-template-columns:\s*minmax\(0,\s*auto\)\s+minmax\(0,\s*1fr\)/.test(cssSrc)],
+      /\.mon-kv-row \{[^}]*grid-template-columns:\s*auto minmax\(0,\s*1fr\)/.test(cssSrc)],
+    ['.mon-kv 行距靠 padding 11px（fnmonitor .kv dt/dd padding:11px 0）',
+      /\.mon-kv-row \{[^}]*padding:\s*11px 0/.test(cssSrc)],
     ['.mon-kv 右侧值 tabular-nums 右对齐',
       /\.mon-kv-row > span:last-child \{[^}]*text-align:\s*right[^}]*font-variant-numeric:\s*tabular-nums/.test(cssSrc)],
     ['.mon-info 对齐 fnmonitor .note.info（fill-1 底 + ink-2 字）',
@@ -2715,17 +2724,17 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
 
   /* ---------- 源码级：JS 结构 ---------- */
   const jsRules = [
-    ['风扇图标用函数 fanIcon 输出单个 svg（不再嵌套两层 svg）',
-      /function fanIcon\(period\)/.test(monSrc) &&
-      /<span class="mon-fan-ico">' \+ fanIcon\(spin\)/.test(monSrc)],
-    ['风扇转速换算动画周期 2400/max(300,rpm)',
-      /2400 \/ Math\.max\(300, rpm\)/.test(monSrc)],
-    ['风扇条目结构 mon-fan > mon-fan-ico + mon-fan-body',
-      /class="mon-fan"/.test(monSrc) &&
-      /class="mon-fan-ico"/.test(monSrc) &&
-      /class="mon-fan-body"/.test(monSrc)],
-    ['电压结构 mon-volts > mon-volt（2 列卡片）',
-      /class="mon-volts"/.test(monSrc) && /class="mon-volt"/.test(monSrc)],
+    ['风扇渲染为 kv 键值表（fnmonitor kvHTML）',
+      /class="mon-kv-row"/.test(monSrc) &&
+      /esc\(f\.name \|\| '风扇'\)/.test(monSrc) &&
+      /fmtInt\(rpm\) \+ ' RPM'/.test(monSrc)],
+    ['风扇转速显示为「N RPM」（fnmonitor F.int(rpm) + RPM）',
+      /fmtInt\(rpm\) \+ ' RPM'/.test(monSrc)],
+    ['电压渲染为 kv 键值表（fnmonitor kvHTML）',
+      /esc\(v\.name\)/.test(monSrc) &&
+      /fmt2\(val\) \+ ' V'/.test(monSrc)],
+    ['电压值显示为「N V」（fnmonitor F.d2 + V）',
+      /fmt2\(val\) \+ ' V'/.test(monSrc)],
     ['堆叠条与图例同在 .mon-stack-wrap 卡片内',
       /class="mon-stack-wrap"/.test(monSrc)],
     ['板块级趋势图初始化兼容宿主自身即带 data-pcharts',
@@ -2917,6 +2926,86 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
 
   if (bad) {
     console.error('❌ 版本号一致性断言失败 ' + bad + ' 项');
+    process.exitCode = 1;
+  }
+})();
+
+/* ======================================================================
+   v1.1.44 —— 抽屉红框区域 1:1 对齐 fnmonitor + 主页温度趋势图移除
+   ----------------------------------------------------------------------
+   用户反馈：「你现在给我实现的好丑啊」，并给出 fnmonitor 截图对照。
+   本块把本轮 5 处结构性改动锁死，防止后续又被改回错误形态：
+     ① 抽屉四格 = 一行 4 列（不是 2×2）+ 数字 18px（不是 32px）
+     ② hero 阈值单行（不是 <br> 两行）
+     ③ hero 大数字由 --dm-h 驱动（50px → 实际 54px）
+     ④ 风扇 / 电压 / 全部传感器统一为 kv 键值表
+     ⑤ 主页温度板块不再渲染 CPU / 主板温度趋势图（抽屉保留）
+   ====================================================================== */
+(function () {
+  let bad = 0;
+  console.log('\n--- v1.1.44 抽屉红框对齐 fnmonitor + 主页趋势图移除 ---');
+
+  const cssSrc44 = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'css', 'app.css'), 'utf8');
+  const monSrc44 = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'js', 'monitor.js'), 'utf8');
+  const compSrc44 = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'js', 'compute.js'), 'utf8');
+
+  const rules44 = [
+    /* ---- ① 抽屉四格：一行 4 列 + 18px ---- */
+    ['抽屉四格为一行 4 列（fnmonitor .temp-cells）',
+      /\.mon-cells \{[^}]*grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\)/.test(cssSrc44)],
+    ['抽屉四格数字 18px（fnmonitor .temp-cells b font-size:18px）',
+      /\.mon-cell b \{[^}]*font-size:\s*1\.125rem/.test(cssSrc44)],
+    ['窄屏降为 2 列（fnmonitor 640px 断点）',
+      /@media \(max-width: 760px\)[\s\S]*?\.mon-cells \{[^}]*repeat\(2,\s*minmax\(0,\s*1fr\)\)/.test(cssSrc44)],
+    /* ---- ② hero 阈值单行 ---- */
+    ['hero 阈值单行（无 <br>）',
+      /mon-hero-side">CPU ' \+ TH_TEMP_WARN \+ ' \/ ' \+ TH_TEMP_CRIT \+[\s\S]{0,60}'℃ · 硬盘 '/.test(monSrc44) &&
+      !/TH_TEMP_CRIT \+ '℃<br>'/.test(monSrc44)],
+    ['hero eyebrow 文案为「CPU」（fnmonitor 原文）',
+      /<div class="mon-hero-eyebrow">CPU<\/div>/.test(monSrc44)],
+    /* ---- ③ hero 大数字 --dm-h 驱动 ---- */
+    ['hero 数字 --dm-h: 50px（fnmonitor .sheet-hero .dnum）',
+      /\.mon-hero-num \{[^}]*--dm-h:\s*50px/.test(cssSrc44)],
+    ['hero 数字色阶 class（lv-ok / lv-warn / lv-crit）',
+      /\.mon-hero-num b\.lv-warn \{/.test(cssSrc44) &&
+      /\.mon-hero-num b\.lv-crit \{/.test(cssSrc44)],
+    ['hero 数字按温度取色（tempLevel）',
+      /var cpuLv = tempLevel\(cpuTemp\)/.test(monSrc44)],
+    /* ---- ④ 风扇 / 电压 / 传感器统一 kv 表 ---- */
+    ['风扇改为 kv 键值表（不再是卡片列表）',
+      !/class="mon-fan-ico"/.test(monSrc44) &&
+      /fmtInt\(rpm\) \+ ' RPM'/.test(monSrc44)],
+    ['电压改为 kv 键值表（不再是 2 列卡片）',
+      !/class="mon-volt"/.test(monSrc44) &&
+      /fmt2\(val\) \+ ' V'/.test(monSrc44)],
+    ['全部传感器沿用 kv 表',
+      /class="mon-kv-row"/.test(monSrc44)],
+    ['分节标题去掉 3px 竖条（fnmonitor .sheet-sec 是纯文字）',
+      !/\.mon-sub-sec::before \{/.test(cssSrc44)],
+    /* ---- ⑤ 主页温度趋势图移除 ---- */
+    ['panelChartsHtml 支持 onlyKeys 白名单',
+      /function panelChartsHtml\(groupKey, onlyKeys\)/.test(compSrc44)],
+    ['过滤后的图表 key 写到 data-pdefs（索引对齐）',
+      /data-pdefs=/.test(compSrc44)],
+    ['initPanelCharts 优先读 data-pdefs 还原 defs',
+      /getAttribute\('data-pdefs'\)/.test(compSrc44)],
+    ['主页温度板块传空数组 → 不渲染趋势图卡片',
+      /host: '#monTempCharts', key: 'temp', only: \[\]/.test(monSrc44)],
+    ['抽屉温度趋势图保留（走 chartsHtml，不受 onlyKeys 影响）',
+      /window\.FnStyleCompute\.chartsHtml\('temp'\)/.test(monSrc44)],
+    /* ---- 额外：抽屉底色层次 ---- */
+    ['抽屉底色用 var(--bg)（fnmonitor .sheet{background:var(--bg)}）',
+      /\.mon-drawer \{[^}]*background:\s*var\(--bg\)/.test(cssSrc44)],
+    ['kv 卡片圆角 14px（fnmonitor --r-md）',
+      /\.mon-kv \{[^}]*border-radius:\s*14px/.test(cssSrc44)],
+  ];
+  rules44.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  if (bad) {
+    console.error('❌ v1.1.44 断言失败 ' + bad + ' 项');
     process.exitCode = 1;
   }
 })();

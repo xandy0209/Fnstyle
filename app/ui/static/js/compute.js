@@ -589,34 +589,34 @@
   ];
 
   /* 温度和散热板块的趋势图（1:1 对齐 fnmonitor 的 SHEETS.temp）
-     fnmonitor 的温度抽屉有两张图：
-       ① 「CPU 温度」    带警告/严重阈值虚线 + 峰值标注
-       ② 「主板温度」    无阈值
-     指标名分别是 temp 与 temp_mb。 */
+     ⚠️ v1.1.44：CPU 温度与主板温度**合并为一张图**。
+        fnmonitor 权威实现 TREND_DEFS[3]（源文件 2809 行）：
+          { id:'temp', title:'温度', sheet:'temp', yTick:v=>v+'°',
+            thresholds:()=>[{v:TH.tempWarn,lv:'warn'},{v:TH.tempCrit,lv:'crit'}],
+            series:[{m:'temp',label:'CPU',color:M.temp,fmt:fDeg},
+                    {m:'temp_mb',label:'主板',color:M.temp2,fmt:fDeg}] }
+        → 一张图两条线（CPU + 主板），指标名分别是 temp 与 temp_mb。
+        之前 FnStyle 拆成「CPU 温度」「主板温度」两张图，与 fnmonitor 不一致。
+        阈值虚线与峰值标注作用在整张图上（fnmonitor 的 peak 未设，仅 thresholds）。 */
   var TEMP_CHARTS = [
     {
       key: 'temp',
-      title: 'CPU 温度',
+      title: '温度',
       yMin: 0,
       yTick: function (v) { return v + '°'; },
-      peak: true,
       thresholds: function () {
         return [{ v: 60, lv: 'warn' }, { v: 75, lv: 'crit' }];
       },
-      series: [{
-        m: 'temp', label: 'CPU', color: 'var(--spark-1)',
-        fmt: function (v) { return [fmt1(v), '℃']; }
-      }]
-    },
-    {
-      key: 'temp_mb',
-      title: '主板温度',
-      yMin: 0,
-      yTick: function (v) { return v + '°'; },
-      series: [{
-        m: 'temp_mb', label: '主板', color: 'var(--spark-2)',
-        fmt: function (v) { return [fmt1(v), '℃']; }
-      }]
+      series: [
+        {
+          m: 'temp', label: 'CPU', color: 'var(--spark-1)',
+          fmt: function (v) { return [fmt1(v), '℃']; }
+        },
+        {
+          m: 'temp_mb', label: '主板', color: 'var(--spark-2)',
+          fmt: function (v) { return [fmt1(v), '℃']; }
+        }
+      ]
     }
   ];
 
@@ -688,9 +688,24 @@
      板块内容后面，用独立的数据属性避免和抽屉里的 [data-charts] 冲突。
 
      段控件放在图表组顶部居中 —— 与处理器/内存抽屉保持一致的观感。 */
-  function panelChartsHtml(groupKey) {
+  function panelChartsHtml(groupKey, onlyKeys) {
     var grp = CHART_GROUPS[groupKey] || CHART_GROUPS.cpu;
     var defs = grp.defs;
+    /* ⚠️ v1.1.44：新增 onlyKeys（图表 key 白名单）。
+       主页「温度和散热」板块按需求**去掉 CPU 温度 / 主板温度两张趋势图卡片**，
+       传空数组 [] 即该板块不渲染任何趋势图卡片；
+       抽屉内的趋势图不受影响（抽屉走 chartsHtml，不经过本函数）。
+       过滤后的 key 列表挂在根元素的 data-pdefs 上，
+       initPanelCharts 优先读它，保证 HTML 索引与图表实例索引严格对应。 */
+    if (Array.isArray(onlyKeys)) {
+      defs = defs.filter(function (d) { return onlyKeys.indexOf(d.key) !== -1; });
+    }
+    var keyAttr = ' data-pdefs=\'' + JSON.stringify(defs.map(function (d) { return d.key; })) + '\'';
+    if (!defs.length) {
+      /* 没有任何图表 → 不输出段控件，也不建图表实例 */
+      return '<div class="mon-cmp-charts mon-panel-charts is-empty" data-pcharts="' +
+        groupKey + '"' + keyAttr + '></div>';
+    }
     var cards = defs.map(function (c, i) {
       return '<div class="mon-cmp-chart-card">' +
         '<div class="mon-cmp-chart-head">' +
@@ -700,7 +715,8 @@
         '<div data-pch="' + i + '"></div>' +
         '</div>';
     }).join('');
-    return '<div class="mon-cmp-charts mon-panel-charts" data-pcharts="' + groupKey + '">' +
+    return '<div class="mon-cmp-charts mon-panel-charts" data-pcharts="' + groupKey + '"' +
+      keyAttr + '>' +
       '<div class="mon-cmp-chart-seg" data-pseg></div>' + cards + '</div>';
   }
 
@@ -729,6 +745,23 @@
 
     var grp = CHART_GROUPS[groupKey] || CHART_GROUPS.cpu;
     var defs = grp.defs;
+    /* ⚠️ v1.1.44：panelChartsHtml 可能按 onlyKeys 过滤过 defs，
+       这里优先按根元素上的 data-pdefs 还原过滤后的顺序，
+       否则 HTML 的 data-pch 索引与 defs 索引会错位。 */
+    if (wrap.getAttribute) {
+      var kAttr = wrap.getAttribute('data-pdefs');
+      if (kAttr) {
+        try {
+          var keys = JSON.parse(kAttr);
+          if (Array.isArray(keys)) {
+            defs = keys.map(function (k) {
+              return grp.defs.filter(function (d) { return d.key === k; })[0];
+            }).filter(Boolean);
+          }
+        } catch (e) { /* 解析失败则退回未过滤的 defs */ }
+      }
+    }
+    if (!defs.length) return;
 
     var segHost = wrap.querySelector('[data-pseg]');
     var charts = defs.map(function (d, i) {
