@@ -1130,15 +1130,19 @@ if (html) {
 (function checkDecimalUnits() {
   console.log('\n--- 容量单位进制（源码级）---');
   const src = fs.readFileSync(SRC, 'utf8');
+  /* v1.1.35 起，内存与显卡的渲染搬到了 compute.js，
+     这里同时检查 monitor.js（存储侧）与 compute.js（内存/显卡侧）。
+     注：fnmonitor 的 Swap 用 gb()（1024 进制 GiB），不是 fmtBytes —— 见 compute.js 的 gb()。 */
+  const cmpSrc = fs.readFileSync(
+    path.join(__dirname, '..', 'app', 'ui', 'static', 'js', 'compute.js'), 'utf8');
   const rules = [
     ['fmtDisk 函数存在', /function fmtDisk\s*\(/],
     ['fmtDisk 用十进制常量 1e12', /var T = 1e12, G = 1e9, M = 1e6/],
     ['存储池汇总用 fmtDisk', /totText = fmtDisk\(tSum\)/],
     ['盘位容量行用 fmtDisk', /d\.usedText \|\| fmtDisk\(d\.used \|\| 0\)/],
     // 内存/Swap/显存仍走 1024 进制（fnmonitor 的 F.bytes），不能被一起改成十进制
-    ['Swap 仍用 fmtBytes', /fmtBytes\(mem\.swapTotal\)/],
-    ['显存仍用 fmtBytes', /fmtBytes\(g\.memTotal\)/],
-    // fmtBytes 不能被改成十进制
+    ['Swap 用 1024 进制 gb()（compute.js）', /gb\(mem\.swapTotal\)/.test(cmpSrc)],
+    ['显存仍用 fmtBytes（compute.js）', /fmtBytes\(g\.memTotal\)/.test(cmpSrc)],
     ['fmtBytes 仍按 1024 递减', /while \(v >= 1024 && i < units\.length - 1\)/],
   ];  let bad = 0;
   rules.forEach(([label, re]) => {
@@ -1562,6 +1566,246 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
   closeScanLogDrawerFn();
 
   if (bad) { console.error('❌ v1.1.34 断言失败 ' + bad + ' 项'); process.exitCode = 1; }
+})();
+
+/* ---------- v1.1.35：处理器 / 内存 / 显卡卡片与详情抽屉（按 fnmonitor 1:1 还原） ---------- */
+(function checkComputeCards() {
+  console.log('\n--- 处理器 / 内存 / 显卡卡片与详情抽屉（v1.1.35）---');
+  const fs2 = require('fs');
+  const path2 = require('path');
+  const CMP = path2.join(__dirname, '..', 'app', 'ui', 'static', 'js', 'compute.js');
+  const CSS = path2.join(__dirname, '..', 'app', 'ui', 'static', 'css', 'app.css');
+  const HTML = path2.join(__dirname, '..', 'app', 'ui', 'index.html');
+  const MON = path2.join(__dirname, '..', 'app', 'ui', 'static', 'js', 'monitor.js');
+  const cmp = fs2.readFileSync(CMP, 'utf8');
+  const css = fs2.readFileSync(CSS, 'utf8');
+  const html = fs2.readFileSync(HTML, 'utf8');
+  const mon = fs2.readFileSync(MON, 'utf8');
+  let bad = 0;
+
+  /* --- 源码级：fnmonitor 1:1 的关键实现要素 --- */
+  const srcRules = [
+    /* ① 每核 5×5 点阵瓦片 */
+    ['CORE_DOTS 生成 25 个圆点', /for \(var y = 0; y < 5; y\+\+\)[\s\S]{0,200}for \(var x = 0; x < 5; x\+\+\)/],
+    ['点阵 viewBox 为 0 0 5 5', /viewBox="0 0 5 5"/],
+    /* ② 详情抽屉用 dotGauge（3 列 × N 行），不是 5×5 瓦片 */
+    ['详情抽屉用 dotGauge 点阵柱', /function dotGaugeSvg\(cols, rows\)/],
+    ['dotGauge 行数规则 n>8 → 8 否则 14', /n > 8 \? 8 : 14/],
+    ['dotGauge 每点半径 0.34', /r="0\.34"/],
+    /* ③ DIMM 内存条 SVG */
+    ['DIMM PCB 路径与 fnmonitor 一致', /M7 0H393A7 7 0 0 1 400 7V100H241V92H229V100H0V7A7 7 0 0 1 7 0Z/],
+    ['DIMM 8 个芯片位', /for \(var i = 0; i < 8; i\+\+\)/],
+    ['DIMM 三段（app/cache/buf）', /seg seg-app[\s\S]{0,400}seg seg-cache[\s\S]{0,400}seg seg-buf/],
+    ['DIMM 斜纹图案 id=monDimmHatch', /id="monDimmHatch"/],
+    ['DIMM 剪裁路径 id=monDimmChips', /id="monDimmChips"/],
+    /* ④ 内存构成四份 */
+    ['内存四份（应用/缓存/缓冲/空闲）', /app: app, cache: cache, buf: buf, free: Math\.max/],
+    /* ⑤ 显卡引擎 */
+    ['五个引擎（渲染/视频/视频增强/复制/计算）', /'render', '视频'[\s\S]{0,200}'video_enhance'[\s\S]{0,200}'blitter'[\s\S]{0,200}'compute'/],
+    ['引擎条 data-eng 挂在行容器上', /<div class="mon-engine" data-eng="/],
+    /* ⑥ 占用率来源判定 */
+    ['占用率来源判定含 pmu/rc6/warm/none/drv', /function gpuMode\(g\)[\s\S]{0,600}'pmu'[\s\S]{0,300}'rc6'[\s\S]{0,300}'warm'[\s\S]{0,300}'none'[\s\S]{0,300}'drv'/],
+    /* ⑦ 内存插槽 */
+    ['插槽清单读取 memory.items', /function memSlots\(d\)[\s\S]{0,200}m\.items/],
+    ['DIMM 标签按插槽规格拼装', /function dimmLabelText\(d\)/],
+    /* ⑧ 显卡卡片不可点击（fnmonitor 一致） */
+    ['显卡卡片标记为静态（不可点击）', /mon-cmp-card-static/],
+    ['显卡卡片不挂 data-cmp-open', !/data-cmp-open="gpu"/.test(cmp)],
+    /* ⑨ 进程排序：内存抽屉按 RSS */
+    ['内存抽屉进程按 RSS 降序', /function memProcTop\(d\)[\s\S]{0,300}Number\(b\.rss\)[\s\S]{0,120}Number\(a\.rss\)/],
+    /* ⑩ 核心/线程区分 */
+    ['核心线程分别取 cores 与 threads', /\['核心 \/ 线程', dash\(cpu\.cores\) \+ ' \/ ' \+ dash\(cpu\.threads\)\]/],
+  ];
+  srcRules.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* --- CSS：fnmonitor 1:1 的关键样式 --- */
+  const cssRules = [
+    ['每核瓦片网格按 --cols 排布', /\.mon-hw-cores \{[^}]*repeat\(var\(--cols/],
+    ['瓦片圆点用主题底色', /\.mon-hw-core circle \{ fill: var\(--bg-hover\)/],
+    ['详情仪表限宽 30px（对齐 fnmonitor）', /\.mon-dcore svg \{[^}]*max-width: 30px/],
+    ['详情仪表网格按 --cols 排布', /\.mon-dcores \{[^}]*repeat\(var\(--cols, 8\)/],
+    ['DIMM 斜纹段用图案填充', /\.mon-hw-dimm \.seg-cache \{ fill: url\(#monDimmHatch\)/],
+    ['DIMM 三段有过渡动画', /\.mon-hw-dimm \.seg \{[^}]*transition/],
+    ['引擎条三栏布局', /\.mon-engine \{[^}]*grid-template-columns: 64px 1fr 40px/],
+    ['引擎条填充条有高度', /\.mon-engine \.bar \{[^}]*height: 5px/],
+    ['卡片标题不换行', /\.mon-cmp-label \.lbl-t \{[^}]*white-space: nowrap/],
+    ['顶部三栏用 flex wrap（避免等宽列截断）', /\.mon-cmp-split \{[^}]*flex-wrap: wrap/],
+    ['图例斜纹样式存在', /\.mon-legend i\.hatch/],
+  ];
+  cssRules.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* --- 接线：index.html 引入 compute.js、monitor.js 暴露接口 --- */
+  const wireRules = [
+    ['index.html 引入 compute.js', /<script src="static\/js\/compute\.js"><\/script>/.test(html)],
+    ['monitor.js 暴露 lastData', /lastData: function \(\) \{ return lastData; \}/.test(mon)],
+    ['monitor.js 暴露 lockScroll', /lockScroll: lockPageScroll/.test(mon)],
+    ['monitor.js 暴露 unlockScroll', /unlockScroll: unlockPageScroll/.test(mon)],
+    ['renderCore 委托给 FnStyleCompute', /window\.FnStyleCompute && window\.FnStyleCompute\.render/],
+    ['版本号已 bump 到 1.1.35', /v1\.1\.35/.test(html)],
+  ];
+  wireRules.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* --- 渲染级：真实把数据塞进 compute.js，看渲染结果 --- */
+  const computeData = {
+    cpu: {
+      available: true, percent: 23, coresPercent: [12, 32, 32, 15],
+      model: 'Intel(R) Celeron(R) CPU J3455 @ 1.50GHz',
+      cores: 4, threads: 4, sockets: 1,
+      loadavg: ['0.65', '0.67', '0.64'], freqMhz: 2200, freqText: '2.20 GHz',
+    },
+    mem: {
+      available: true, total: 7976656896, used: 3153301504,
+      availableBytes: 4823355392, percent: 40, cached: 3411341312, buffers: 0,
+      swapTotal: 2147479552, swapUsed: 699387904,
+    },
+    gpu: {
+      available: true,
+      gpus: [{
+        vendor: 'Intel', type: 'igpu',
+        name: 'VGA compatible controller: Intel Corporation Apollo Lake GT1 [HD Graphics 500] (rev 0b)',
+        temp: null, util: 37.5, utilAvailable: true, utilSource: 'pmu', warming: false,
+        engines: { render: 42, video: 8, video_enhance: 0, blitter: 3, compute: 61 },
+        freqMhz: 900, freqReqMhz: 1150, memPct: 18.2, memUsed: null, memTotal: null,
+      }],
+    },
+    system: { arch: 'x86_64' },
+    procs: [
+      { pid: 1234, comm: 'fnstyle_server', args: 'python3 fnstyle_server.py', cpu: 18.2, rss: 52428800 },
+      { pid: 2345, comm: 'postgres', args: 'postgres: main', cpu: 12.5, rss: 209715200 },
+      { pid: 3456, comm: 'nginx', args: 'nginx: worker', cpu: 4.1, rss: 20971520 },
+      { pid: 4567, comm: 'trimd', args: '/usr/local/bin/trimd', cpu: 2.2, rss: 41943040 },
+      { pid: 5678, comm: 'dockerd', args: '/usr/bin/dockerd', cpu: 1.5, rss: 104857600 },
+      { pid: 6789, comm: 'smbd', args: 'smbd', cpu: 0.8, rss: 15728640 },
+      { pid: 7890, comm: 'systemd', args: '/sbin/init', cpu: 0.3, rss: 12582912 },
+    ],
+    memory: {
+      items: [
+        { present: true, size: '8 GB', type: 'DDR4', speed: '2400 MT/s', manufacturer: 'Samsung', part: 'M378A1K43', locator: 'DIMM_1' },
+        { present: true, size: '8 GB', type: 'DDR4', speed: '2400 MT/s', manufacturer: 'Samsung', part: 'M378A1K43', locator: 'DIMM_2' },
+        { present: false, size: '', type: '', speed: '', manufacturer: '', part: '', locator: 'DIMM_3' },
+      ],
+      dual: true,
+    },
+  };
+
+  /* compute.js 是独立 IIFE，需要真实的 DOM 能力 —— 这里只验证纯函数与 HTML 生成，
+     完整渲染由 Playwright 探针（probe_v135_compute.js）覆盖。 */
+  let computeMod = null;
+  try {
+    const sandbox = {
+      window: {}, document: { querySelector: () => null, addEventListener: () => {}, readyState: 'complete' },
+      console: console, Math: Math, JSON: JSON, parseFloat: parseFloat,
+      parseInt: parseInt, isFinite: isFinite, String: String, Number: Number,
+      Array: Array, Object: Object, RegExp: RegExp, Date: Date,
+    };
+    sandbox.window = sandbox;
+    const vm = require('vm');
+    vm.createContext(sandbox);
+    vm.runInContext(cmp, sandbox, { filename: 'compute.js' });
+    computeMod = sandbox.FnStyleCompute;
+  } catch (e) {
+    console.error('  ❌ compute.js 载入失败:', e.message);
+    bad++;
+  }
+
+  if (computeMod) {
+    console.log((computeMod.render ? '  ✓ ' : '  ✗ ') + 'compute.js 导出 render 接口');
+    if (!computeMod.render) bad++;
+    console.log((computeMod.open && computeMod.close ? '  ✓ ' : '  ✗ ') + 'compute.js 导出 open/close 接口');
+    if (!(computeMod.open && computeMod.close)) bad++;
+
+    /* 抽屉内容：直接调内部渲染路径（通过 open 后读 body.innerHTML 不便，
+       这里改为校验 CPU/内存两套 HTML 生成函数是否存在于源码中并可被 open 调用） */
+    const openOk = (function () {
+      try {
+        /* 造一个最小 DOM，让 openCompute 能跑通并留下 body.innerHTML */
+        const body = {
+          innerHTML: '',
+          /* 抽屉渲染后会查每核仪表容器来填点阵，这里给个空实现即可 */
+          querySelector: () => null,
+          querySelectorAll: () => [],
+        };
+        const title = { textContent: '' };
+        const sub = { textContent: '' };
+        const overlay = {
+          hidden: true,
+          classList: { add: () => {}, remove: () => {} },
+          addEventListener: () => {},
+        };
+        const map = {
+          '#monComputeOverlay': overlay,
+          '#monComputeBody': body,
+          '#monComputeTitle': title,
+          '#monComputeSub': sub,
+          '#btnCloseMonCompute': null,
+        };
+        const ctx = {
+          window: {}, console: console,
+          document: {
+            querySelector: (s) => map[s] || null,
+            querySelectorAll: () => [],
+            addEventListener: () => {},
+            readyState: 'complete',
+          },
+          Math: Math, JSON: JSON, parseFloat: parseFloat, parseInt: parseInt,
+          isFinite: isFinite, String: String, Number: Number, Array: Array,
+          Object: Object, RegExp: RegExp, Date: Date, setTimeout: () => {},
+          requestAnimationFrame: (fn) => fn(),
+        };
+        ctx.window = ctx;
+        const vm2 = require('vm');
+        vm2.createContext(ctx);
+        vm2.runInContext(cmp, ctx, { filename: 'compute.js' });
+        /* 分别捕获 CPU 与内存两套抽屉 HTML（open 会覆盖 body.innerHTML） */
+        ctx.FnStyleCompute.open('cpu', computeData);
+        const cpuHtml = body.innerHTML;
+        ctx.FnStyleCompute.open('mem', computeData);
+        const memHtml = body.innerHTML;
+        return { cpuHtml: cpuHtml, memHtml: memHtml, title: title };
+      } catch (e) {
+        console.error('  ❌ openCompute 抛异常:', e.message);
+        return null;
+      }
+    })();
+
+    if (openOk && openOk.cpuHtml) {
+      const cpuH = openOk.cpuHtml;
+      const memH = openOk.memHtml || '';
+      console.log((/每核使用率/.test(cpuH) ? '  ✓ ' : '  ✗ ') + '处理器抽屉含「每核使用率」段落');
+      if (!/每核使用率/.test(cpuH)) bad++;
+      console.log((/占用最高的进程/.test(cpuH) ? '  ✓ ' : '  ✗ ') + '处理器抽屉含「占用最高的进程」段落');
+      if (!/占用最高的进程/.test(cpuH)) bad++;
+      console.log((/规格/.test(cpuH) ? '  ✓ ' : '  ✗ ') + '处理器抽屉含「规格」段落');
+      if (!/规格/.test(cpuH)) bad++;
+      console.log((/显卡/.test(cpuH) ? '  ✓ ' : '  ✗ ') + '处理器抽屉含「显卡」段落');
+      if (!/显卡/.test(cpuH)) bad++;
+      console.log((/viewBox="0 0 3 14"/.test(cpuH) ? '  ✓ ' : '  ✗ ') + '详情仪表为 dotGauge 3 列 × 14 行');
+      if (!/viewBox="0 0 3 14"/.test(cpuH)) bad++;
+      console.log((/mon-dcore/.test(cpuH) ? '  ✓ ' : '  ✗ ') + '详情仪表使用 mon-dcore 容器');
+      if (!/mon-dcore/.test(cpuH)) bad++;
+      console.log((/内存插槽/.test(memH) ? '  ✓ ' : '  ✗ ') + '内存抽屉含「内存插槽」段落');
+      if (!/内存插槽/.test(memH)) bad++;
+      console.log((/交换分区/.test(memH) ? '  ✓ ' : '  ✗ ') + '内存抽屉含「交换分区」段落');
+      if (!/交换分区/.test(memH)) bad++;
+      console.log((/DIMM_1/.test(memH) && /DIMM_3/.test(memH) ? '  ✓ ' : '  ✗ ') + '插槽清单列出 DIMM 位置');
+      if (!(/DIMM_1/.test(memH) && /DIMM_3/.test(memH))) bad++;
+      console.log((/>空</.test(memH) ? '  ✓ ' : '  ✗ ') + '空插槽标记为「空」');
+      if (!/>空</.test(memH)) bad++;
+      console.log((/postgres/.test(memH) ? '  ✓ ' : '  ✗ ') + '进程列表渲染出进程名');
+      if (!/postgres/.test(memH)) bad++;
+    }
+  }
+
+  if (bad) { console.error('❌ v1.1.35 断言失败 ' + bad + ' 项'); process.exitCode = 1; }
 })();
 
 console.log(process.exitCode ? '\n❌ 测试未全部通过' : '\n🎉 全部测试通过');

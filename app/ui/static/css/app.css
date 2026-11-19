@@ -3013,3 +3013,386 @@ html.mon-scroll-lock body {
 @media (max-width: 900px) {
   .mon-grid, .mon-grid-2, .mon-grid-3 { grid-template-columns: 1fr; }
 }
+
+/* =============================================================================
+   处理器 / 内存 / 显卡 —— 按 fnmonitor（飞牛监控）1:1 还原
+   -----------------------------------------------------------------------------
+   三张卡片：
+     ① 每核使用率 —— 5×5 点阵瓦片（每个核心一个方块阵）
+     ② 内存构成   —— DIMM 内存条 SVG（PCB + 8 个芯片位 + 金手指 + 斜纹缓存区）
+     ③ 显卡       —— 利用率大数字 + 引擎明细条（渲染/视频/视频增强/复制/计算）
+   ========================================================================== */
+
+/* ---- 卡片容器：可点击进详情 ---- */
+.mon-cmp-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.1rem;
+  min-width: 0;
+  cursor: pointer;
+  transition: border-color .2s ease, background .2s ease;
+}
+.mon-cmp-card:hover { border-color: var(--border-strong); background: var(--bg-card); }
+.mon-cmp-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* 显卡卡片与 fnmonitor 一致：不可点击（GPU 详情在处理器抽屉底部） */
+.mon-cmp-card-static { cursor: default; }
+.mon-cmp-card-static:hover {
+  border-color: var(--border);
+  background: var(--bg-elevated);
+}
+
+.mon-cmp-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .6rem;
+  font-size: .82rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+/* 卡片标题本身不换行；右侧的型号/规格用省略号截断 */
+.mon-cmp-label .lbl-t {
+  white-space: nowrap;
+  flex: none;
+}
+.mon-cmp-label .faint {
+  font-weight: 400;
+  color: var(--text-muted);
+  font-size: .76rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  text-align: right;
+}
+
+/* ---- 大数字（整体使用率 / 已用内存 / 显卡利用率）---- */
+.mon-cmp-big {
+  display: flex;
+  align-items: baseline;
+  gap: .25rem;
+  margin-top: .85rem;
+}
+.mon-cmp-big .dm {
+  font-size: 2.5rem;
+  font-weight: 300;
+  line-height: 1;
+  letter-spacing: -.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.mon-cmp-big .unit {
+  font-size: .9rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.mon-cmp-big .sub {
+  font-size: .78rem;
+  color: var(--text-muted);
+  margin-left: .5rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- 顶部三栏（整体 / 频率 / 负载）----
+   对齐 fnmonitor 的 .split：flex + wrap，不用等宽三列 ——
+   卡片窄时「负载 1 / 5 / 15 分钟」这一栏会被等宽列挤到截断。 */
+.mon-cmp-split {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .75rem 1.6rem;
+  margin-top: .85rem;
+}
+.mon-cmp-split > div { min-width: 0; }
+.mon-cmp-eyebrow {
+  display: block;
+  font-size: .72rem;
+  color: var(--text-muted);
+  margin-bottom: .3rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mon-cmp-split b {
+  font-size: .92rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ---- 每核使用率：点阵瓦片 ---- */
+.mon-hw-cores {
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 4), minmax(0, 1fr));
+  gap: .55rem;
+  margin-top: .95rem;
+}
+.mon-hw-core {
+  border-radius: 12px;
+  background: var(--bg-card);
+  padding: .65rem .6rem .5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .45rem;
+  border: 1px solid var(--border);
+}
+.mon-hw-core svg { width: 100%; max-width: 54px; height: auto; }
+.mon-hw-core circle { fill: var(--bg-hover); transition: fill .35s ease; }
+.mon-hw-core circle.on { fill: var(--accent); }
+.mon-hw-core-f {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  font-size: .68rem;
+  line-height: 1;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.mon-hw-core-f b { font-weight: 600; color: var(--text-secondary); }
+
+/* ---- DIMM 内存条示意 ---- */
+.mon-hw-dimm {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-top: 1.1rem;
+}
+.mon-hw-dimm .pcb { fill: var(--bg-card); }
+.mon-hw-dimm .chip-bg { fill: var(--bg-hover); }
+.mon-hw-dimm .seg { transition: x .6s ease, width .6s ease; }
+.mon-hw-dimm .seg-app { fill: var(--accent); }
+.mon-hw-dimm .seg-cache { fill: url(#monDimmHatch); }
+.mon-hw-dimm .seg-buf { fill: var(--text-muted); }
+.mon-hw-dimm .finger { fill: var(--text-muted); opacity: .55; }
+.mon-hw-dimm .dimm-txt {
+  fill: var(--text-muted);
+  font-size: .69rem;
+  font-weight: 500;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* ---- 图例 ---- */
+.mon-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .35rem 1.1rem;
+  margin-top: .8rem;
+  font-size: .78rem;
+  color: var(--text-secondary);
+}
+.mon-legend span { display: inline-flex; align-items: center; gap: .4rem; }
+.mon-legend i {
+  width: 8px; height: 8px;
+  border-radius: 2px;
+  display: inline-block;
+  flex: 0 0 auto;
+}
+.mon-legend i.hatch {
+  background: repeating-linear-gradient(45deg,
+    var(--text-muted) 0 1.3px, transparent 1.3px 3.2px);
+}
+.mon-legend b {
+  color: var(--text-primary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- 引擎明细条（显卡）---- */
+.mon-engine {
+  display: grid;
+  grid-template-columns: 64px 1fr 40px;
+  gap: .75rem;
+  align-items: center;
+  font-size: .78rem;
+  padding: .3rem 0;
+}
+.mon-engine.wide { grid-template-columns: minmax(64px, auto) 1fr 40px; }
+.mon-engine .v {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+.mon-engine .bar {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--bg-hover);
+  overflow: hidden;
+}
+.mon-engine .bar i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width .35s ease;
+}
+
+/* ---- 分隔细线 ---- */
+.mon-hair {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: .9rem 0;
+}
+
+/* ---- 详情抽屉内部 ---- */
+.mon-cmp-hero {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: .35rem 0 1rem;
+}
+.mon-cmp-hero .dm {
+  font-size: 3rem;
+  font-weight: 300;
+  line-height: 1;
+  letter-spacing: -.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.mon-cmp-hero .unit { font-size: 1rem; color: var(--text-muted); }
+.mon-cmp-hero .right { text-align: right; }
+
+.mon-cmp-sec {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .6rem;
+  margin: 1.25rem 0 .55rem;
+  padding-left: .5rem;
+  border-left: 3px solid var(--accent);
+  font-size: .84rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.mon-cmp-sec .faint {
+  font-weight: 400;
+  font-size: .76rem;
+  color: var(--text-muted);
+}
+
+/* 详情抽屉里的每核点阵仪表
+   —— 对齐 fnmonitor 的 dotGauge：竖向点阵柱（3 列 × 8/14 行），
+      卡片式底板 + 下方一行「核号 + 百分比」。 */
+.mon-dcores {
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 8), minmax(0, 1fr));
+  gap: .5rem;
+}
+.mon-dcore {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: .55rem .4rem .45rem;
+  display: grid;
+  gap: .35rem;
+  justify-items: center;
+}
+.mon-dcore svg {
+  width: 100%;
+  max-width: 30px;
+  height: auto;
+  display: block;
+}
+.mon-dcore circle { fill: var(--bg-hover); transition: fill .35s ease; }
+.mon-dcore circle.on { fill: var(--accent); }
+.mon-dcore-f {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  font-size: .68rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.mon-dcore-f b { font-weight: 600; color: var(--text-secondary); }
+
+/* 堆叠条（内存构成，详情抽屉用） */
+.mon-stack {
+  display: flex;
+  height: 14px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--bg-hover);
+  margin-top: .75rem;
+}
+.mon-stack i { display: block; height: 100%; transition: width .5s ease; }
+.mon-stack i.hatch {
+  background: repeating-linear-gradient(45deg,
+    var(--text-muted) 0 1.3px, transparent 1.3px 3.2px);
+}
+
+/* 键值表 */
+.mon-kv { display: flex; flex-direction: column; }
+.mon-kv-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: .5rem 0;
+  border-bottom: 1px solid var(--border);
+  font-size: .82rem;
+}
+.mon-kv-row:last-child { border-bottom: none; }
+.mon-kv-row .k { color: var(--text-muted); white-space: nowrap; }
+.mon-kv-row .v {
+  color: var(--text-primary);
+  text-align: right;
+  word-break: break-word;
+  min-width: 0;
+}
+.mon-kv-row .v.dim { color: var(--text-muted); }
+
+/* 进程列表 */
+.mon-proc {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: .75rem;
+  align-items: center;
+  padding: .5rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.mon-proc:last-child { border-bottom: none; }
+.mon-proc .nm {
+  font-weight: 600;
+  font-size: .82rem;
+  color: var(--text-primary);
+}
+.mon-proc .pid {
+  font-size: .74rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  margin-left: .35rem;
+}
+.mon-proc .cmd {
+  font-size: .72rem;
+  color: var(--text-muted);
+  word-break: break-all;
+  margin-top: .15rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.mon-proc .val {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  font-size: .84rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* 说明条 */
+.mon-cmp-note {
+  font-size: .76rem;
+  line-height: 1.6;
+  color: var(--text-muted);
+  margin: .85rem 0 0;
+  padding: .6rem .75rem;
+  background: var(--bg-card);
+  border-radius: var(--radius-sm);
+}
+
+/* 窄屏：核心瓦片缩小 */
+@media (max-width: 900px) {
+  .mon-cmp-split { grid-template-columns: 1fr 1fr; }
+  .mon-cmp-split > div:first-child { grid-column: 1 / -1; }
+}

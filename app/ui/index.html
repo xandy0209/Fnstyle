@@ -35,7 +35,7 @@
     </div>
     <!-- 顶栏右侧：当前版本号 + 检查更新入口 + 新页面打开 -->
     <div class="topbar-right" id="topbarUpdate">
-      <span class="ver-pill" id="verPill" title="当前版本">v1.1.34</span>
+      <span class="ver-pill" id="verPill" title="当前版本">v1.1.35</span>
       <span class="ub-status" id="tbUpdateStatus"></span>
       <button class="btn sm icon-btn" id="tbCheckUpdate" type="button" title="检查更新" aria-label="检查更新">
         <svg class="upd-ico" viewBox="0 0 24 24" aria-hidden="true">
@@ -346,6 +346,23 @@
   </aside>
 </div>
 
+<!-- ================== 处理器 / 内存 / 显卡详情抽屉（右侧滑出） ==================
+     点击处理器卡片或内存卡片打开；内容按 fnmonitor 的对应详情页 1:1 还原。 -->
+<div class="mon-drawer-overlay" id="monComputeOverlay" hidden>
+  <aside class="mon-drawer" role="dialog" aria-modal="true"
+         aria-labelledby="monComputeTitle">
+    <header class="mon-drawer-head">
+      <div class="mon-drawer-head-main">
+        <h3 id="monComputeTitle">处理器</h3>
+        <p class="mon-drawer-sub" id="monComputeSub"></p>
+      </div>
+      <button type="button" class="mon-drawer-close" id="btnCloseMonCompute"
+              title="关闭（Esc）" aria-label="关闭">✕</button>
+    </header>
+    <div class="mon-drawer-body" id="monComputeBody"></div>
+  </aside>
+</div>
+
 <!-- ================== 巡检历史抽屉（右侧滑出） ================== -->
 <div class="mon-drawer-overlay" id="monScanLogOverlay" hidden>
   <aside class="mon-drawer" role="dialog" aria-modal="true"
@@ -364,6 +381,7 @@
 
 <script src="static/js/app.js"></script>
 <script src="static/js/monitor.js"></script>
+<script src="static/js/compute.js"></script>
 
 </body>
 </html>

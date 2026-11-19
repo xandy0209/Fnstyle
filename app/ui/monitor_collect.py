@@ -320,6 +320,63 @@ def collect_disks():
 _CPU_STATE = {"last": None, "lastTime": None, "cores": None}
 
 
+def read_cpu_topology():
+    """读取 CPU 拓扑，返回 (物理核心数, 逻辑线程数, 插槽数)。
+
+    移植自 fnmonitor 的同名函数（MIT License）：
+      优先 lscpu（字段稳定，x86/ARM 通用）：
+        逻辑线程 = CPU(s)
+        物理核心 = Socket(s) × Core(s) per socket
+        插槽数   = Socket(s)
+      缺失时回退 /proc/cpuinfo：
+        逻辑线程 = processor 条目数
+        物理核心 = (physical id, core id) 去重计数
+
+    注意：/proc/cpuinfo 的 processor 条目数是**逻辑线程数**，
+    超线程下 ≠ 物理核数 —— 直接当物理核会让「4 核 8 线程」显示成 8 核 8 线程。
+    """
+    cores = threads = sockets = 0
+
+    def _first_int(s):
+        m = re.search(r"\d+", s or "")
+        return int(m.group(0)) if m else None
+
+    out, rc = run_cmd(["lscpu"], timeout=10)
+    if rc == 0 and out:
+        kv = {}
+        for line in out.splitlines():
+            if ":" in line:
+                k, v = line.split(":", 1)
+                kv[k.strip()] = v.strip()
+        cpus = _first_int(kv.get("CPU(s)"))
+        tpc = _first_int(kv.get("Thread(s) per core"))
+        cps = _first_int(kv.get("Core(s) per socket"))
+        skt = _first_int(kv.get("Socket(s)"))
+        if cpus:
+            threads = cpus
+        if skt:
+            sockets = skt
+        if cps and skt:
+            cores = cps * skt
+        elif cpus and tpc:
+            cores = cpus // tpc
+
+    info = read_text("/proc/cpuinfo", 65536)
+    if not threads:
+        threads = len(re.findall(r"^processor\s*:", info, re.M))
+    if not sockets:
+        ids = set(re.findall(r"^physical id\s*:\s*(\d+)", info, re.M))
+        sockets = len(ids) or 1
+    if not cores:
+        pairs = set(re.findall(r"^physical id\s*:\s*(\d+).*?^core id\s*:\s*(\d+)",
+                               info, re.M | re.S))
+        if pairs:
+            cores = len(pairs)
+        else:
+            cores = threads or 1
+    return cores, threads or cores, sockets
+
+
 def collect_cpu():
     """CPU 使用率：/proc/stat 两次采样差分。
 
@@ -381,16 +438,27 @@ def collect_cpu():
     mm = re.search(r"^model name\s*:\s*(.+)$", info, re.M)
     if mm:
         out["model"] = mm.group(1).strip()
-    out["cores"] = len(re.findall(r"^processor\s*:", info, re.M)) or len(per_core)
+    # 拓扑：物理核 / 逻辑线程 / 插槽（lscpu 优先，/proc/cpuinfo 回退）
+    try:
+        tcores, tthreads, tsockets = read_cpu_topology()
+    except Exception:
+        tcores = tthreads = tsockets = 0
+    out["cores"] = tcores or (len(re.findall(r"^processor\s*:", info, re.M)) or len(per_core))
+    out["threads"] = tthreads or out["cores"]
+    out["sockets"] = tsockets or 1
     out["loadavg"] = read_text("/proc/loadavg", 256).strip().split()[:3]
     # 频率：优先 cpufreq 的实时频率，回退 /proc/cpuinfo 的 MHz
     khz = read_int("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq")
+    freq_mhz = None
     if khz:
+        freq_mhz = round(khz / 1000.0, 1)
         out["freqText"] = "%.2f GHz" % (khz / 1000000.0)
     else:
         fm = re.search(r"^cpu MHz\s*:\s*([\d.]+)", info, re.M)
         if fm:
+            freq_mhz = float(fm.group(1))
             out["freqText"] = "%.2f GHz" % (float(fm.group(1)) / 1000.0)
+    out["freqMhz"] = freq_mhz
     return out
 
 
@@ -417,7 +485,13 @@ def collect_memory():
         "totalText": _mbf(total),
         "usedText": _mbf(used),
         "availText": _mbf(avail),
+        # 内存构成三件套（对应 fnmonitor 的 memParts）：
+        #   app   = 实际占用（total - available）
+        #   cache = Cached（Linux 用空闲内存加速读盘）
+        #   buf   = Buffers
+        #   free  = 剩余
         "cached": vals.get("Cached", 0),
+        "buffers": vals.get("Buffers", 0),
         "swapTotal": vals.get("SwapTotal", 0),
         "swapUsed": max(0, vals.get("SwapTotal", 0) - vals.get("SwapFree", 0)),
     })
@@ -429,6 +503,13 @@ def collect_gpu():
 
     优先 nvidia-smi（NVIDIA 独显），其次 /sys/class/drm（Intel/AMD 核显）。
     降级：都没有则返回 available=False，前端显示「未检测到显卡」。
+
+    核显占用率的读取分三档（与 fnmonitor 口径一致）：
+      1. **pmu** —— i915 PMU 引擎 busy 计数器（与 intel_gpu_top 同源），
+         能分出渲染/视频/视频增强/复制/计算五个引擎；
+      2. **rc6** —— RC6 驻留时间估算整体活跃度，不区分引擎；
+      3. **driver** —— 驱动自身开放的 gpu_busy_percent；
+      都拿不到 → util=None，前端显示「未能读取」。
     """
     gpus = []
     # --- NVIDIA ---
@@ -440,11 +521,16 @@ def collect_gpu():
             parts = [p.strip() for p in line.split(",")]
             if len(parts) < 6:
                 continue
+            mem_total = _to_int(parts[4])
             gpus.append({
-                "vendor": "NVIDIA", "name": parts[0],
+                "vendor": "NVIDIA", "name": parts[0], "type": "nvidia",
                 "temp": _to_int(parts[1]), "util": _to_int(parts[2]),
-                "memUsed": _to_int(parts[3]), "memTotal": _to_int(parts[4]),
+                "memUsed": _to_int(parts[3]), "memTotal": mem_total,
+                "memPct": round(_to_int(parts[3]) * 100.0 / mem_total, 1) if mem_total else None,
+                "sharedMemory": False,
                 "power": _to_float(parts[5]), "utilAvailable": True,
+                "utilSource": "driver", "engines": None, "warming": False,
+                "freqMhz": None, "freqReqMhz": None,
             })
     # --- DRM 核显 ---
     if not gpus:
@@ -458,7 +544,6 @@ def collect_gpu():
             drv = m.group(1) if m else ""
             vendor = {"i915": "Intel", "xe": "Intel", "amdgpu": "AMD",
                       "nouveau": "NVIDIA", "nvidia": "NVIDIA"}.get(drv, "GPU")
-            busy = read_int(os.path.join(dev, "gpu_busy_percent"))
             name = _gpu_name(dev, drv, os.path.basename(card))
             temp = None
             hw = glob.glob(os.path.join(dev, "hwmon", "hwmon*", "temp1_input"))
@@ -468,11 +553,46 @@ def collect_gpu():
                     temp = round(t / 1000.0, 1)
             mem_used = read_int(os.path.join(dev, "mem_info_vram_used"))
             mem_total = read_int(os.path.join(dev, "mem_info_vram_total"))
-            gpus.append({
-                "vendor": vendor, "name": name, "temp": temp,
-                "util": busy, "memUsed": mem_used, "memTotal": mem_total,
-                "power": None, "utilAvailable": busy is not None,
-            })
+
+            g = {
+                "vendor": vendor, "name": name,
+                "type": {"Intel": "igpu", "AMD": "amd", "NVIDIA": "nvidia"}.get(vendor, "igpu"),
+                "temp": temp,
+                "util": None, "utilAvailable": False,
+                "utilSource": None, "engines": None, "warming": False,
+                "memUsed": mem_used, "memTotal": mem_total,
+                "memPct": round(mem_used * 100.0 / mem_total, 1) if (mem_used and mem_total) else None,
+                # 核显与系统共享内存，没有独立显存
+                "sharedMemory": not mem_total,
+                "power": None,
+                "freqMhz": None, "freqReqMhz": None,
+            }
+
+            # --- Intel 核显：PMU 引擎占用 / RC6 估算 ---
+            if drv in ("i915", "xe"):
+                pci = os.path.basename(os.path.realpath(dev))
+                try:
+                    import gpu_pmu
+                    iu = gpu_pmu.intel_gpu_usage(pci)
+                    g["util"] = iu.get("util")
+                    g["utilSource"] = iu.get("utilSource")
+                    g["engines"] = iu.get("engines")
+                    g["warming"] = bool(iu.get("warming"))
+                    g["freqMhz"] = iu.get("freqMhz")
+                    g["freqReqMhz"] = iu.get("freqReqMhz")
+                    g["utilAvailable"] = g["util"] is not None
+                except Exception:
+                    pass
+
+            # --- AMD / 其它：驱动自身的 gpu_busy_percent ---
+            if g["util"] is None:
+                busy = read_int(os.path.join(dev, "gpu_busy_percent"))
+                if busy is not None:
+                    g["util"] = busy
+                    g["utilAvailable"] = True
+                    g["utilSource"] = "driver"
+
+            gpus.append(g)
     return {"gpus": gpus, "available": bool(gpus)}
 
 
@@ -790,10 +910,30 @@ class MonitorCollector(object):
         disks_active = len(storage.get("disks") or [])
         power = collect_power(cpu.get("percent", 0), disks_active)
 
+        # 进程 TOP：按需采样（ProcSampler 内部缓存 15 秒），
+        # 不必每 3 秒都全量扫 /proc —— 抽屉打开时才用得上。
+        try:
+            import proc_collect
+            procs = proc_collect.top_processes(limit=12)
+        except Exception:
+            procs = []
+
+        # 内存插槽（dmidecode）：模块内部缓存 10 分钟，不会拖慢采集循环。
+        try:
+            import mem_slots
+            mem_slots_data = {
+                "items": mem_slots.slots(),
+                "dual": mem_slots.dual_channel(),
+            }
+        except Exception:
+            mem_slots_data = {"items": [], "dual": False}
+
         data = {
             "cpu": cpu, "mem": mem, "gpu": gpu,
             "temp": temp, "storage": storage, "power": power,
             "system": collect_system(),
+            "procs": procs,
+            "memory": mem_slots_data,
             "uptime": _uptime_text(),
             "ts": int(time.time()),
             "interval": self.interval,

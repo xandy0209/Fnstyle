@@ -1385,83 +1385,24 @@
     bindScanLogDrawer();
   }
 
-  /* ---------------- 2. 处理器 / 内存 / 显卡 ---------------- */
-
+  /* ---------------- 2. 处理器 / 内存 / 显卡 ----------------
+     渲染委托给 compute.js —— 按 fnmonitor 1:1 还原的三张卡片
+     （每核点阵瓦片 / DIMM 内存条 SVG / 显卡引擎明细条）。
+     这里只做兜底：compute.js 没加载时给一个提示，不让板块空白。 */
   function renderCore(d) {
     var box = $('#monCore');
     if (!box) return;
-    var cpu = d.cpu || {}, mem = d.mem || {}, gpu = d.gpu || {};
-    var html = '';
-
-    /* CPU */
-    if (cpu.available) {
-      var sub = '';
-      if (cpu.coresPercent && cpu.coresPercent.length) {
-        var cores = cpu.coresPercent.map(function (p) {
-          return '<div class="mon-core" title="核心负载 ' + p + '%">' +
-            '<div class="mon-core-fill" style="height:' + Math.min(100, p) + '%"></div></div>';
-        }).join('');
-        sub = '<div class="mon-cores">' + cores + '</div>';
-      }
-      var la = (cpu.loadavg && cpu.loadavg.length) ? cpu.loadavg.join(' / ') : '';
-      html += item(
-        'CPU',
-        cpu.percent + '%',
-        bar(cpu.percent) + sub +
-        '<div class="mon-item-sub">' + esc(cpu.model || '未知型号') +
-        ' · ' + (cpu.cores || '?') + ' 核' +
-        (cpu.freqText ? ' · ' + esc(cpu.freqText) : '') +
-        (la ? ' · 负载 ' + esc(la) : '') + '</div>'
-      );
+    if (window.FnStyleCompute && window.FnStyleCompute.render) {
+      window.FnStyleCompute.render(d, box);
     } else {
-      html += item('CPU', '—', '<div class="mon-item-sub">无法读取 /proc/stat</div>');
+      box.innerHTML = '<div class="mon-cmp-note">处理器 / 内存 / 显卡模块未加载</div>';
     }
-
-    /* 内存 */
-    if (mem.available) {
-      html += item(
-        '内存',
-        mem.percent + '%',
-        bar(mem.percent) +
-        '<div class="mon-item-sub">已用 <span>' + esc(mem.usedText) + '</span> / 共 ' +
-        esc(mem.totalText) + '，可用 <span>' + esc(mem.availText) + '</span>' +
-        (mem.swapTotal ? ' · Swap ' + fmtBytes(mem.swapUsed) + '/' + fmtBytes(mem.swapTotal) : '') +
-        '</div>'
-      );
-    } else {
-      html += item('内存', '—', '<div class="mon-item-sub">无法读取 /proc/meminfo</div>');
-    }
-
-    /* 显卡 */
-    if (gpu.available && gpu.gpus && gpu.gpus.length) {
-      gpu.gpus.forEach(function (g) {
-        var detail = [];
-        if (g.util !== null && g.util !== undefined) {
-          detail.push('负载 ' + g.util + '%');
-        }
-        if (g.temp !== null && g.temp !== undefined) {
-          detail.push('温度 ' + g.temp + '°C');
-        }
-        if (g.memTotal) {
-          detail.push('显存 ' + fmtBytes(g.memUsed) + ' / ' + fmtBytes(g.memTotal));
-        }
-        if (g.power !== null && g.power !== undefined) {
-          detail.push('功耗 ' + g.power + ' W');
-        }
-        var val = (g.util !== null && g.util !== undefined) ? g.util + '%' : '—';
-        var head = g.vendor && g.vendor !== 'GPU' ? g.vendor + ' 显卡' : '显卡';
-        html += item(head, val,
-          (g.utilAvailable ? bar(g.util) : '') +
-          '<div class="mon-item-sub">' + esc(g.name || '') +
-          (detail.length ? '<br>' + esc(detail.join(' · ')) : '') + '</div>');
-      });
-    } else {
-      html += item('显卡', '—', '<div class="mon-item-sub">未检测到独立显卡（核显或虚拟机环境可能无此类设备）</div>');
-    }
-
-    box.innerHTML = html;
-    var n = (cpu.available ? 1 : 0) + (mem.available ? 1 : 0) + (gpu.available ? gpu.gpus.length : 0);
-    $('#monCoreCount').textContent = n ? n + ' 项可用' : '不可用';
+    var n = 0;
+    if (d.cpu && d.cpu.available) n++;
+    if (d.mem && d.mem.available) n++;
+    if (d.gpu && d.gpu.available && d.gpu.gpus && d.gpu.gpus.length) n++;
+    var cnt = $('#monCoreCount');
+    if (cnt) cnt.textContent = n ? n + ' 项可用' : '不可用';
   }
 
   /* ---------------- 3. 温度和散热 ---------------- */
@@ -1813,6 +1754,11 @@
   window.FnStyleMonitor = {
     refresh: refresh,
     start: function () { refresh(); startAuto(); },
-    stop: stopAuto
+    stop: stopAuto,
+    // 供 compute.js 的详情抽屉使用：取最近一次采集数据
+    lastData: function () { return lastData; },
+    // 滚动锁：抽屉打开/关闭时成对调用，避免锁计数泄漏
+    lockScroll: lockPageScroll,
+    unlockScroll: unlockPageScroll
   };
 })();
