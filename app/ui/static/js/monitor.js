@@ -2408,7 +2408,13 @@
     /* 冷却期内不再重试 */
     if (pstatsFailAt && now - pstatsFailAt < PFAIL_BACKOFF) return pstats;
     if (!window.fetch) return pstats;
-    return fetch('/api/power/stats').then(function (r) {
+    /* ⚠️ v1.1.51：必须用相对路径 BASE + 'power/stats'，不能写 '/api/power/stats'。
+       绝对路径在 fnOS 的 iframe 嵌入场景下会打到 fnOS 主站根路径（302 / 404），
+       而不是本应用 —— 表现为右栏四格全是「--」、标题栏电费徽标也是「--」，
+       但直接 curl 9910 端口却完全正常（假象：后端没事，是前端 URL 写错）。
+       其余接口（monitor / storage）一直用的是相对路径 BASE + 'monitor'，
+       只有这两个 power 接口漏了。 */
+    return fetch(BASE + 'power/stats').then(function (r) {
       return r.ok ? r.json() : null;
     }).then(function (j) {
       if (j && j.success) {
@@ -2437,7 +2443,7 @@
     /* 冷却期内不再重试（v1.1.50） */
     if (pdailyFailAt && now - pdailyFailAt < PFAIL_BACKOFF) return pdaily;
     if (!window.fetch) return pdaily;
-    return fetch('/api/power/daily?days=30').then(function (r) {
+    return fetch(BASE + 'power/daily?days=30').then(function (r) {
       return r.ok ? r.json() : null;
     }).then(function (j) {
       if (j && j.success) {
@@ -2502,7 +2508,7 @@
       applyPowerEnergy(box, pwrEnergyCache);
       return;
     }
-    fetch('/api/power/stats').then(function (r) {
+    fetch(BASE + 'power/stats').then(function (r) {
       return r.ok ? r.json() : null;
     }).then(function (j) {
       if (!j || !j.success) return;

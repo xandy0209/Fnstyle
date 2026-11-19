@@ -3533,6 +3533,62 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
   }
 })();
 
+/* ===========================================================================
+   v1.1.51：能耗数据取不到（前端 URL 写错）回归防护
+   ---------------------------------------------------------------------------
+   现象：右栏四格全是「--」、标题栏「本月预估电费」也是「--」、
+        每日用电显示「暂不可用」，但直接 curl 9910 端口数据完全正常。
+   根因：前端 fetch 用了绝对路径 '/api/power/stats'，在 fnOS 的 iframe
+        嵌入场景下会打到 fnOS 主站根路径，而不是本应用；
+        且 index.cgi 的路由表里当时也没有 /api/power/* 分支。
+   修法：前端一律用相对路径 BASE + 'power/...'（BASE = 'api/'）；
+        index.cgi 补上 /api/power/stats 与 /api/power/daily 两条转发路由。
+   =========================================================================== */
+(function () {
+  const src51 = fs.readFileSync(SRC, 'utf8');
+  const cgi51 = fs.readFileSync(
+    path.join(__dirname, '..', 'app', 'ui', 'index.cgi'), 'utf8');
+  let bad51 = 0;
+
+  /* 只看真正的 fetch 调用行，避免误伤注释里的字面量 */
+  const fetchLines51 = src51.split('\n').filter(l => /\bfetch\s*\(/.test(l));
+
+  const rules51 = [
+    ['monitor.js 里没有任何 fetch 绝对路径 /api/... （iframe 下会打到主站根路径）',
+      fetchLines51.every(l => !/fetch\s*\(\s*['"]\/api\//.test(l))],
+    ['全部 fetch 调用都基于 BASE 变量（相对路径）',
+      fetchLines51.length > 0 && fetchLines51.every(l => /fetch\s*\(\s*BASE\s*\+/.test(l))],
+    ['power/stats 用相对路径 BASE + power/stats',
+      /fetch\s*\(\s*BASE\s*\+\s*['"]power\/stats['"]/.test(src51)],
+    ['power/daily 用相对路径 BASE + power/daily',
+      /fetch\s*\(\s*BASE\s*\+\s*['"]power\/daily\?days=30['"]/.test(src51)],
+    ['index.cgi 有 /api/power/stats 路由（转发 9910）',
+      /\/api\/power\/stats\)/.test(cgi51) &&
+      /127\.0\.0\.1:9910\/api\/power\/stats/.test(cgi51)],
+    ['index.cgi 有 /api/power/daily 路由（转发 9910）',
+      /\/api\/power\/daily\)/.test(cgi51) &&
+      /127\.0\.0\.1:9910\/api\/power\/daily/.test(cgi51)],
+    ['index.cgi 的 power 路由放在 case 分派里（不是注释）',
+      /case "\$REL" in[\s\S]*?\/api\/power\/stats\)[\s\S]*?\/api\/power\/daily\)[\s\S]*?esac/.test(cgi51)],
+    ['power 路由转发失败时返回 503 而不是静默空',
+      (cgi51.match(/503 Service Unavailable/g) || []).length >= 2],
+    ['monitor.js 仍保留失败退避（不会每 3 秒重复打接口）',
+      /PFAIL_BACKOFF/.test(src51) && /pstatsFailAt/.test(src51) && /pdailyFailAt/.test(src51)],
+    ['右栏四格在 pstats 为 null 时仍回退到 -- （不会渲染 NaN）',
+      /pstats \? fmtKwh\(pstats\.today_kwh\) : '--'/.test(src51)],
+  ];
+
+  rules51.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad51++;
+  });
+
+  if (bad51) {
+    console.error('❌ v1.1.51 断言失败 ' + bad51 + ' 项');
+    process.exitCode = 1;
+  }
+})();
+
 /* 抽屉滑入动画断言是异步的（两帧 rAF → setTimeout），必须等它跑完再汇总 */
 setTimeout(function () {
   console.log(process.exitCode ? '\n❌ 测试未全部通过' : '\n🎉 全部测试通过');

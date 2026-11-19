@@ -1,5 +1,5 @@
 appname               = fnstyle
-version               = 1.1.50
+version               = 1.1.51
 display_name          = FnStyle
 desc                  = 集中管理飞牛个性化设置与丰富主题库：网站标题、登录框、LOGO、壁纸、毛玻璃、任务栏等独立配置，内置多源主题库，支持一键应用到 fnOS 系统，卸载后自动还原系统默认样式。
 platform              = all
@@ -15,5 +15,5 @@ desktop_applaunchname = fnstyle.main
 service_port          = 9910
 checkport             = false
 ctl_stop              = true
-changelog             = 1.1.50：① **标题栏新增本月预估电费** —— 用户要求「在能耗卡片标题栏增加根据当前的实际功耗折算本月的预估电费」。index.html 标题栏新增 #monPowerProjCost 徽标，口径 =（本月已用电 kWh + 当前实时功耗 W÷1000 × 本月剩余小时数）× 电价；与卡片内「本月预计电费」（按历史平均功耗 avg_w）口径不同，徽标 title 注明「按当前功耗」。② **去掉卡片内顶部此刻功耗显示** —— 左栏「实时功耗」大数字区删除，总功耗改以部件图例下方「合计 X W · 来源」呈现（信息不丢）；摘要行不再重复「此刻 X W」。③ **去掉最右侧卡片外壳** —— 用户反馈「右侧的今日\本月用电和本月\全年预估电费的卡片多了一层卡片显示」；核实发现根因是 v1.1.47 遗留的 CSS 注释未闭合，把其后全部 CSS（含 .energy / .stat-cells / .ov-card）吞进注释里失效 → .stat-cells 的 display:grid 不生效，视觉上多一层、看起来像统计为空；已修复注释闭合，并去掉 #monPowerStats 的 .ov-card 外壳（.stat-cells 直接作 .energy 网格项），CSS 补 .energy > #monPowerStats 适配。④ **每日用电一直在读取的核实与修复** —— 实机浏览器探针确认接口正常（/api/power/daily 返回 2 天数据、柱子已渲染），但 ensurePowerDaily/ensurePowerStats 请求失败时不写时间戳 → 每 3 秒轮询重复打接口；新增 pstatsFailAt/pdailyFailAt + 30 秒失败冷却退避 + 失败时渲染空态（不再一直转圈）。⑤ **去掉下方整机功耗、累计用电卡片** —— 板块级趋势图 #monPowerCharts 传 onlyKeys=[] 不再渲染这两张卡片（能耗详情抽屉内的同名图表保留）。verify 新增 v1.1.50 断言 28 项（含 CSS 注释闭合回归防护），前端 855 项全通过。
-checksum              = 3848834bedf4b2400d0593a27702460f
+changelog             = 1.1.51：修复**能耗卡片统计全为空**的致命 bug（用户实机截图反馈「还是没有值」）。**根因**：前端 fetch('/api/power/stats') 与 fetch('/api/power/daily?days=30') 用了**绝对路径**，在 fnOS 的 iframe 嵌入场景下会打到 fnOS 主站根路径（302/404），而不是本应用的服务；同时 index.cgi 的路由表里当时也没有 /api/power/* 分支 —— 两条路都断。表现为：右栏四格全是「--」、标题栏「本月预估电费」也是「--」、每日用电显示「暂不可用」，但直接 curl 9910 端口数据完全正常（典型的「后端没问题、前端 URL 写错」假象）。**修法**：① monitor.js 全部 3 处改为相对路径 BASE + 'power/stats' / BASE + 'power/daily?days=30'（BASE='api/'，与既有的 monitor / storage 接口一致）；② index.cgi 补上 /api/power/stats 与 /api/power/daily 两条路由，转发给本机 9910 采集服务（历史库与功耗采样在那边，CGI 进程不持有连接），转发失败返回 503 而不是静默空。**附带收益**：修完后 CGI 直连路径与网关前缀路径（/app/fnstyle/）都能取到数据，双入口一致。verify 新增 v1.1.51 断言 10 项（绝对路径回归防护 + CGI 路由存在性 + fetch 全走 BASE 校验），前端 865 项全通过。
+checksum              = 0f817ca4b9295d38ffb3b76b78ed18d4

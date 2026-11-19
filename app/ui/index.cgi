@@ -24,7 +24,7 @@ set -uo pipefail
 # ------------------------- 版本与更新检查 -------------------------
 # ⚠️ 必须与 manifest 的 version 保持一致（自动更新靠它判断「是否比线上新」）。
 # GitHub 发布新版本时，两处都要改：manifest 的 version + 本常量。
-APP_VERSION="1.1.50"
+APP_VERSION="1.1.51"
 
 # ----------------------------- 路径配置 -----------------------------
 # APP_ROOT 是 fnOS 安装后创建的标准软链：
@@ -2364,6 +2364,46 @@ PY
             http_json "503 Service Unavailable" '{"success":false,"error":"监控服务未就绪，请确认应用服务已启动"}'
         fi
         rm -f "$HIST_FILE"
+        exit 0
+        ;;
+
+    /api/power/stats)
+        # 用电统计：今日 / 本月 / 本月预计 / 全年估算 + 电价
+        #
+        # ⚠️ v1.1.51 新增：之前前端直接请求 '/api/power/stats'（绝对路径），
+        #   在 fnOS iframe 嵌入场景下会打到 fnOS 主站根路径 —— 表现为
+        #   能耗卡片右栏四格全是「--」、标题栏「本月预估电费」也是「--」，
+        #   但后端 9910 实测完全正常（典型的「后端没问题、前端 URL 写错」）。
+        #   现在前端改成相对路径 BASE + 'power/stats'（与 monitor / storage 一致），
+        #   这里补上对应路由，转发给本机 9910 —— 采集服务才有历史库与功耗采样。
+        PWS_URL="http://127.0.0.1:9910/api/power/stats"
+        PWS_FILE="${TMPDIR:-/tmp}/fnstyle_pstats.$$"
+        if curl -s --max-time 15 -o "$PWS_FILE" "$PWS_URL" 2>/dev/null && [ -s "$PWS_FILE" ]; then
+            http_json_file_nobom "200 OK" "$PWS_FILE"
+        else
+            http_json "503 Service Unavailable" '{"success":false,"error":"监控服务未就绪，请确认应用服务已启动"}'
+        fi
+        rm -f "$PWS_FILE"
+        exit 0
+        ;;
+
+    /api/power/daily)
+        # 每日用电柱状图：?days=30（按天聚合，一天只变一次）
+        # 同样转发给本机 9910 —— 历史库在采集服务那边（CGI 进程不持有连接）。
+        PD_DAYS=$(query_get "$QUERY" days)
+        PD_DAYS=$(url_decode "$PD_DAYS")
+        case "$PD_DAYS" in
+            ""|*[!0-9]*) PD_DAYS=30 ;;
+        esac
+        [ "$PD_DAYS" -gt 365 ] && PD_DAYS=365
+        PDO_URL="http://127.0.0.1:9910/api/power/daily?days=${PD_DAYS}"
+        PDO_FILE="${TMPDIR:-/tmp}/fnstyle_pdaily.$$"
+        if curl -s --max-time 15 -o "$PDO_FILE" "$PDO_URL" 2>/dev/null && [ -s "$PDO_FILE" ]; then
+            http_json_file_nobom "200 OK" "$PDO_FILE"
+        else
+            http_json "503 Service Unavailable" '{"success":false,"error":"监控服务未就绪，请确认应用服务已启动"}'
+        fi
+        rm -f "$PDO_FILE"
         exit 0
         ;;
 
