@@ -1,5 +1,5 @@
 appname               = fnstyle
-version               = 1.1.47
+version               = 1.1.48
 display_name          = FnStyle
 desc                  = 集中管理飞牛个性化设置与丰富主题库：网站标题、登录框、LOGO、壁纸、毛玻璃、任务栏等独立配置，内置多源主题库，支持一键应用到 fnOS 系统，卸载后自动还原系统默认样式。
 platform              = all
@@ -15,5 +15,5 @@ desktop_applaunchname = fnstyle.main
 service_port          = 9910
 checkport             = false
 ctl_stop              = true
-changelog             = 1.1.47：① **修复温度测点计数与列表不一致** —— 用户反馈「顶部统计的是16个温度测点，为什么下方显示的只有15个呢？」NAS 实机核实：temps 12 条中有 2 条 type='disk' 的 drivetemp 条目（就是硬盘本身，列表已在硬盘段单独显示），列表渲染时被排除，而抽屉副标题公式 temps.length + disks + cpu 把它们重复计入、又漏了「主板」→ 12+3+1=16 vs 列表 15。修复：monitor.js 新增 tempPointCount 全站唯一口径函数（= 列表实际行数：CPU + 主板 + 非磁盘有效传感器 + 有效硬盘），抽屉副标题与主页总览计数都改调它，「顶部说几个、下面就显示几行」。② **删除软 RAID 卡片显示** —— 按用户要求移除 monitor.js 的 st.raid 渲染块与整套 .mon-raid* CSS（.mon-raid/.mon-raid-grid/.mon-raid-card 等 13 条规则及级别徽章 .mon-chip.mon-raid-lvl），后端 /proc/mdstat 数据仍采集、仅前端不再呈现；verify 中 v1.1.34 / v1.1.40 的软 RAID 断言重写为删除性断言（带 RAID 脏数据渲染 0 张卡片且不抛异常）。前端 790 项全通过。
-checksum              = 1406cb47450239306d96bfebe237c0d4
+changelog             = 1.1.48：① **修复抽屉打开后数值冻结** —— 用户反馈「温度与散热抽屉界面打开后其中显示的温度都不变化」。核实：主面板每 3 秒 refresh() 重绘，但计算抽屉（处理器/内存/温度/能耗）只在打开时渲染一次快照，之后 hero/四格/温度计全部冻结。修复：compute.js 新增 updateLive —— 用新数据重渲染抽屉 body，旧 [data-charts] 节点原样搬回（图表实例/已选时间段/段控件全部保留，不重建不闪不丢选择），恢复滚动位置、重填每核点阵、回填电费统计（新增 60 秒结果缓存避免每 3 秒打重接口）、同步副标题；monitor.js refresh() 每轮挂钩。② **传感器名称可读化** —— 用户反馈 acpitz / Package id 0 这类内核测点名「都不知道是什么」。monitor.js 新增 sensorLabel（coretemp Package id 0/x86_pkg_temp → CPU 封装、acpitz → 主板 ACPI 温区、Core N → CPU 核心 N、pch → 芯片组（PCH）、motherboard → 主板、gpu → GPU；sda/nvme0n1 等盘名保留原名）+ sensorLabels（映射后同名测点自动带序号，如 CPU 封装 1/2）+ fanLabel（nct6798 fan1 → 主板风扇 1、cpu fan → CPU 风扇），应用于主页总览传感器行 / 抽屉温度计 / 抽屉传感器 kv / 抽屉风扇 kv 四处。verify 新增 v1.1.48 断言 18 项，前端 808 项全通过。
+checksum              = fcb5a178cecccd15cfdfd7328114eace

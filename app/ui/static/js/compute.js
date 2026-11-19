@@ -1079,6 +1079,74 @@
     }, 320);
   }
 
+  /* 抽屉是否开着（monitor.js 轮询用它决定要不要调 updateLive） */
+  function isOpen() { return computeOpen; }
+
+  /* 抽屉 live 更新（⚠️ v1.1.48）
+     ------------------------------------------------------------------
+     用户反馈：「温度与散热抽屉界面打开后其中显示的温度都不变化」。
+     核实：主面板每 3 秒 refresh() 重绘，但计算抽屉只在 openCompute 时
+     用当时的快照渲染一次，之后 hero / 四格 / 温度计全部冻结
+     （fnmonitor 原版是 SHEETS.*.update 每轮更新 refs，这里缺了这一环）。
+
+     实现：monitor.js 的 refresh() 每轮调本函数；这里用**新数据重渲染
+     抽屉 body**，但把旧 [data-charts] 节点原样搬回 —— 图表实例、
+     已选时间段、段控件全部保留（不重建、不闪、不丢选择），
+     然后恢复滚动位置、重填每核点阵、回填电费统计与副标题。
+     四种抽屉（处理器 / 内存 / 温度 / 能耗）统一走这一条路径。 */
+  function updateLive(d) {
+    if (!computeOpen || !d) return;
+    computeData = d;
+    var body = $('#monComputeBody');
+    if (!body) return;
+    var kind = computeKind;
+
+    /* ① 保留旧图表节点（实例与 range 选择都在里面） */
+    var chartNode = body.querySelector('[data-charts]');
+    /* ② 记录滚动位置（innerHTML 重置后恢复） */
+    var st = body.scrollTop;
+
+    /* ③ 用新数据重渲染 */
+    var html;
+    if (kind === 'temp' && window.FnStyleMonitor && window.FnStyleMonitor.tempSheetHtml) {
+      html = window.FnStyleMonitor.tempSheetHtml(d);
+    } else if (kind === 'power' && window.FnStyleMonitor && window.FnStyleMonitor.powerSheetHtml) {
+      html = window.FnStyleMonitor.powerSheetHtml(d);
+    } else if (kind === 'mem') {
+      html = memSheetHtml(d);
+    } else {
+      html = cpuSheetHtml(d);
+    }
+    body.innerHTML = html;
+
+    /* ④ 旧图表节点放回同位置（chartsHtml 输出结构每次一致，可无缝替换） */
+    if (chartNode) {
+      var slot = body.querySelector('[data-charts]');
+      if (slot && slot.parentNode) slot.parentNode.replaceChild(chartNode, slot);
+    }
+
+    /* ⑤ 每核点阵（处理器 / 内存抽屉） */
+    if (kind === 'cpu' || kind === 'mem') {
+      var pc = (d && d.cpu && d.cpu.coresPercent) || [];
+      var host = body.querySelector('[data-dcores]');
+      if (host && pc.length) setDetailCores(host, pc);
+    }
+    /* ⑥ 能耗抽屉的电费统计回填（60 秒缓存，命中时不发请求） */
+    if (kind === 'power' && window.FnStyleMonitor && window.FnStyleMonitor.loadPowerEnergy) {
+      window.FnStyleMonitor.loadPowerEnergy(body);
+    }
+    /* ⑦ 恢复滚动位置 */
+    body.scrollTop = st;
+    /* ⑧ 副标题同步（测点数 / 风扇数等可能变化） */
+    var sub = $('#monComputeSub');
+    if (sub) {
+      if (kind === 'temp') sub.textContent = tempSubText(d);
+      else if (kind === 'power') sub.textContent = powerSubText(d);
+      else if (kind === 'mem') sub.textContent = memSubText(d);
+      else sub.textContent = cpuSubText(d);
+    }
+  }
+
   function cpuSubText(d) {
     var c = (d && d.cpu) || {};
     var parts = [];
@@ -1393,6 +1461,9 @@
     panelChartsHtml: panelChartsHtml,
     initPanelCharts: initPanelCharts,
     refreshPanelCharts: refreshPanelCharts,
+    // v1.1.48：抽屉 live 更新（monitor.js 每 3 秒轮询回调）
+    isOpen: isOpen,
+    updateLive: updateLive,
     destroyPanelCharts: destroyPanelCharts
   };
 })();

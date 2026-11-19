@@ -2455,7 +2455,8 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       /20°/.test(tempHtml) && /100°/.test(tempHtml)],
     ['风扇分节渲染（kv 键值表，对齐 fnmonitor kvHTML）',
       /<span>风扇<\/span>/.test(tempHtml) &&
-      /class="mon-dkv-row"><span class="k">cpu fan<\/span><span class="v">1420 RPM<\/span>/.test(tempHtml)],
+      /* v1.1.48：风扇名经 fanLabel 映射，'cpu fan' → 'CPU 风扇' */
+      /class="mon-dkv-row"><span class="k">CPU 风扇<\/span><span class="v">1420 RPM<\/span>/.test(tempHtml)],
     ['电压分节渲染（kv 键值表，对齐 fnmonitor kvHTML）',
       /<span>电压<\/span>/.test(tempHtml) &&
       /class="mon-dkv-row"><span class="k">Vcore<\/span><span class="v">1\.28 V<\/span>/.test(tempHtml)],
@@ -2664,7 +2665,8 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
   const jsRules = [
     ['风扇渲染为 kv 键值表（fnmonitor kvHTML）',
       /class="mon-dkv-row"/.test(monSrc) &&
-      /esc\(f\.name \|\| '风扇'\)/.test(monSrc) &&
+      /* v1.1.48：风扇名经 fanLabel 可读化 */
+      /esc\(fanLabel\(f\.name\) \|\| '风扇'\)/.test(monSrc) &&
       /fmtInt\(rpm\) \+ ' RPM'/.test(monSrc)],
     ['风扇转速显示为「N RPM」（fnmonitor F.int(rpm) + RPM）',
       /fmtInt\(rpm\) \+ ' RPM'/.test(monSrc)],
@@ -2784,8 +2786,10 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       /function renderPowerOverview\(d\)/.test(monSrc2)],
     ['renderPowerDaily 存在（每日用电柱状图）',
       /function renderPowerDaily\(res\)/.test(monSrc2)],
-    ['温度条总数上限 6（fnmonitor thermoList 的 slice(0,6)）',
-      /list\.slice\(0, 6\)/.test(monSrc2)],
+    /* ⚠️ v1.1.48：主页只显示重要部件（CPU/主板/硬盘），slice(0,6) 上限已移除 */
+    ['主页总览不再渲染其它传感器（只 CPU/主板/硬盘）',
+      /var visLabels = sensorLabels\(visSensors\);/.test(monSrc2) === false &&
+      /list\.slice\(0, 6\)/.test(monSrc2) === false],
     ['硬盘段落独立，不受 6 条上限约束',
       /diskRows \+=/.test(monSrc2)],
     ['温度色阶按阈值分 5 段（fnmonitor RAMP.temp / dtemp）',
@@ -3140,6 +3144,88 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
 
   if (bad) {
     console.error('❌ v1.1.47 断言失败 ' + bad + ' 项');
+    process.exitCode = 1;
+  }
+})();
+
+/* ======================================================================
+   v1.1.48 —— 抽屉 live 更新 + 传感器名称可读化
+   ----------------------------------------------------------------------
+   用户反馈：
+   ①「温度与散热抽屉界面打开后其中显示的温度都不变化，请核实」
+      核实：主面板每 3 秒 refresh() 重绘，但计算抽屉只在 openCompute 时
+      渲染一次快照，hero/四格/温度计全部冻结。修复：compute.js 新增
+      updateLive（重渲染 body + 旧 [data-charts] 节点搬回 + 恢复滚动 +
+      重填点阵 + 回填电费 + 同步副标题），monitor.js refresh() 每轮挂钩。
+   ②「acpitz、package id 0 都不知道是什么」
+      修复：monitor.js 新增 sensorLabel（内核测点名 → 中文对象名）+
+      sensorLabels（同名自动带序号），应用于主页总览 / 抽屉温度计 /
+      抽屉传感器 kv 三处。
+   ====================================================================== */
+(function () {
+  let bad = 0;
+  console.log('\n--- v1.1.48 抽屉 live 更新 + 传感器名称可读化 ---');
+
+  const monSrc48 = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'js', 'monitor.js'), 'utf8');
+  const compSrc48 = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'js', 'compute.js'), 'utf8');
+
+  const rules48 = [
+    ['compute.js 定义 updateLive（抽屉 live 更新）',
+      /function updateLive\(d\) \{/.test(compSrc48)],
+    ['updateLive 检查 computeOpen（抽屉关着不做事）',
+      /function updateLive\(d\) \{\s*if \(!computeOpen \|\| !d\) return;/.test(compSrc48)],
+    ['updateLive 保留旧 [data-charts] 节点（图表实例与 range 选择不丢）',
+      /var chartNode = body\.querySelector\('\[data-charts\]'\)/.test(compSrc48) &&
+      /replaceChild\(chartNode, slot\)/.test(compSrc48)],
+    ['updateLive 恢复滚动位置',
+      /var st = body\.scrollTop;/.test(compSrc48) && /body\.scrollTop = st;/.test(compSrc48)],
+    ['updateLive 四种抽屉都走同一路径（temp/power/mem/cpu）',
+      /kind === 'temp' && window\.FnStyleMonitor && window\.FnStyleMonitor\.tempSheetHtml/.test(compSrc48) &&
+      /kind === 'power' && window\.FnStyleMonitor && window\.FnStyleMonitor\.powerSheetHtml/.test(compSrc48)],
+    ['updateLive 重填每核点阵 + 回填电费 + 同步副标题',
+      /setDetailCores\(host, pc\)/.test(compSrc48) &&
+      /loadPowerEnergy\(body\)/.test(compSrc48) &&
+      /sub\.textContent = tempSubText\(d\)/.test(compSrc48)],
+    ['isOpen / updateLive 已导出到 FnStyleCompute',
+      /isOpen: isOpen,/.test(compSrc48) && /updateLive: updateLive,/.test(compSrc48)],
+    ['monitor.js refresh() 每轮挂钩 updateLive',
+      /window\.FnStyleCompute && window\.FnStyleCompute\.isOpen &&\s*\n\s*window\.FnStyleCompute\.isOpen\(\) && window\.FnStyleCompute\.updateLive/.test(monSrc48)],
+    ['loadPowerEnergy 加 60 秒缓存（live 更新不重复打重接口）',
+      /PWR_ENERGY_TTL = 60000/.test(monSrc48) &&
+      /pwrEnergyCache && Date\.now\(\) - pwrEnergyAt < PWR_ENERGY_TTL/.test(monSrc48)],
+
+    ['monitor.js 定义 sensorLabel（内核测点名 → 中文对象名）',
+      /function sensorLabel\(name\) \{/.test(monSrc48)],
+    ['sensorLabel 映射 Package id / x86_pkg_temp → CPU 封装',
+      /\^package id/.test(monSrc48) && /\^x86_pkg_temp/.test(monSrc48)],
+    ['sensorLabel 映射 acpitz → 主板 ACPI 温区',
+      /\^acpitz/.test(monSrc48)],
+    ['sensorLabel 映射 Core N → CPU 核心 N',
+      /\^core\[\\s_-\]\?\(\\d\+\)\$/.test(monSrc48) ||
+      /CPU 核心/.test(monSrc48)],
+    ['sensorLabels 同名测点自动带序号',
+      /function sensorLabels\(list\) \{/.test(monSrc48) &&
+      /counts\[l\] <= 1\) return l;/.test(monSrc48)],
+    /* v1.1.48 追加需求后主页总览不再显示传感器行（只 CPU/主板/硬盘），
+       名称映射转用于抽屉温度计与 kv 表 */
+    ['主页总览不再渲染其它传感器（映射仅用于抽屉）',
+      /var visLabels = sensorLabels\(visSensors\);/.test(monSrc48) === false &&
+      /var drawerLabels = sensorLabels\(drawerSensors\);/.test(monSrc48)],
+    ['名称映射应用于抽屉温度计测点',
+      /var drawerLabels = sensorLabels\(drawerSensors\);/.test(monSrc48)],
+    ['名称映射应用于抽屉「全部传感器」kv 表',
+      /var kvLabels = sensorLabels\(temps\);/.test(monSrc48)],
+    ['渲染处不再直接用内核测点名 s.name 作 label',
+      /label: s\.name[,\s]/.test(monSrc48) === false &&
+      /esc\(s\.name\)\s*\+\s*'\s*<span class="mon-sensor-tag"/.test(monSrc48) === false],
+  ];
+  rules48.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  if (bad) {
+    console.error('❌ v1.1.48 断言失败 ' + bad + ' 项');
     process.exitCode = 1;
   }
 })();

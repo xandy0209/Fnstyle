@@ -1412,6 +1412,56 @@
     acpi: 'ACPI', disk: '硬盘', gpu: 'GPU', other: '其它'
   };
 
+  /* 传感器名称 → 可读对象名（⚠️ v1.1.48）
+     用户反馈：抽屉里的 acpitz / Package id 0 / x86_pkg_temp 这类
+     内核测点名「都不知道是什么」。按名称映射为中文对象名；
+     映射后同名的测点（如实机的 3 个 acpitz）由 sensorLabels()
+     自动追加序号区分。未认识的名称保留原样。 */
+  function sensorLabel(name) {
+    var raw = String(name || '').trim();
+    var n = raw.toLowerCase();
+    /* hwmon 的 coretemp 芯片前缀（coretemp Package id 0 / coretemp Core 0） */
+    n = n.replace(/^coretemp[\s_-]*/, '');
+    if (/^package id/.test(n)) return 'CPU 封装';
+    if (/^x86_pkg_temp/.test(n)) return 'CPU 封装';
+    var m = n.match(/^core[\s_-]?(\d+)$/);
+    if (m) return 'CPU 核心 ' + m[1];
+    if (/^acpitz/.test(n)) return '主板 ACPI 温区';
+    if (/^pch/.test(n)) return '芯片组（PCH）';
+    if (/iwlwifi|wifi|wlan/.test(n)) return '无线网卡';
+    if (/^drivetemp/.test(n)) return 'SATA 硬盘';
+    if (/^(nct\d+|it86\d+|w836\d+|lm7\d|atk0110|asus)/.test(n)) return '主板传感器';
+    if (/^motherboard|^board/.test(n)) return '主板';
+    if (/^gpu/.test(n)) return 'GPU';
+    if (/^cpu/.test(n)) return 'CPU';
+    /* 其余保留原名 —— 通常是用户认识的盘名（sda / nvme0n1），
+       保留反而比「SATA 硬盘」信息量更大（知道是哪块盘）。 */
+    return raw;
+  }
+  /* 风扇名称 → 可读对象名（v1.1.48）：nct6798 fan1 这类同样难懂 */
+  function fanLabel(name) {
+    var raw = String(name || '').trim();
+    var n = raw.toLowerCase();
+    var m = n.match(/^(?:nct\d+|it86\d+|w836\d+)[\s_-]*fan[\s_-]*(\d+)$/);
+    if (m) return '主板风扇 ' + m[1];
+    if (/cpu/.test(n)) return 'CPU 风扇';
+    m = n.match(/^fan[\s_-]*(\d+)$/);
+    if (m) return '风扇 ' + m[1];
+    return raw;
+  }
+  /* 同名区分：映射后同名 ≥2 个的测点依次追加序号「 1」「 2」…（单个不加）。
+     传入的是待渲染的传感器数组，返回等长的可读名称数组。 */
+  function sensorLabels(list) {
+    var counts = {}, idx = {};
+    var labels = (list || []).map(function (s) { return sensorLabel(s && s.name); });
+    labels.forEach(function (l) { counts[l] = (counts[l] || 0) + 1; });
+    return labels.map(function (l) {
+      if (counts[l] <= 1) return l;
+      idx[l] = (idx[l] || 0) + 1;
+      return l + ' ' + idx[l];
+    });
+  }
+
   /* ================= 总览形态：温度与散热 =================
      对齐 fnmonitor defineModule id:'thermal'（源文件 3014 行起）：
        <div class="grid g-thermal">            ← 1.5fr 1fr 两栏
@@ -1428,8 +1478,8 @@
            <div data-ref="vw"><div class="label">电压</div><div class="volts"></div></div>
          </div>
        </div>
-     温度测点顺序与 fnmonitor 的 thermoList() 一致：
-       CPU → 主板 → 传感器（排除硬盘，最多 6 条）→ 硬盘单独一段。 */
+     ⚠️ v1.1.48：温度测点顺序调整为（用户要求只显示重要部件）：
+       CPU → 主板 → 硬盘单独一段；其余传感器只进详情抽屉。 */
 
   /* 温度色阶（对齐 fnmonitor 的 RAMP.temp / RAMP.dtemp）
      fnmonitor 的温度条用**渐变**填充（rampGrad + background-size 裁切），
@@ -1526,10 +1576,8 @@
     var mbTemp = (t.mbTemp === null || t.mbTemp === undefined) ? null : Number(t.mbTemp);
 
     /* ---- 左栏：处理器与主板 + 硬盘 ----
-       ⚠️ fnmonitor 的 thermoList(o) 是「CPU + 主板 + 全部传感器」拼好之后
-       才 slice(0, 6) —— 6 条是**总数上限**（含 CPU 与主板）。
-       FnStyle 之前写成「CPU + 主板 + 传感器.slice(0,6)」= 最多 8 条，超了。
-       硬盘是独立段落（fnmonitor 的 diskThermo），不受这个上限约束。 */
+       ⚠️ v1.1.48：主页只显示重要部件（CPU / 主板 / 硬盘），
+       其余传感器全部移到详情抽屉（用户要求），slice(0,6) 上限随之移除。 */
     var rows = '';
     var marks = [TH_TEMP_WARN, TH_TEMP_CRIT];
     var list = [];
@@ -1539,17 +1587,11 @@
     if (mbTemp !== null && !isNaN(mbTemp)) {
       list.push({ label: '主板', value: mbTemp, marks: [], kind: 'other' });
     }
-    /* 传感器（排除硬盘类型） */
-    temps.forEach(function (s) {
-      if (!s || s.type === 'disk') return;
-      if (s.value === null || s.value === undefined || s.value === '') return;
-      var kind = s.type === 'cpu' ? 'cpu' : 'other';
-      var sm = (kind === 'cpu') ? marks
-        : [s.max, s.crit].filter(function (x) { return x !== null && x !== undefined; });
-      list.push({ label: s.name, value: Number(s.value), marks: sm, kind: kind });
-    });
-    /* 总数上限 6（与 fnmonitor thermoList 的 slice(0, 6) 一致） */
-    list.slice(0, 6).forEach(function (it) {
+    /* ⚠️ v1.1.48：按用户要求，主页总览只显示**非常重要的部件**的温度
+       （CPU / 主板 / 硬盘），其余传感器（CPU 封装、ACPI 温区、核心、
+       PCH、GPU 等）全部只在详情抽屉里显示。
+       旧实现还带 slice(0, 6) 的 fnmonitor thermoList 上限，已一并移除。 */
+    list.forEach(function (it) {
       rows += ovThermoRow(it.label, it.value, it.marks, it.kind);
     });
     if (!rows) {
@@ -1589,7 +1631,8 @@
         return '<div class="fan">' +
           '<span class="fan-ico">' + fanIcon(spin) + '</span>' +
           '<div style="flex:1;min-width:0">' +
-            '<div class="sub">' + esc(f.name || '风扇') + '</div>' +
+            /* v1.1.48：风扇名可读化（与抽屉 kv 一致，nct6798 fan1 → 主板风扇 1） */
+            '<div class="sub">' + esc(fanLabel(f.name) || '风扇') + '</div>' +
             '<div class="num"><span>' + (has ? fmtInt(rpm) : '--') + '</span>' +
             '<span class="unit" style="font-size:12px">RPM</span></div>' +
           '</div>' +
@@ -1921,11 +1964,15 @@
     var points = [];
     if (cpuTemp !== null) points.push({ k: 'cpu', label: 'CPU', v: cpuTemp, kind: 'cpu' });
     if (mbTemp !== null) points.push({ k: 'mb', label: '主板', v: mbTemp, kind: 'other' });
-    temps.forEach(function (s, i) {
-      if (!s || s.type === 'disk') return;
-      if (s.value === null || s.value === undefined) return;
+    /* 名称映射为可读对象名（v1.1.48），同名测点自动带序号 */
+    var drawerSensors = temps.filter(function (s) {
+      return s && s.type !== 'disk' &&
+        s.value !== null && s.value !== undefined;
+    });
+    var drawerLabels = sensorLabels(drawerSensors);
+    drawerSensors.forEach(function (s, si) {
       points.push({
-        k: 's' + i + s.name, label: s.name, v: Number(s.value),
+        k: 's' + si + (s.name || ''), label: drawerLabels[si], v: Number(s.value),
         kind: s.type === 'cpu' ? 'cpu' : 'other',
         max: s.max, crit: s.crit
       });
@@ -1998,7 +2045,7 @@
         var rpm = Number(f.rpm);
         var has = f.rpm !== null && f.rpm !== undefined && !isNaN(rpm);
         return '<div class="mon-dkv-row">' +
-          '<span class="k">' + esc(f.name || '风扇') + '</span>' +
+          '<span class="k">' + esc(fanLabel(f.name) || '风扇') + '</span>' +
           '<span class="v">' + (has ? fmtInt(rpm) + ' RPM' : '—') + '</span></div>';
       }).join('') + '</div>';
     } else {
@@ -2025,14 +2072,16 @@
     html += '<div class="mon-cmp-sec"><span>全部传感器</span>' +
       '<span class="faint">' + temps.length + ' 个</span></div>';
     if (temps.length) {
-      html += '<div class="mon-dkv">' + temps.map(function (s) {
+      /* 名称映射为可读对象名（v1.1.48），同名测点自动带序号 */
+      var kvLabels = sensorLabels(temps);
+      html += '<div class="mon-dkv">' + temps.map(function (s, si) {
         var extra = '';
         if (s.max !== null && s.max !== undefined) {
           extra += '<div class="sub">上限 ' + fmt1(s.max) + ' ℃</div>';
         }
         var tag = SENSOR_TN[s.type] || s.type || '其它';
         return '<div class="mon-dkv-row">' +
-          '<span class="k">' + esc(s.name) + '<span class="mon-sensor-tag">' + esc(tag) + '</span></span>' +
+          '<span class="k">' + esc(kvLabels[si]) + '<span class="mon-sensor-tag">' + esc(tag) + '</span></span>' +
           '<span class="v">' + fmt1(s.value) + ' ℃' + extra + '</span></div>';
       }).join('') + '</div>';
     } else {
@@ -2289,26 +2338,41 @@
     }).catch(function () { return pdaily; });
   }
 
-  /* 拉取用电量与电费统计并回填到能耗板块 */
+  /* 拉取用电量与电费统计并回填到能耗板块
+     ⚠️ v1.1.48：加 60 秒结果缓存 —— 抽屉 live 更新（compute.js updateLive）
+     每 3 秒重渲染能耗抽屉并调用本函数回填，接口要扫历史库较重，
+     能耗又是慢变量（与 ensurePowerStats 的 PSTAT_TTL 同款思路）。 */
+  var pwrEnergyCache = null, pwrEnergyAt = 0, PWR_ENERGY_TTL = 60000;
+  function applyPowerEnergy(box, j) {
+    if (!box || !j) return;
+    var rateEl = box.querySelector('[data-pwr-rate]');
+    if (rateEl) {
+      rateEl.textContent = '电价 ' + (j.rate_yuan_per_kwh || 0.6) + ' 元/kWh';
+    }
+    var host = box.querySelector('[data-pwr-energy]');
+    if (!host) return;
+    host.innerHTML =
+      '<div class="mon-dkv-row"><span class="k">今日</span><span class="v">' +
+        fmtKwh(j.today_kwh) + ' kWh · ' + fmtYuan(j.today_yuan) + ' 元</span></div>' +
+      '<div class="mon-dkv-row"><span class="k">本月</span><span class="v">' +
+        fmtKwh(j.month_kwh) + ' kWh · ' + fmtYuan(j.month_yuan) + ' 元</span></div>' +
+      '<div class="mon-dkv-row"><span class="k">开机以来（按当前功率估）</span><span class="v">' +
+        fmtKwh(j.boot_kwh) + ' kWh</span></div>';
+  }
   function loadPowerEnergy(box) {
     if (!box || !window.fetch) return;
+    /* 缓存命中：直接回填，不发请求 */
+    if (pwrEnergyCache && Date.now() - pwrEnergyAt < PWR_ENERGY_TTL) {
+      applyPowerEnergy(box, pwrEnergyCache);
+      return;
+    }
     fetch('/api/power/stats').then(function (r) {
       return r.ok ? r.json() : null;
     }).then(function (j) {
       if (!j || !j.success) return;
-      var rateEl = box.querySelector('[data-pwr-rate]');
-      if (rateEl) {
-        rateEl.textContent = '电价 ' + (j.rate_yuan_per_kwh || 0.6) + ' 元/kWh';
-      }
-      var host = box.querySelector('[data-pwr-energy]');
-      if (!host) return;
-      host.innerHTML =
-        '<div class="mon-dkv-row"><span class="k">今日</span><span class="v">' +
-          fmtKwh(j.today_kwh) + ' kWh · ' + fmtYuan(j.today_yuan) + ' 元</span></div>' +
-        '<div class="mon-dkv-row"><span class="k">本月</span><span class="v">' +
-          fmtKwh(j.month_kwh) + ' kWh · ' + fmtYuan(j.month_yuan) + ' 元</span></div>' +
-        '<div class="mon-dkv-row"><span class="k">开机以来（按当前功率估）</span><span class="v">' +
-          fmtKwh(j.boot_kwh) + ' kWh</span></div>';
+      pwrEnergyCache = j;
+      pwrEnergyAt = Date.now();
+      applyPowerEnergy(box, j);
     }).catch(function () { /* 静默失败：保留「统计加载中…」 */ });
   }
 
@@ -2410,6 +2474,13 @@
       if (drawerOpen) refreshDrawerLive();
       // 巡检历史抽屉开着时同步刷新流水
       if (scanLogOpen) refreshScanLogLive();
+      // ⚠️ v1.1.48：计算抽屉（处理器/内存/温度/能耗）开着时同步刷新
+      // 此前抽屉只在打开时渲染一次快照，之后 hero/四格/温度计全部冻结
+      // （用户反馈「温度与散热抽屉界面打开后其中显示的温度都不变化」）
+      if (window.FnStyleCompute && window.FnStyleCompute.isOpen &&
+          window.FnStyleCompute.isOpen() && window.FnStyleCompute.updateLive) {
+        window.FnStyleCompute.updateLive(d);
+      }
       return d;
     });
   }
