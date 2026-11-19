@@ -3371,6 +3371,168 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
   }
 })();
 
+/* ======================================================================
+   v1.1.50 —— 能耗卡片精简 + 标题栏本月预估电费 + 每日用电失败退避
+   ----------------------------------------------------------------------
+   用户反馈五点：
+   ① 「在能耗卡片标题栏增加根据当前的实际功耗折算本月的预估电费」
+      → header 新增 #monPowerProjCost 徽标：
+        预估电费 =（本月已用电 kWh + 当前实时功耗 W/1000 × 本月剩余小时数）× 电价
+        ⚠️ 口径与卡片内「本月预计电费」（按历史平均 avg_w）不同 → 徽标注明来源
+   ② 「去掉卡片内顶部的此刻功耗显示」
+      → 左栏「实时功耗」大数字区（dnum huge）删除，
+        总功耗改以部件图例下方「合计 X W」呈现（信息不丢）
+   ③ 「同时去掉最右侧的卡片显示」
+      → #monPowerStats 去掉 .ov-card 外壳，.stat-cells 直接作网格项
+        （原 stat-cells 套在 ov-card 里 = 用户说的「多了一层卡片」）
+   ④ 「对应的统计为空，需核实是否已实现；下方的每日用电卡片一直在读取，需核实」
+      → 实机浏览器探针核实：数据其实**有值**（今日 0.0060kWh / 本月 0.264kWh /
+        本月预计 0.16 / 全年 158.00），daily 也已渲染出 2 根柱子，
+        问题在视觉嵌套不在数据；但 ensurePowerDaily/stats 请求失败时
+        **不写时间戳** → 每 3 秒轮询重复打接口（用户感知为「一直在读取」）。
+        修法：加 pstatsFailAt/pdailyFailAt + 30 秒冷却退避 + 失败时渲染空态
+   ⑤ 「去掉下方整机功耗、累计用电卡片的显示（因为已经在抽屉中有显示了）」
+      → 板块级趋势图 #monPowerCharts 传 onlyKeys=[] → 不再渲染这两张卡片
+        （抽屉里的 POWER_CHARTS 不受影响，仍然保留）
+   ====================================================================== */
+(function () {
+  let bad = 0;
+  console.log('\n--- v1.1.50 能耗卡片精简 + 标题栏预估电费 + 失败退避 ---');
+
+  const monSrc50 = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'js', 'monitor.js'), 'utf8');
+  const htmlSrc50 = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'index.html'), 'utf8');
+  const cssSrc50 = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'css', 'app.css'), 'utf8');
+  /* ⚠️ 只取 renderPowerOverview 函数体做判断 —— 注释里还留着
+     fnmonitor 原始结构说明（写着「实时功耗」大数字），全文匹配会误伤。 */
+  const powOverviewBody = (monSrc50.match(/function renderPowerOverview\(d\) \{[\s\S]*?\n  \}/) || [''])[0];
+
+  const rules50 = [
+    /* ① 标题栏本月预估电费徽标 */
+    ['index.html 新增 #monPowerProjCost 徽标（标题栏内）',
+      /<span class="theme-count" id="monPowerProjCost">/.test(htmlSrc50)],
+    ['monitor.js 计算 #monPowerProjCost（当前实际功耗折算）',
+      /var projCost = \$\('#monPowerProjCost'\)/.test(monSrc50)],
+    ['预估口径 = 本月已用电 + 当前功耗×剩余小时数，再乘电价',
+      /monthKwh \+ nowW \/ 1000 \* remainH/.test(monSrc50) &&
+      /var projYuan = projKwh \* rateY;/.test(monSrc50)],
+    ['剩余小时数按本月天数与当前时刻计算',
+      /new Date\(now\.getFullYear\(\), now\.getMonth\(\) \+ 1, 0\)\.getDate\(\)/.test(monSrc50) &&
+      /remainH = Math\.max\(0, dim - now\.getDate\(\)\) \* 24/.test(monSrc50)],
+    ['徽标文案标明「本月预估电费」并带元',
+      /projCost\.textContent = '本月预估电费 ' \+ fmtYuan\(projYuan\) \+ ' 元'/.test(monSrc50)],
+    ['徽标 title 注明按当前功耗折算（与卡内历史平均口径区分）',
+      /按当前功耗/.test(monSrc50)],
+
+    /* ② 去掉卡片内顶部此刻功耗 */
+    ['左栏「实时功耗」大数字区已删除（主页总览，不含抽屉 hero）',
+      /<div class="label">实时功耗/.test(powOverviewBody) === false &&
+      /dnum huge/.test(powOverviewBody) === false],
+    ['总功耗改以图例下方「合计 X W」呈现（信息不丢）',
+      /合计 <b>/.test(powOverviewBody) &&
+      /parts\.reduce\(function \(s, q\) \{ return s \+ Number\(q\[1\] \|\| 0\); \}, 0\)/.test(powOverviewBody)],
+    ['摘要行不再重复「此刻 X W」',
+      /txt = '此刻 <b>/.test(powOverviewBody) === false],
+
+    /* ③ 去掉最右侧卡片外壳（多一层卡片） */
+    ['index.html #monPowerStats 不再套 .ov-card',
+      /<div class="ov-card" id="monPowerStats">/.test(htmlSrc50) === false &&
+      /<div id="monPowerStats">/.test(htmlSrc50)],
+    ['CSS 适配 #monPowerStats 作为 .energy 直接网格项',
+      /\.energy > #monPowerStats \{ min-width: 0; \}/.test(cssSrc50)],
+    ['.energy 网格 align-items:start（左卡内容变少不再强行等高）',
+      /\.energy \{[^}]*align-items: start/.test(cssSrc50)],
+
+    /* ④ 每日用电/用电统计失败退避 */
+    ['声明失败时间戳 pstatsFailAt / pdailyFailAt',
+      /var pstatsFailAt = 0;/.test(monSrc50) && /var pdailyFailAt = 0;/.test(monSrc50)],
+    ['定义失败冷却期 PFAIL_BACKOFF = 30000',
+      /var PFAIL_BACKOFF = 30000;/.test(monSrc50)],
+    ['ensurePowerStats 失败后进入冷却（不每 3 秒重试）',
+      /if \(pstatsFailAt && now - pstatsFailAt < PFAIL_BACKOFF\) return pstats;/.test(monSrc50)],
+    ['ensurePowerDaily 失败后进入冷却',
+      /if \(pdailyFailAt && now - pdailyFailAt < PFAIL_BACKOFF\) return pdaily;/.test(monSrc50)],
+    ['失败时渲染空态（不再一直转圈）',
+      /function renderPowerDailyEmpty\(\)/.test(monSrc50) &&
+      /function renderPowerStatsEmpty\(msg\)/.test(monSrc50) &&
+      /renderPowerDailyEmpty\(\);/.test(monSrc50)],
+    ['成功时清零失败时间戳',
+      /pstatsFailAt = 0;/.test(monSrc50) && /pdailyFailAt = 0;/.test(monSrc50)],
+
+    /* ⑤ 去掉板块级整机功耗/累计用电卡片 */
+    ['renderPanelCharts 对 #monPowerCharts 传 only:[]',
+      /host: '#monPowerCharts', key: 'power', only: \[\]/.test(monSrc50)],
+    ['抽屉内 POWER_CHARTS 仍保留两张图（不误删）',
+      /title: '整机功耗'/.test(
+        fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'js', 'compute.js'), 'utf8')) &&
+      /title: '累计用电（所选范围）'/.test(
+        fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'js', 'compute.js'), 'utf8'))],
+
+    /* ⑥ 🔴 CSS 注释闭合回归防护
+       v1.1.47 遗留：软 RAID 删除说明的注释**漏了结尾的闭合符**，
+       导致其后全部 CSS（含 .energy / .stat-cells / .ov-card）被吞进注释里失效 ——
+       浏览器里 .stat-cells 的 display:grid 不生效，
+       用户看到的「右侧统计多了一层卡片 / 统计为空」就是这个原因。
+       断言：CSS 里注释的开闭数量必须相等，且每个开注释段落都有配对的闭合符。
+       ⚠️ 写这类注释时切勿在内容里出现闭合符本身，否则会提前闭合注释！ */
+    ['app.css 注释开闭数量相等（无未闭合注释）',
+      (cssSrc50.match(/\/\*/g) || []).length === (cssSrc50.match(/\*\//g) || []).length],
+    ['app.css 无嵌套未闭合注释段（每段开注释都有配对的闭合符）',
+      cssSrc50.split('/*').slice(1).every(seg => seg.indexOf('*/') >= 0)],
+    ['关键能耗样式规则未被注释吞掉（.energy / .stat-cells / .ov-card 均存在）',
+      /\.energy \{[^}]*display: grid/.test(cssSrc50) &&
+      /\.stat-cells \{[^}]*display: grid/.test(cssSrc50) &&
+      /\.ov-card \{/.test(cssSrc50)],
+  ];
+  rules50.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* ---- 渲染级：主页总览 HTML ---- */
+  try {
+    /* ⚠️ TEMP_POWER_DATA 在另一个 IIFE 里（局部作用域），
+       这里自建一份等价数据。 */
+    const DATA50 = {
+      success: true, available: true,
+      power: {
+        ok: true, source: 'rapl', total: 68.4,
+        package: 42.1, core: 28.6, uncore: 6.2, dram: 7.3,
+        base: 8, disksW: 13, disksActive: 3, nics: 1,
+        estimation_params: { tdp_w: 65, disk_typical_w: 8, nic_fixed_w: 5, base_w: 8 },
+      },
+      storage: { disks: [] },
+    };
+    global.window.FnStyleMonitor.__renderForTest(DATA50);
+    const ovHtml50 = els.monPowerOverview ? els.monPowerOverview.innerHTML : '';
+    const stHtml50 = els.monPowerStats ? els.monPowerStats.innerHTML : '';
+    const renderRules50 = [
+      ['左栏不再有 dnum huge（实时功耗大数字已移除）',
+        /dnum huge/.test(ovHtml50) === false],
+      ['左栏有部件功耗构成标题 + 合计 W',
+        /部件功耗构成/.test(ovHtml50) && /合计 <b>[\d.]+ W<\/b>/.test(ovHtml50)],
+      ['左栏仍有堆叠条与图例',
+        /class="stack"/.test(ovHtml50) && /class="legend"/.test(ovHtml50)],
+      ['右栏 .stat-cells 直接渲染（无 ov-card 外壳）',
+        /<div class="stat-cells">/.test(stHtml50) &&
+        /class="ov-card"/.test(stHtml50) === false],
+      ['右栏四格齐全（今日/本月/本月预计/全年）',
+        (stHtml50.match(/class="stat-cell"/g) || []).length === 4],
+    ];
+    renderRules50.forEach(([label, ok]) => {
+      console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+      if (!ok) bad++;
+    });
+  } catch (e) {
+    console.error('  ❌ v1.1.50 渲染级断言抛异常: ' + e.message);
+    bad++;
+  }
+
+  if (bad) {
+    console.error('❌ v1.1.50 断言失败 ' + bad + ' 项');
+    process.exitCode = 1;
+  }
+})();
+
 /* 抽屉滑入动画断言是异步的（两帧 rAF → setTimeout），必须等它跑完再汇总 */
 setTimeout(function () {
   console.log(process.exitCode ? '\n❌ 测试未全部通过' : '\n🎉 全部测试通过');

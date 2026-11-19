@@ -21,6 +21,9 @@
   var pdaily = null;           // /api/power/daily 的结果
   var pstatsAt = 0;            // 上次拉取时间（毫秒）
   var pdailyAt = 0;
+  /* v1.1.50：失败时间戳 —— 请求失败后进入冷却，避免每 3 秒重试打接口 */
+  var pstatsFailAt = 0;
+  var pdailyFailAt = 0;
   var PSTAT_TTL = 60000;       // 60 秒刷新一次即可（能耗是慢变量）
   var PDaily_TTL = 600000;     // 10 分钟刷新一次（每日用电只按天变）
 
@@ -1749,18 +1752,20 @@
   /* ================= 总览形态：能耗 =================
      对齐 fnmonitor defineModule id:'energy'（源文件 3107 行起）：
        <div class="energy">                    ← 1.1fr 1fr 两栏
-         <div class="card pad energy-live tap">← 左：实时功耗
-           <div class="label">实时功耗<span class="pill">硬件 RAPL</span></div>
-           <div class="dnum huge">30.5 W</div>   ← 76px
-           <div class="sub">整机 = CPU 封装（RAPL 实测）+ 内存 + 主板底座 + 活动硬盘</div>
+         <div class="card pad energy-live tap">← 左：部件功耗构成
+           <div class="label">部件功耗构成</div>
            <div class="stack">…</div>            ← 堆叠条
            <div class="legend">…</div>
+           <div class="sub">合计 30.5 W · 硬件 RAPL</div>
          </div>
-         <div class="stat-cells">              ← 右：2×2 四格
+         <div class="stat-cells">              ← 右：2×2 四格（无额外卡片外壳）
            今日用电 / 本月用电 / 本月预计电费 / 全年估算
          </div>
        </div>
        <div class="card chart-card">           ← 下方：每日用电柱状图
+     ⚠️ v1.1.50：左栏的「实时功耗」大数字区已按用户要求删除
+        （标题栏新增「本月预估电费」徽标）；#monPowerStats 去掉了
+        .ov-card 外壳，.stat-cells 直接作为 .energy 网格项。
      */
 
   var SRC_TXT = { rapl: '硬件 RAPL', idrac: 'iDRAC 实测', estimated: '模型估算' };
@@ -1774,23 +1779,19 @@
     /* 电价优先取后端返回的实际费率（用户在设置里改过就是那个值）*/
     var rate = (pstats && pstats.rate_yuan_per_kwh) ? pstats.rate_yuan_per_kwh : 0.6;
 
-    /* ---- 左栏：实时功耗 ---- */
+    /* ---- 左栏：部件功耗堆叠条 + 图例 ----
+       ⚠️ v1.1.50：按用户要求去掉卡片顶部的「此刻功耗 / 实时功耗」大数字区
+       （标题栏已加「本月预估电费」徽标，卡内不再重复显示瞬时功耗）。
+       左栏只保留部件功耗构成条 + 图例。 */
     var html = '';
-    html += '<div class="label">实时功耗' +
-      '<span class="pill" style="margin-left:auto">' +
-      (has ? (SRC_TXT[p.source] || '来源未知') : '不可用') + '</span></div>';
-    html += '<div class="dnum huge" style="margin-top:18px"><span class="dm">' +
-      (has ? fmt1(p.total) : '--') + '</span><span class="unit">W</span></div>';
-    html += '<div class="sub" style="margin-top:6px">' +
-      (has
-        ? (p.source === 'idrac' ? 'iDRAC 实测整机输出'
-          : p.source === 'rapl' ? '整机 = CPU 封装（RAPL 实测）+ 内存 + 主板底座 + 活动硬盘'
-          : '无 RAPL：按 TDP × CPU 占用 + 硬盘 + 网卡 + 主板底座估算')
-        : '无法读取 RAPL，也无法估算整机功耗') + '</div>';
+    html += '<div class="label">部件功耗构成</div>';
 
-    /* 堆叠条 + 图例（fnmonitor：堆叠条 12px 高、2px gap；图例色块 8px）*/
+    /* 堆叠条 + 图例（fnmonitor：堆叠条 12px 高、2px gap；图例色块 8px）
+       ⚠️ v1.1.50：实时功耗大数字已移除，但总功耗信息不能丢 ——
+       在部件标题行右侧补一个「合计 X W」，并把来源 pill 挪到下方说明里。 */
     var parts = has ? powerParts(p) : [];
     if (parts.length) {
+      var totalW = parts.reduce(function (s, q) { return s + Number(q[1] || 0); }, 0);
       html += '<div class="stack" style="margin-top:22px;height:12px">' +
         parts.map(function (q) {
           var style = q[2] === 'hatch' ? '' : ' style="background:' + q[2] + '"';
@@ -1801,6 +1802,10 @@
         return '<span>' + ovStackSwatch(q[2]) + esc(q[0]) +
           ' <b>' + fmt1(q[1]) + ' W</b></span>';
       }).join('') + '</div>';
+      html += '<div class="sub" style="margin-top:10px">合计 <b>' + fmt1(totalW) + ' W</b>' +
+        ' · ' + esc(has ? (SRC_TXT[p.source] || '来源未知') : '不可用') + '</div>';
+    } else {
+      html += '<div class="mon-info">未读取到部件功耗构成数据</div>';
     }
     box.innerHTML = html;
 
@@ -1812,7 +1817,9 @@
       });
     }
 
-    /* ---- 右栏：四格（今日 / 本月 / 本月预计 / 全年）---- */
+    /* ---- 右栏：四格（今日 / 本月 / 本月预计 / 全年）----
+       ⚠️ v1.1.50：#monPowerStats 容器已去掉 .ov-card 外壳，
+       .stat-cells 直接作为 .energy 网格项 → 不再有「多了一层卡片」。 */
     statsBox.innerHTML = '<div class="stat-cells">' +
       '<div class="stat-cell"><div class="eyebrow">今日用电</div>' +
         '<div class="dnum"><span class="dm">' + (pstats ? fmtKwh(pstats.today_kwh) : '--') + '</span><span class="unit">kWh</span></div>' +
@@ -1834,19 +1841,21 @@
           : '暂无可用的功率数据') + '</div></div>' +
     '</div>';
 
-    /* ---- 摘要行（对齐 fnmonitor 的 m.r.dek）---- */
+    /* ---- 摘要行（对齐 fnmonitor 的 m.r.dek）----
+       ⚠️ v1.1.50：左栏实时功耗大数字已移除，摘要行也不再重复「此刻 X W」，
+       改为直接说明口径与本月预估（实时读数折算口径与标题栏徽标一致）。 */
     var dek = $('#monPowerDek');
     if (dek) {
       var txt = '';
       if (!has) {
         txt = '功耗不可用。';
       } else {
-        txt = '此刻 <b>' + fmt1(p.total) + ' W</b>';
+        txt = '部件功耗构成（' +
+          (p.source === 'idrac' ? 'iDRAC 实测整机输出'
+            : p.source === 'rapl' ? 'CPU 封装 RAPL 实测 + 内存 + 主板底座 + 活动硬盘'
+            : '无 RAPL：按 TDP × CPU 占用 + 硬盘 + 网卡 + 主板底座估算') + '）';
         if (pstats) {
-          txt += '，按电价 ' + rate + ' 元/kWh';
-          if (pstats.month_proj_yuan !== null && pstats.month_proj_yuan !== undefined) {
-            txt += '，本月电费预计 <b>' + fmtYuan(pstats.month_proj_yuan) + '</b>';
-          }
+          txt += '，电价 ' + rate + ' 元/kWh';
         }
         txt += '。';
         /* 休眠硬盘提示（fnmonitor 会追加「N 块硬盘休眠中」）*/
@@ -1861,6 +1870,33 @@
     var src = $('#monPowerSource');
     if (src) {
       src.textContent = has ? (SRC_TXT[p.source] || '来源未知') : '不可用';
+    }
+
+    /* ---- ⚠️ v1.1.50：标题栏「本月预估电费」徽标 ----
+       口径（用户要求：「根据当前的实际功耗折算本月的预估电费」）：
+         本月预估电费 =（本月已用电量 kWh + 当前实时功耗 W ÷ 1000 × 本月剩余小时数）× 电价
+       ⚠️ 与卡片内「本月预计电费」不同口径：
+          卡片内那格用**历史平均功耗**（pstats.avg_w）推算剩余天数，
+          这里用**此刻实时读数**（p.total）→ 徽标文字里标明「按当前功耗」。 */
+    var projCost = $('#monPowerProjCost');
+    if (projCost) {
+      if (!has || !pstats) {
+        projCost.textContent = '本月预估电费 —';
+      } else {
+        var rateY = (pstats.rate_yuan_per_kwh) ? Number(pstats.rate_yuan_per_kwh) : 0.6;
+        var now = new Date();
+        var dim = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+        var remainH = Math.max(0, dim - now.getDate()) * 24 + (24 - now.getHours());
+        var monthKwh = Number(pstats.month_kwh) || 0;
+        var nowW = Number(p.total) || 0;
+        var projKwh = monthKwh + nowW / 1000 * remainH;
+        var projYuan = projKwh * rateY;
+        projCost.textContent = '本月预估电费 ' + fmtYuan(projYuan) + ' 元';
+        projCost.title = '按当前功耗 ' + fmt1(nowW) + ' W 折算本月剩余 ' +
+          Math.round(remainH) + ' 小时（电价 ' + rateY + ' 元/kWh）\n' +
+          '本月已用电 ' + fmtKwh(monthKwh) + ' kWh + 预计新增 ' +
+          fmtKwh(nowW / 1000 * remainH) + ' kWh';
+      }
     }
   }
 
@@ -2331,7 +2367,10 @@
          CPU 温度 / 主板温度两张趋势图卡片 → onlyKeys 传空数组。
          抽屉内的温度趋势图保留（走 chartsHtml，不经过这里）。 */
       { host: '#monTempCharts', key: 'temp', only: [] },
-      { host: '#monPowerCharts', key: 'power' }
+      /* ⚠️ v1.1.50：主页「能耗」板块按用户要求去掉下方
+         「整机功耗 / 累计用电」两张趋势图卡片（能耗详情抽屉里已有），
+         同样 onlyKeys 传空数组。 */
+      { host: '#monPowerCharts', key: 'power', only: [] }
     ];
     groups.forEach(function (g) {
       var host = $(g.host);
@@ -2352,12 +2391,22 @@
   /* --------------------------------------------------------------------------
    用电统计的异步拉取
    -------------------------------------------------------------------------- */
+  /* ⚠️ v1.1.50：失败退避 —— 原实现里请求失败时**不写时间戳**，
+     pdaily / pstats 始终为 null → 每 3 秒轮询都会重新发起一次请求，
+     用户看到「每日用电一直在读取」。
+     修法：加 pstatsFailAt / pdailyFailAt，失败后进入 FAIL_BACKOFF
+     （30 秒）冷却期，冷却期内直接返回旧值，不再打接口；
+     失败时也把 loading 占位换成明确的空态文案，别一直转圈。 */
+  var PFAIL_BACKOFF = 30000;
+
   /* /api/power/stats —— 今日 / 本月 / 本月预计 / 全年估算
      这个接口要扫历史库，比 /api/monitor 重，所以加了 TTL 缓存：
      能耗是慢变量，60 秒刷新一次足够。 */
   function ensurePowerStats() {
     var now = Date.now();
     if (pstats && now - pstatsAt < PSTAT_TTL) return pstats;
+    /* 冷却期内不再重试 */
+    if (pstatsFailAt && now - pstatsFailAt < PFAIL_BACKOFF) return pstats;
     if (!window.fetch) return pstats;
     return fetch('/api/power/stats').then(function (r) {
       return r.ok ? r.json() : null;
@@ -2365,11 +2414,19 @@
       if (j && j.success) {
         pstats = j;
         pstatsAt = Date.now();
+        pstatsFailAt = 0;
         /* 拿到统计后重画总览四格（此时才有电费 / 预计值）*/
         if (lastData) renderPowerOverview(lastData);
+      } else {
+        pstatsFailAt = Date.now();
+        renderPowerStatsEmpty('用电统计暂不可用');
       }
       return pstats;
-    }).catch(function () { return pstats; });
+    }).catch(function () {
+      pstatsFailAt = Date.now();
+      renderPowerStatsEmpty('用电统计暂不可用');
+      return pstats;
+    });
   }
 
   /* /api/power/daily —— 每日用电柱状图
@@ -2377,6 +2434,8 @@
   function ensurePowerDaily() {
     var now = Date.now();
     if (pdaily && now - pdailyAt < PDaily_TTL) return pdaily;
+    /* 冷却期内不再重试（v1.1.50） */
+    if (pdailyFailAt && now - pdailyFailAt < PFAIL_BACKOFF) return pdaily;
     if (!window.fetch) return pdaily;
     return fetch('/api/power/daily?days=30').then(function (r) {
       return r.ok ? r.json() : null;
@@ -2384,10 +2443,35 @@
       if (j && j.success) {
         pdaily = j;
         pdailyAt = Date.now();
+        pdailyFailAt = 0;
         renderPowerDaily(pdaily);
+      } else {
+        pdailyFailAt = Date.now();
+        renderPowerDailyEmpty();
       }
       return pdaily;
-    }).catch(function () { return pdaily; });
+    }).catch(function () {
+      pdailyFailAt = Date.now();
+      renderPowerDailyEmpty();
+      return pdaily;
+    });
+  }
+
+  /* 用电统计空态（v1.1.50：失败时不再一直转圈） */
+  function renderPowerStatsEmpty(msg) {
+    var box = $('#monPowerStats');
+    if (!box) return;
+    if (box.querySelector('.stat-cells')) return;   /* 已有数据就不覆盖 */
+    box.innerHTML = '<div class="mon-info">' + esc(msg) + '</div>';
+  }
+
+  /* 每日用电空态（v1.1.50） */
+  function renderPowerDailyEmpty() {
+    var box = $('#monPowerDaily');
+    if (!box) return;
+    if (box.querySelector('.ov-bars')) return;      /* 已有数据就不覆盖 */
+    box.innerHTML = '<div class="chart-head"><div class="chart-title">近 30 天用电</div></div>' +
+      '<div class="chart-empty-s">每日用电数据暂不可用，稍后会自动重试</div>';
   }
 
   /* 拉取用电量与电费统计并回填到能耗板块

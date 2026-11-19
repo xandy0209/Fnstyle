@@ -2429,6 +2429,12 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
    .mon-raid-card / .mon-raid-head / .mon-raid-title / .mon-raid-count /
    .mon-raid-dev / .mon-raid-ratio / .mon-raid-members / .mon-raid-member）。
    用户要求「删除软RAID卡片显示」，前端渲染块已同步移除（monitor.js）。
+   ⚠️ v1.1.50：这段注释此前**漏了结尾的闭合符**，导致它之后的全部 CSS
+   （含 .energy / .stat-cells / .ov-card 等）都被吞进注释里失效 ——
+   浏览器解析时 .stat-cells 的 display:grid 不生效，
+   用户看到的「右侧统计多了一层卡片 / 统计为空」就是这个原因。
+   本次补上闭合。
+   ⚠️⚠️ 写注释时切勿在内容里出现「闭合符」本身，否则会提前闭合注释！ */
 
 /* ---- 每核负载 ---- */
 .mon-cores {
@@ -4225,6 +4231,30 @@ html.mon-scroll-lock body {
   display: grid;
   grid-template-columns: 1.1fr 1fr;
   gap: 1rem;
+  align-items: start;
+}
+/* ⚠️ v1.1.50：能耗右侧的用电统计容器不再套 .ov-card 外壳
+   （原来 stat-cells 套在 ov-card 里 → 视觉上「多了一层卡片」）。
+   现在 .stat-cells 直接作为 .energy 的网格项：
+   ① #monPowerStats 作为网格项要占满第二列；
+   ② loading 占位时也要撑满，否则网格列宽会被内容压扁；
+   ③ 空态文案（.mon-info）同样撑满。
+   ⚠️ .mon-info 自带 background/padding/radius（--bg-hover / --radius-sm），
+   这里不能整体覆盖它 —— 只补 width/box-sizing，
+   边框与底色交给 .mon-info 自己，避免两套样式打架。 */
+.energy > #monPowerStats { min-width: 0; }
+.energy > #monPowerStats > .loading {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  padding: 1.25rem 1.35rem;
+}
+.energy > #monPowerStats > .mon-info {
+  width: 100%;
+  box-sizing: border-box;
 }
 
 /* ---- 总览卡片本体（fnmonitor 的 .card.pad / .card.pad.tap）----

@@ -35,7 +35,7 @@
     </div>
     <!-- 顶栏右侧：当前版本号 + 检查更新入口 + 新页面打开 -->
     <div class="topbar-right" id="topbarUpdate">
-      <span class="ver-pill" id="verPill" title="当前版本">v1.1.49</span>
+      <span class="ver-pill" id="verPill" title="当前版本">v1.1.50</span>
       <span class="ub-status" id="tbUpdateStatus"></span>
       <button class="btn sm icon-btn" id="tbCheckUpdate" type="button" title="检查更新" aria-label="检查更新">
         <svg class="upd-ico" viewBox="0 0 24 24" aria-hidden="true">
@@ -204,23 +204,37 @@
         <div class="spacer"></div>
         <button type="button" class="mon-link-btn" data-sheet="power">详情 ›</button>
         <span class="theme-count" id="monPowerSource">—</span>
+        <!-- ⚠️ v1.1.50：标题栏增加「本月预估电费」徽标。
+             口径 = **当前实际功耗**（实时读数）折算本月剩余天数，
+             与卡片内「本月预计电费」（按历史平均功耗 avg_w）口径不同，
+             所以徽标文字里标明「按当前功耗」。 -->
+        <span class="theme-count" id="monPowerProjCost">—</span>
       </header>
       <div class="body">
         <!-- 总览形态（对齐 fnmonitor energy 模块：1.1fr 1fr + 下方柱状图） -->
         <p class="mod-dek" id="monPowerDek">—</p>
         <div class="energy">
+          <!-- ⚠️ v1.1.50：左栏去掉「此刻功耗 / 实时功耗」大数字区
+               （标题栏已有本月预估电费徽标，卡内不再重复显示瞬时功耗）；
+               只保留部件功耗堆叠条 + 图例。 -->
           <div class="ov-card ov-tap energy-live" id="monPowerOverview" data-sheet="power"
                tabindex="0" role="button" title="查看能耗详情">
             <div class="loading"><span class="spin"></span> 读取功耗…</div>
           </div>
-          <div class="ov-card" id="monPowerStats">
+          <!-- ⚠️ v1.1.50：去掉最右侧那层 .ov-card 外壳，
+               .stat-cells 直接作为网格项 —— 原来 stat-cells 套在 ov-card 里
+               造成「多了一层卡片」的观感。 -->
+          <div id="monPowerStats">
             <div class="loading"><span class="spin"></span> 读取用电统计…</div>
           </div>
         </div>
         <div class="ov-card ov-chart-card" id="monPowerDaily">
           <div class="loading"><span class="spin"></span> 读取每日用电…</div>
         </div>
-        <!-- 板块趋势图宿主（独立于内容区，避免每 3 秒轮询把图表清空） -->
+        <!-- ⚠️ v1.1.50：按用户要求去掉主页下方的「整机功耗 / 累计用电」
+             板块级趋势图（这两张图在能耗详情抽屉里已有）。
+             #monPowerCharts 容器保留为空占位，renderPanelCharts 对它
+             传 onlyKeys=[] → 不渲染任何图表卡片。 -->
         <div id="monPowerCharts"></div>
       </div>
     </div>
