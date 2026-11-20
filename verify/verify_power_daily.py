@@ -162,6 +162,39 @@ def main():
         check('本月预计 ≥ 本月已用',
               s['month_proj_kwh'] >= s['month_kwh'],
               '%.4f vs %.4f' % (s['month_proj_kwh'], s['month_kwh']))
+
+        # ⚠️ v1.1.55：单位 bug 回归断言。
+        #   修复前 month_proj_kwh ≈ month_kwh（因为秒差却除以毫秒口径的
+        #   3.6e9 → 结果小了 1000 倍），导致「本月预计电费」几乎等于
+        #   「本月已用电费」，界面上三个电费看起来互相矛盾。
+        #   现在必须满足：month_proj_kwh ≥ month_kwh + 平均功率 × 剩余时间。
+        import datetime
+        now_dt = datetime.datetime.now()
+        if now_dt.month == 12:
+            end_dt = datetime.datetime(now_dt.year + 1, 1, 1)
+        else:
+            end_dt = datetime.datetime(now_dt.year, now_dt.month + 1, 1)
+        remain_secs = max(0.0, (end_dt - now_dt).total_seconds())
+        expect_min = s['month_kwh'] + s['avg_w'] * remain_secs / 3.6e6
+        check('本月预计含剩余时间的用电量（单位已修正为秒口径 3.6e6）',
+              s['month_proj_kwh'] >= expect_min * 0.95,
+              '期望 ≥ %.4f 实际 %.4f（剩余 %.1f 小时）'
+              % (expect_min, s['month_proj_kwh'], remain_secs / 3600.0))
+        check('本月预计显著大于本月已用（修复前两者几乎相等）',
+              s['month_proj_kwh'] > s['month_kwh'] * 1.2,
+              '%.4f vs %.4f' % (s['month_proj_kwh'], s['month_kwh']))
+
+        # 三处电费同源：month_proj_yuan 必须由 month_proj_kwh 推出
+        if s.get('month_proj_yuan') is not None:
+            check('本月预计电费 = 本月预计用电量 × 有效电价',
+                  abs(s['month_proj_yuan'] -
+                      s['month_proj_kwh'] * s.get('eff_rate_yuan_per_kwh', 0.6)) < 0.02,
+                  '%.2f vs %.4f' % (s['month_proj_yuan'],
+                                    s['month_proj_kwh'] *
+                                    s.get('eff_rate_yuan_per_kwh', 0.6)))
+            check('本月预计电费 ≠ 本月已用电费（修复前两者几乎相等）',
+                  abs(s['month_proj_yuan'] - s['month_yuan']) > 0.5,
+                  '预计 %.2f vs 已用 %.2f' % (s['month_proj_yuan'], s['month_yuan']))
     else:
         check('本月预计有值', False, 'month_proj_kwh 为空（本月已用为 0 时不推算）')
 

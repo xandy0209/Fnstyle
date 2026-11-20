@@ -351,17 +351,31 @@ def energy_stats(rate_yuan_per_kwh=0.6, uptime_seconds=None):
         w = float(ap.get("w") or 0)
         result["avg_w"] = round(w, 1)
         result["avg_basis"] = ap.get("basis") or ""
-        # 本月预计：本月已用 + 平均功率 × 本月剩余天数
+        # 本月预计：本月已用 + 平均功率 × 本月剩余时间
+        #
+        # ⚠️ v1.1.55 修正单位 bug：
+        #   fnmonitor 的 monthProj 写的是 `mk + a.w * (end - d) / 3.6e9`，
+        #   这里的 (end - d) 是 **毫秒** 差（JS Date 相减得 ms），
+        #   所以 3.6e9 这个除数是配着「毫秒」用的。
+        #   本实现把剩余时长换成了 **秒**（remain_secs），
+        #   却沿用了 3.6e9 → 结果小了 1000 倍，
+        #   导致 month_proj_kwh ≈ month_kwh（0.5388 vs 0.5317），
+        #   于是「本月预计电费」几乎等于「本月已用电费」，
+        #   界面上三个电费看起来互相矛盾。
+        #   现在秒口径用 3.6e6（瓦·秒 → kWh）。
         if result["month_kwh"] > 0:
-            import calendar
             import datetime
             now_dt = datetime.datetime.now()
-            last_day = calendar.monthrange(now_dt.year, now_dt.month)[1]
-            remain_days = last_day - now_dt.day
-            remain_secs = remain_days * 86400
+            # 剩余时长：从现在到**下月 1 日 00:00**（与 fnmonitor 的
+            # `new Date(y, m + 1, 1)` 完全一致，精确到秒）。
+            if now_dt.month == 12:
+                end_dt = datetime.datetime(now_dt.year + 1, 1, 1)
+            else:
+                end_dt = datetime.datetime(now_dt.year, now_dt.month + 1, 1)
+            remain_secs = max(0.0, (end_dt - now_dt).total_seconds())
             result["month_proj_kwh"] = round(
-                result["month_kwh"] + w * remain_secs / 3.6e9, 4)
-            result["month_proj_remain_days"] = remain_days
+                result["month_kwh"] + w * remain_secs / 3.6e6, 4)
+            result["month_proj_remain_days"] = round(remain_secs / 86400.0, 2)
         # 全年估算：平均功率 × 8.76（8760 小时 / 1000）
         result["year_proj_kwh"] = round(w * 8.76, 1)
         # 折算成电费（fnmonitor 的 eff = 本月电费 / 本月用电，没数据时用费率）

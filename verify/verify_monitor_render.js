@@ -44,6 +44,8 @@ function mkEl(id) {
   'monPowerOverview', 'monPowerStats', 'monPowerDaily', 'monPowerDek',
   /* v1.1.49：#monTempCount 统计标签已按用户要求移除，不再是页面元素 */
   'monPowerSource', 'btnMonRefresh', 'monAuto',
+  /* v1.1.55：标题栏「本月预估电费」徽标（验证三处电费一致） */
+  'monPowerProjCost',
   /* v1.1.41：趋势图宿主容器（独立于内容区，避免每 3 秒轮询被清空） */
   'monTempCharts', 'monPowerCharts',
   'btnMonScan', 'monDrawerOverlay', 'monDrawerTitle', 'monDrawerSub', 'monDrawerBody',
@@ -3412,16 +3414,23 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       /<span class="theme-count" id="monPowerProjCost">/.test(htmlSrc50)],
     ['monitor.js 计算 #monPowerProjCost（当前实际功耗折算）',
       /var projCost = \$\('#monPowerProjCost'\)/.test(monSrc50)],
-    ['预估口径 = 本月已用电 + 当前功耗×剩余小时数，再乘电价',
-      /monthKwh \+ nowW \/ 1000 \* remainH/.test(monSrc50) &&
-      /var projYuan = projKwh \* rateY;/.test(monSrc50)],
-    ['剩余小时数按本月天数与当前时刻计算',
-      /new Date\(now\.getFullYear\(\), now\.getMonth\(\) \+ 1, 0\)\.getDate\(\)/.test(monSrc50) &&
-      /remainH = Math\.max\(0, dim - now\.getDate\(\)\) \* 24/.test(monSrc50)],
-    ['徽标文案标明「本月预估电费」（⚠️ v1.1.54 改用 fnmonitor 口径 fnYuan，带 ¥ 前缀）',
-      /projCost\.textContent = '本月预估电费 ' \+ fnYuan\(projYuan\)/.test(monSrc50)],
-    ['徽标 title 注明按当前功耗折算（与卡内历史平均口径区分）',
-      /按当前功耗/.test(monSrc50)],
+    /* ⚠️ v1.1.55：v1.1.50 时徽标用「此刻实时功耗」单独算一套，
+       与卡内「历史平均功耗」口径不同 → 同屏三个电费互不相同
+       （老板反馈「3 个本月预估电费都不一样」）。
+       现在徽标改为直接取后端的 month_proj_yuan，
+       与卡内「本月预计电费」格、摘要行「本月电费预计」**逐字相同**；
+       当前实时功耗折算值降级为 hover 提示里的参考值。 */
+    ['徽标统一取后端 month_proj_yuan（与卡内/摘要行同源，v1.1.55）',
+      /projCost\.textContent = '本月预估电费 ' \+ fnYuan\(pstats\.month_proj_yuan\)/.test(monSrc50)],
+    ['徽标不再单独用当前功耗计算总额（避免口径分叉）',
+      /var projYuan = projKwh \* rateY;/.test(monSrc50) === false],
+    ['当前实时功耗折算值保留在 hover 提示里作参考',
+      /按当前实时功耗/.test(monSrc50)],
+    ['徽标文案标明「本月预估电费」',
+      /projCost\.textContent = '本月预估电费 /.test(monSrc50)],
+    ['徽标 title 说明已用 / 预计用电 / 电价 / 参考值',
+      /本月已用电/.test(monSrc50) &&
+      /本月预计用电/.test(monSrc50)],
 
     /* ② 卡片内顶部此刻功耗
        ⚠️ v1.1.54：用户两次反馈「按图（fnmonitor 截图）调整能耗卡片内的显示内容」，
@@ -3429,8 +3438,11 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
           同时把 v1.1.50 自加的「合计 X W」行去掉（fnmonitor 没有这行）。 */
     ['左栏「实时功耗」标题行 + 来源 pill 已恢复（v1.1.54）',
       /<div class="label">实时功耗<span class="pill"/.test(powOverviewBody)],
-    ['左栏点阵大数字区已恢复（v1.1.54）',
-      /dnum huge/.test(powOverviewBody) && /dmDot\(has \? fnD1\(p\.total\)/.test(powOverviewBody)],
+    ['左栏大数字区已恢复（普通文本，v1.1.55 去掉 LED 点阵）',
+      /dnum huge/.test(powOverviewBody) &&
+      /<span class="dm">' \+/.test(powOverviewBody) &&
+      /esc\(has \? fnD1\(p\.total\)/.test(powOverviewBody) &&
+      /dmDot\(/.test(powOverviewBody) === false],
     ['口径说明行已恢复（RAPL：整机 = CPU 封装 + 内存 + 主板底座 + 活动硬盘）',
       /powerBasisText\(p, has\)/.test(powOverviewBody)],
     ['v1.1.50 自加的「合计 X W」行已删除（fnmonitor 没有这行）',
@@ -3514,8 +3526,9 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     const renderRules50 = [
       ['左栏「实时功耗」标题行 + 来源 pill（v1.1.54 恢复）',
         /实时功耗/.test(ovHtml50) && /class="pill"/.test(ovHtml50)],
-      ['左栏点阵大数字（.dm-dot）+ W 单位（v1.1.54）',
-        /dnum huge/.test(ovHtml50) && /dm-dot/.test(ovHtml50) &&
+      ['左栏普通文本大数字 + W 单位（v1.1.55 去掉 LED 点阵）',
+        /dnum huge/.test(ovHtml50) && /dm-dot/.test(ovHtml50) === false &&
+        /<span class="dm">/.test(ovHtml50) &&
         /<span class="unit">W<\/span>/.test(ovHtml50)],
       ['左栏口径说明行（RAPL 口径原文）',
         /整机 = CPU 封装（RAPL 实测）\+ 内存 \+ 主板底座 \+ 活动硬盘/.test(ovHtml50)],
@@ -3587,7 +3600,7 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     ['monitor.js 仍保留失败退避（不会每 3 秒重复打接口）',
       /PFAIL_BACKOFF/.test(src51) && /pstatsFailAt/.test(src51) && /pdailyFailAt/.test(src51)],
     ['右栏四格在 pstats 为 null 时仍回退到 -- （不会渲染 NaN）',
-      /dmDot\(fnKwh\(pstats && pstats\.today_kwh\)\)/.test(src51)],
+      /esc\(fnKwh\(pstats && pstats\.today_kwh\)\)/.test(src51)],
   ];
 
   rules51.forEach(([label, ok]) => {
@@ -3733,6 +3746,7 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
      ① 左栏恢复四段结构（标题行 + 来源 pill / 点阵大数字 + W / 口径说明行 /
        堆叠条 + 图例），并删掉 v1.1.50 自加的「合计 X W」行（fnmonitor 没有）
      ② 大数字改 5×7 LED 点阵（新增 DOT_RAW 字库 + dotSvg + dmDot）
+        ⚠️ v1.1.55：用户要求不用点阵 → 整套点阵代码已移除，改回普通文本
      ③ 右栏四格数字改点阵 + fnmonitor 数值口径（金额带 ¥、精度规则）
      ④ 摘要行改 fnmonitor 原文口径「此刻 X W，按电价 …，本月电费预计 ¥…」
      ⑤ 每日用电柱状图由 div 实现换成 SVG（网格线 / 圆角 / dim / live-pt / 浮层）
@@ -3753,32 +3767,21 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
   console.log('\n--- v1.1.54 能耗卡片按 fnmonitor 截图 1:1 还原 ---');
 
   const rules54 = [
-    /* ---- ① 点阵数字（fnmonitor 的 Dot + GLYPH_SRC）---- */
-    ['有 5×7 LED 字库（DOT_RAW）',
-      /var DOT_RAW = \{/.test(src54)],
-    ['字库含 0-9 全部数字',
-      ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'].every(function (d) {
-        return new RegExp("'" + d + "': \\[").test(src54);
-      })],
-    ['字库含 ¥（右栏金额要点阵显示）',
-      /'¥': \[/.test(src54)],
-    ['字库含小数点与负号',
-      /'\.': \[/.test(src54) && /'-': \[/.test(src54)],
-    ['dotSvg 生成 viewBox 0 0 U 7 的 SVG（7 行点阵）',
-      /viewBox="0 0 ' \+ U \+ ' 7"/.test(src54)],
-    ['圆点半径 0.39（与 fnmonitor 一致）',
-      /r="0\.39"/.test(src54)],
-    ['dmDot 输出 .dm-dot 且保留 aria-label（可访问性）',
-      /class="dm dm-dot" role="img" aria-label="/.test(src54)],
-    ['CSS：.dm-dot 覆盖 .dnum > .dm 的普通文本字体',
-      /\.dnum > \.dm\.dm-dot \{[^}]*font: normal/.test(css54)],
-    ['CSS：点阵 SVG 高度随 --dm-h，宽度按 --u 比例',
-      /\.dm-dot svg \{[^}]*height: var\(--dm-h\)[^}]*var\(--u, 7\) \/ 7/.test(css54)],
-    ['CSS：未点亮的点用 --dm-off，点亮用 currentColor',
-      /\.dm-dot circle \{[^}]*fill: var\(--dm-off\)/.test(css54) &&
-      /\.dm-dot circle\.on \{ fill: currentColor; \}/.test(css54)],
-    ['主题变量 --dm-off 深浅两套（fnmonitor --off）',
-      (css54.match(/--dm-off:/g) || []).length === 2],
+    /* ---- ① 数字样式 ----
+       ⚠️ v1.1.55：用户要求「数字不使用 LED 点阵，调整为与其他的数字一样的样式」
+          → v1.1.54 引入的 5×7 LED 点阵整套移除，恢复普通文本。 */
+    ['已移除 5×7 LED 字库（DOT_RAW）',
+      /var DOT_RAW = \{/.test(src54) === false],
+    ['已移除 dotSvg / dmDot / dotGlyph 点阵渲染器',
+      /function dotSvg\(/.test(src54) === false &&
+      /function dmDot\(/.test(src54) === false &&
+      /function dotGlyph\(/.test(src54) === false],
+    ['已移除 CSS 的 .dm-dot 规则',
+      /\.dm-dot/.test(css54) === false],
+    ['已移除主题变量 --dm-off',
+      /--dm-off/.test(css54) === false],
+    ['数字用普通文本 .dnum > .dm（与其它板块同款）',
+      /\.dnum > \.dm \{[^}]*font: 700 calc\(var\(--dm-h\) \* 1\.08\) \/ \.8 var\(--font-display\)/.test(css54)],
 
     /* ---- ② 左栏四段结构 ---- */
     ['左栏「实时功耗」标题行 + 来源 pill',
@@ -3797,8 +3800,9 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       !/合计 <b>/.test(powOverview54)],
 
     /* ---- ③ 右栏四格：点阵 + fnmonitor 数值口径 ---- */
-    ['四格数字全部走 dmDot（点阵）',
-      (src54.match(/dmDot\(fn/g) || []).length === 4],
+    ['四格数字全部是普通文本 .dm（v1.1.55 去掉点阵）',
+      (src54.match(/esc\(fn/g) || []).length >= 4 &&
+      /dmDot\(fn/.test(src54) === false],
     ['金额带 ¥ 前缀（fnmonitor 的 F.yuan）',
       /return '¥' \+ \(n >= 100 \? String\(Math\.round\(n\)\) : n\.toFixed\(2\)\);/.test(src54)],
     ['kWh 精度规则：≥100 取整 / ≥10 一位 / 否则两位',
@@ -3808,7 +3812,7 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     ['全年估算保留「估算」pill',
       /全年估算<span class="pill est-pill">估算<\/span>/.test(src54)],
     ['副标题口径「约 X kWh · 剩余天数按近 N 天平均 W」',
-      /约 ' \+ fnKwh\(pstats\.month_proj_kwh\) \+ ' kWh · 剩余天数按/.test(src54)],
+      /fnKwh\(pstats && pstats\.month_proj_kwh\) \+ ' kWh · 剩余天数按/.test(src54)],
 
     /* ---- ④ 摘要行（fnmonitor 的 m.r.dek）---- */
     ['摘要行「此刻 X W，按电价 …，本月电费预计 ¥…」',
@@ -3868,11 +3872,11 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       /\.stack \{[^}]*height: 12px/.test(css54)],
 
     /* ---- ⑦ 版本号 ---- */
-    ['manifest 版本 1.1.54', /version\s+= 1\.1\.54/.test(man54)],
-    ['index.cgi 版本 1.1.54', /APP_VERSION="1\.1\.54"/.test(cgi54)],
-    ['index.html 版本 1.1.54', /id="verPill"[^>]*>v1\.1\.54</.test(html54)],
-    ['app.js 版本 1.1.54',
-      /var APP_VERSION = '1\.1\.54';/.test(
+    ['manifest 版本 1.1.55', /version\s+= 1\.1\.55/.test(man54)],
+    ['index.cgi 版本 1.1.55', /APP_VERSION="1\.1\.55"/.test(cgi54)],
+    ['index.html 版本 1.1.55', /id="verPill"[^>]*>v1\.1\.55</.test(html54)],
+    ['app.js 版本 1.1.55',
+      /var APP_VERSION = '1\.1\.55';/.test(
         fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'js', 'app.js'), 'utf8'))],
   ];
 
@@ -3896,8 +3900,9 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     const ov54 = els.monPowerOverview ? els.monPowerOverview.innerHTML : '';
     const st54 = els.monPowerStats ? els.monPowerStats.innerHTML : '';
     const renderRules54 = [
-      ['左栏渲染出点阵大数字（.dm-dot）+ W 单位',
-        /dnum huge/.test(ov54) && /dm-dot/.test(ov54) &&
+      ['左栏渲染出普通文本大数字（.dm）+ W 单位（v1.1.55 去掉点阵）',
+        /dnum huge/.test(ov54) && /dm-dot/.test(ov54) === false &&
+        /<span class="dm">/.test(ov54) &&
         /<span class="unit">W<\/span>/.test(ov54)],
       ['左栏渲染出来源 pill（硬件 RAPL）',
         /class="pill"[^>]*>硬件 RAPL</.test(ov54)],
@@ -3907,8 +3912,9 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
         /class="stack"/.test(ov54) && /class="legend"/.test(ov54)],
       ['左栏没有「合计 X W」行',
         !/合计 <b>/.test(ov54)],
-      ['右栏四格全部是点阵（4 个 .dm-dot）',
-        (st54.match(/dm-dot/g) || []).length === 4],
+      ['右栏四格全部是普通文本（无 .dm-dot，v1.1.55）',
+        (st54.match(/dm-dot/g) || []).length === 0 &&
+        (st54.match(/<span class="dm">/g) || []).length === 4],
       ['右栏四格齐全（今日/本月/本月预计/全年）',
         (st54.match(/class="stat-cell"/g) || []).length === 4],
     ];
@@ -3923,6 +3929,154 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
 
   if (bad54) {
     console.error('❌ v1.1.54 断言失败 ' + bad54 + ' 项');
+    process.exitCode = 1;
+  }
+})();
+
+/* ---------------------------------------------------------------------------
+   v1.1.55：能耗卡片数字去 LED 点阵 + 三个「本月预估电费」口径统一
+   ---------------------------------------------------------------------------
+   老板反馈两条：
+     ① 「数字不使用 LED 点阵，调整为与其他的数字一样的样式。」
+        → v1.1.54 按 fnmonitor 截图把大数字做成了 5×7 LED 点阵，
+          本次整套点阵代码移除（DOT_RAW 字库 / dotSvg / dmDot / .dm-dot CSS /
+          --dm-off 变量），改回普通文本 .dnum > .dm，与其它板块完全同款。
+     ② 「如图上的 3 个本月预估电费都不一样呢，请核实」
+        → 根因是后端 energy_stats 的**单位 bug**：
+          fnmonitor 的 monthProj 写 `mk + a.w * (end - d) / 3.6e9`，
+          其中 (end - d) 是**毫秒**差；本实现把剩余时长换成了**秒**，
+          却沿用 3.6e9 → 结果小了 1000 倍，
+          month_proj_kwh ≈ month_kwh（实机 0.5388 vs 0.5317），
+          于是「本月预计电费」几乎等于「本月已用电费」。
+          另外标题栏徽标还用「此刻实时功耗」单独算了一套，
+          与卡内「历史平均功耗」口径不同 → 同屏三个数互相矛盾。
+        修复：① 后端秒口径改用 3.6e6，并把剩余时长精确到「下月 1 日 00:00」
+              （与 fnmonitor 的 new Date(y, m+1, 1) 一致）；
+              ② 前端标题栏徽标改为直接取后端 month_proj_yuan，
+                 与卡内「本月预计电费」格、摘要行「本月电费预计」**逐字相同**；
+                 当前实时功耗折算值降级为 hover 提示里的参考值。
+   =========================================================================== */
+(function () {
+  const src55 = fs.readFileSync(SRC, 'utf8');
+  const css55 = fs.readFileSync(
+    path.join(__dirname, '..', 'app', 'ui', 'static', 'css', 'app.css'), 'utf8');
+  const hist55 = fs.readFileSync(
+    path.join(__dirname, '..', 'app', 'ui', 'history_collect.py'), 'utf8');
+  const powOverview55 = (src55.match(/function renderPowerOverview\(d\) \{[\s\S]*?\n  \}/) || [''])[0];
+  let bad55 = 0;
+
+  console.log('\n--- v1.1.55 去 LED 点阵 + 三个本月预估电费口径统一 ---');
+
+  const rules55 = [
+    /* ---- ① 去 LED 点阵 ---- */
+    ['JS 已无 DOT_RAW 字库',
+      /DOT_RAW/.test(src55) === false],
+    ['JS 已无 dotSvg / dmDot / dotGlyph',
+      /dotSvg/.test(src55) === false &&
+      /dmDot/.test(src55) === false &&
+      /dotGlyph/.test(src55) === false],
+    ['CSS 已无 .dm-dot 规则',
+      /dm-dot/.test(css55) === false],
+    ['CSS 已无 --dm-off 变量',
+      /--dm-off/.test(css55) === false],
+    ['数字使用普通文本 .dnum > .dm（与其它板块同款）',
+      /\.dnum > \.dm \{[^}]*font: 700 calc\(var\(--dm-h\) \* 1\.08\) \/ \.8 var\(--font-display\)/.test(css55)],
+    ['左栏大数字是普通文本',
+      /<span class="dm">' \+\s*\n?\s*esc\(has \? fnD1\(p\.total\)/.test(powOverview55)],
+    ['左栏大数字无点阵',
+      /dmDot\(/.test(powOverview55) === false],
+
+    /* ---- ② 后端单位 bug 修复 ---- */
+    ['后端 month_proj 用秒口径 3.6e6（不再用 3.6e9）',
+      /result\["month_kwh"\] \+ w \* remain_secs \/ 3\.6e6/.test(hist55)],
+    ['后端已无 3.6e9 的月预测除数',
+      /remain_secs \/ 3\.6e9/.test(hist55) === false],
+    ['剩余时长精确到「下月 1 日 00:00」（与 fnmonitor 一致）',
+      /end_dt = datetime\.datetime\(now_dt\.year, now_dt\.month \+ 1, 1\)/.test(hist55) &&
+      /datetime\.datetime\(now_dt\.year \+ 1, 1, 1\)/.test(hist55)],
+    ['剩余时长用 total_seconds() 精确到秒',
+      /remain_secs = max\(0\.0, \(end_dt - now_dt\)\.total_seconds\(\)\)/.test(hist55)],
+    ['month_proj_remain_days 改为小数天（精确剩余）',
+      /month_proj_remain_days.*remain_secs \/ 86400\.0/.test(hist55)],
+    ['month_proj_yuan = month_proj_kwh × eff（未改）',
+      /month_proj_yuan.*month_proj_kwh.*eff/.test(hist55)],
+
+    /* ---- ③ 三处电费口径统一 ---- */
+    ['标题栏徽标取后端 month_proj_yuan（与卡内/摘要行同源）',
+      /projCost\.textContent = '本月预估电费 ' \+ fnYuan\(pstats\.month_proj_yuan\)/.test(powOverview55)],
+    ['标题栏不再单独算 projYuan（消除口径分叉）',
+      /var projYuan = projKwh \* rateY;/.test(powOverview55) === false],
+    ['当前实时功耗折算值保留在 hover 提示作参考',
+      /按当前实时功耗/.test(powOverview55)],
+    ['卡内「本月预计电费」格取 month_proj_yuan',
+      /fnYuan\(pstats && pstats\.month_proj_yuan\)/.test(powOverview55)],
+    ['摘要行「本月电费预计」取 month_proj_yuan',
+      /本月电费预计 <b>' \+ fnYuan\(pstats\.month_proj_yuan\)/.test(powOverview55)],
+    ['「已用电费」与「本月预计电费」标签区分（避免误读为同类）',
+      /已计电费 /.test(powOverview55)],
+    ['右栏两格加 title 说明口径（已用 vs 预计）',
+      /title="本月已用电量 × 电价/.test(powOverview55) &&
+      /title="本月已用 \+ 剩余天数按平均功耗推算"/.test(powOverview55)],
+  ];
+  rules55.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad55++;
+  });
+
+  /* ---- 渲染级：三处电费必须逐字相同 ---- */
+  try {
+    const DATA55 = {
+      power: {
+        ok: true, total: 30.2, source: 'rapl',
+        cpu_pkg: 2.9, mem: 0.8, disks: 18.5, base: 8.0,
+      },
+      storage: { disks: [] },
+    };
+    /* 造一组 stats：三处都用同一个 month_proj_yuan */
+    global.window.FnStyleMonitor.__setPowerStatsForTest({
+      today_kwh: 0.2801, today_yuan: 0.17,
+      month_kwh: 0.5317, month_yuan: 0.32,
+      month_proj_kwh: 8.0933, month_proj_yuan: 4.87,
+      year_proj_kwh: 260.4, year_proj_yuan: 156.72,
+      avg_w: 29.7, avg_basis: '近 2 天平均',
+      rate_yuan_per_kwh: 0.6,
+    });
+    global.window.FnStyleMonitor.__renderForTest(DATA55);
+    const ov55 = els.monPowerOverview ? els.monPowerOverview.innerHTML : '';
+    const st55 = els.monPowerStats ? els.monPowerStats.innerHTML : '';
+    const dek55 = els.monPowerDek ? els.monPowerDek.innerHTML : '';
+    const badge55 = els.monPowerProjCost ? els.monPowerProjCost.textContent : '';
+
+    const renderRules55 = [
+      ['左栏渲染出普通文本数字（无 .dm-dot）',
+        /<span class="dm">/.test(ov55) && /dm-dot/.test(ov55) === false],
+      ['右栏四格数字全是普通文本（4 个 .dm，无 .dm-dot）',
+        (st55.match(/<span class="dm">/g) || []).length === 4 &&
+        /dm-dot/.test(st55) === false],
+      ['右栏「本月预计电费」渲染为 ¥4.87',
+        /本月预计电费<\/div><div class="dnum"><span class="dm">¥4\.87/.test(st55)],
+      ['摘要行「本月电费预计」为 ¥4.87',
+        /本月电费预计 <b>¥4\.87<\/b>/.test(dek55)],
+      ['标题栏徽标为「本月预估电费 ¥4.87」',
+        /本月预估电费 ¥4\.87/.test(badge55)],
+      ['三处电费逐字一致（徽标 == 摘要行 == 卡内格）',
+        /¥4\.87/.test(badge55) &&
+        /¥4\.87/.test(dek55) &&
+        /¥4\.87/.test(st55)],
+      ['「本月用电」格标为「已计电费」（与预计区分）',
+        /已计电费 ¥0\.32/.test(st55)],
+    ];
+    renderRules55.forEach(([label, ok]) => {
+      console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+      if (!ok) bad55++;
+    });
+  } catch (e) {
+    console.error('  ❌ v1.1.55 渲染级断言抛异常: ' + e.message);
+    bad55++;
+  }
+
+  if (bad55) {
+    console.error('❌ v1.1.55 断言失败 ' + bad55 + ' 项');
     process.exitCode = 1;
   }
 })();

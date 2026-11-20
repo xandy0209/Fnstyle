@@ -1816,8 +1816,8 @@
     var html = '';
     html += '<div class="label">实时功耗<span class="pill" style="margin-left:auto">' +
       esc(has ? (SRC_TXT[p.source] || '来源未知') : '不可用') + '</span></div>';
-    html += '<div class="dnum huge" style="margin-top:18px">' +
-      dmDot(has ? fnD1(p.total) : '--') + '<span class="unit">W</span></div>';
+    html += '<div class="dnum huge" style="margin-top:18px"><span class="dm">' +
+      esc(has ? fnD1(p.total) : '--') + '</span><span class="unit">W</span></div>';
     html += '<div class="sub" style="margin-top:6px">' + powerBasisText(p, has) + '</div>';
 
     /* 堆叠条 + 图例（fnmonitor：堆叠条 12px 高、2px gap；色块 8px）*/
@@ -1849,28 +1849,35 @@
     /* ---- 右栏：四格（今日 / 本月 / 本月预计 / 全年）----
        ⚠️ v1.1.50：#monPowerStats 容器已去掉 .ov-card 外壳，
        .stat-cells 直接作为 .energy 网格项 → 不再有「多了一层卡片」。
-       ⚠️ v1.1.54：数字改点阵 + fnmonitor 数值口径（金额带 ¥）。 */
+       ⚠️ v1.1.55：数字改回普通文本（与其它板块的 .dnum > .dm 同款）；
+       数值口径仍是 fnmonitor 的（金额带 ¥、kWh 精度规则）。 */
     statsBox.innerHTML = '<div class="stat-cells">' +
       '<div class="stat-cell"><div class="eyebrow">今日用电</div>' +
-        '<div class="dnum">' + dmDot(fnKwh(pstats && pstats.today_kwh)) +
-        '<span class="unit">kWh</span></div>' +
-        '<div class="sub">' + (pstats ? '电费 ' + fnYuan(pstats.today_yuan) : '--') + '</div></div>' +
+        '<div class="dnum"><span class="dm">' + esc(fnKwh(pstats && pstats.today_kwh)) +
+        '</span><span class="unit">kWh</span></div>' +
+        '<div class="sub" title="今日已用电量 × 电价 = ' +
+          esc(fnKwh(pstats && pstats.today_kwh)) + ' kWh × ' +
+          esc(String(rate)) + ' 元/kWh">已计电费 ' +
+          fnYuan(pstats && pstats.today_yuan) + '</div></div>' +
       '<div class="stat-cell"><div class="eyebrow">本月用电</div>' +
-        '<div class="dnum">' + dmDot(fnKwh(pstats && pstats.month_kwh)) +
-        '<span class="unit">kWh</span></div>' +
-        '<div class="sub">' + (pstats ? '电费 ' + fnYuan(pstats.month_yuan) : '--') + '</div></div>' +
+        '<div class="dnum"><span class="dm">' + esc(fnKwh(pstats && pstats.month_kwh)) +
+        '</span><span class="unit">kWh</span></div>' +
+        '<div class="sub" title="本月已用电量 × 电价 = ' +
+          esc(fnKwh(pstats && pstats.month_kwh)) + ' kWh × ' +
+          esc(String(rate)) + ' 元/kWh">已计电费 ' +
+          fnYuan(pstats && pstats.month_yuan) + '</div></div>' +
       '<div class="stat-cell"><div class="eyebrow">本月预计电费</div>' +
-        '<div class="dnum">' + dmDot(fnYuan(pstats && pstats.month_proj_yuan)) + '</div>' +
-        '<div class="sub">' + (pstats && pstats.month_proj_kwh
-          ? '约 ' + fnKwh(pstats.month_proj_kwh) + ' kWh · 剩余天数按' +
-            esc(pstats.avg_basis || '平均') + ' ' + fnD1(pstats.avg_w) + ' W'
-          : '本月数据不足') + '</div></div>' +
+        '<div class="dnum"><span class="dm">' + esc(fnYuan(pstats && pstats.month_proj_yuan)) + '</span></div>' +
+        '<div class="sub" title="本月已用 + 剩余天数按平均功耗推算">约 ' +
+          fnKwh(pstats && pstats.month_proj_kwh) + ' kWh · 剩余天数按' +
+          esc(pstats && pstats.avg_basis || '平均') + ' ' +
+          fnD1(pstats && pstats.avg_w) + ' W</div></div>' +
       '<div class="stat-cell"><div class="eyebrow">全年估算<span class="pill est-pill">估算</span></div>' +
-        '<div class="dnum">' + dmDot(fnYuan(pstats && pstats.year_proj_yuan)) + '</div>' +
-        '<div class="sub">' + (pstats && pstats.year_proj_kwh
-          ? '约 ' + fnInt(pstats.year_proj_kwh) + ' kWh · ' +
-            esc(pstats.avg_basis || '平均') + ' ' + fnD1(pstats.avg_w) + ' W × 8760 小时'
-          : '暂无可用的功率数据') + '</div></div>' +
+        '<div class="dnum"><span class="dm">' + esc(fnYuan(pstats && pstats.year_proj_yuan)) + '</span></div>' +
+        '<div class="sub" title="平均功耗 × 8760 小时">约 ' +
+          fnInt(pstats && pstats.year_proj_kwh) + ' kWh · ' +
+          esc(pstats && pstats.avg_basis || '平均') + ' ' +
+          fnD1(pstats && pstats.avg_w) + ' W × 8760 小时</div></div>' +
     '</div>';
 
     /* ---- 摘要行（对齐 fnmonitor 的 m.r.dek）----
@@ -1909,12 +1916,16 @@
     /* ---- ⚠️ v1.1.50：标题栏「本月预估电费」徽标 ----
        口径（用户要求：「根据当前的实际功耗折算本月的预估电费」）：
          本月预估电费 =（本月已用电量 kWh + 当前实时功耗 W ÷ 1000 × 本月剩余小时数）× 电价
-       ⚠️ 与卡片内「本月预计电费」不同口径：
-          卡片内那格用**历史平均功耗**（pstats.avg_w）推算剩余天数，
-          这里用**此刻实时读数**（p.total）→ 徽标文字里标明「按当前功耗」。 */
+       ⚠️ v1.1.55：与卡内「本月预计电费」统一为**同一个数**。
+          此前这里用「此刻实时功耗」推算，卡内用「历史平均功耗」推算，
+          两者算法不同 → 同屏三个电费互不相同（老板反馈「3 个都不一样」）。
+          现在两处统一取后端的 month_proj_yuan（后端已修好单位 bug），
+          保证：标题栏徽标 = 摘要行「本月电费预计」= 右栏「本月预计电费」，
+          三处**逐字相同**。当前实时功耗折算值放到 hover 提示里作参考。 */
     var projCost = $('#monPowerProjCost');
     if (projCost) {
-      if (!has || !pstats) {
+      if (!has || !pstats || pstats.month_proj_yuan === null ||
+          pstats.month_proj_yuan === undefined) {
         projCost.textContent = '本月预估电费 —';
       } else {
         var rateY = (pstats.rate_yuan_per_kwh) ? Number(pstats.rate_yuan_per_kwh) : 0.6;
@@ -1923,13 +1934,14 @@
         var remainH = Math.max(0, dim - now.getDate()) * 24 + (24 - now.getHours());
         var monthKwh = Number(pstats.month_kwh) || 0;
         var nowW = Number(p.total) || 0;
-        var projKwh = monthKwh + nowW / 1000 * remainH;
-        var projYuan = projKwh * rateY;
-        projCost.textContent = '本月预估电费 ' + fnYuan(projYuan);
-        projCost.title = '按当前功耗 ' + fnD1(nowW) + ' W 折算本月剩余 ' +
-          Math.round(remainH) + ' 小时（电价 ' + rateY + ' 元/kWh）\n' +
-          '本月已用电 ' + fnKwh(monthKwh) + ' kWh + 预计新增 ' +
-          fnKwh(nowW / 1000 * remainH) + ' kWh';
+        /* 当前实时功耗折算的参考值（仅用于 hover 说明，不作为显示值）*/
+        var curProjYuan = (monthKwh + nowW / 1000 * remainH) * rateY;
+        projCost.textContent = '本月预估电费 ' + fnYuan(pstats.month_proj_yuan);
+        projCost.title = '本月已用电 ' + fnKwh(monthKwh) + ' kWh\n' +
+          '本月预计用电 ' + fnKwh(pstats.month_proj_kwh) + ' kWh（按' +
+          esc(pstats.avg_basis || '平均') + ' ' + fnD1(pstats.avg_w) + ' W 推算剩余用电）\n' +
+          '电价 ' + rateY + ' 元/kWh → ' + fnYuan(pstats.month_proj_yuan) + '\n' +
+          '（按当前实时功耗 ' + fnD1(nowW) + ' W 折算为 ' + fnYuan(curProjYuan) + '）';
       }
     }
   }
@@ -2386,70 +2398,6 @@
         fnYuan，能耗卡片统一用 fnmonitor 口径；详情抽屉保持原样不动。
      ===================================================================== */
 
-  /* 5×7 LED 字库（fnmonitor GLYPH_SRC 的能耗子集）*/
-  var DOT_RAW = {
-    '0': ['.###.', '#...#', '#..##', '#.#.#', '##..#', '#...#', '.###.'],
-    '1': ['..#..', '.##..', '..#..', '..#..', '..#..', '..#..', '.###.'],
-    '2': ['.###.', '#...#', '....#', '...#.', '..#..', '.#...', '#####'],
-    '3': ['#####', '...#.', '..#..', '...#.', '....#', '#...#', '.###.'],
-    '4': ['...#.', '..##.', '.#.#.', '#..#.', '#####', '...#.', '...#.'],
-    '5': ['#####', '#....', '####.', '....#', '....#', '#...#', '.###.'],
-    '6': ['..##.', '.#...', '#....', '####.', '#...#', '#...#', '.###.'],
-    '7': ['#####', '....#', '...#.', '..#..', '.#...', '.#...', '.#...'],
-    '8': ['.###.', '#...#', '#...#', '.###.', '#...#', '#...#', '.###.'],
-    '9': ['.###.', '#...#', '#...#', '.####', '....#', '...#.', '.##..'],
-    '.': ['.', '.', '.', '.', '.', '.', '#'],
-    '-': ['....', '....', '....', '####', '....', '....', '....'],
-    '¥': ['#...#', '.#.#.', '..#..', '#####', '..#..', '#####', '..#..'],
-    '?': ['.###.', '#...#', '....#', '...#.', '..#..', '.....', '..#..'],
-    ' ': ['..', '..', '..', '..', '..', '..', '..']
-  };
-  var DOT_CACHE = {};
-  function dotGlyph(ch) {
-    var g = DOT_CACHE[ch];
-    if (!g) {
-      var rows = DOT_RAW[ch] || DOT_RAW[ch.toUpperCase()] || DOT_RAW['?'];
-      g = { w: rows[0].length, rows: rows };
-      DOT_CACHE[ch] = g;
-    }
-    return g;
-  }
-
-  /* 点阵 SVG（fnmonitor Dot.build + set 的字符串版）
-     viewBox = 0 0 U 7（U = 各字符列宽之和 + 字符间隔），
-     圆点半径 0.39（相对 7 高的坐标系），与 fnmonitor 一致。 */
-  function dotSvg(str) {
-    var s = (str === null || str === undefined) ? '--' : String(str);
-    var chars = s.split('');
-    var gl = [], U = 0, k;
-    for (k = 0; k < chars.length; k++) {
-      var g = dotGlyph(chars[k]);
-      gl.push(g);
-      U += g.w + (k < chars.length - 1 ? 1 : 0);
-    }
-    var cells = '', x = 0;
-    for (k = 0; k < gl.length; k++) {
-      var gg = gl[k], r, c;
-      for (r = 0; r < 7; r++) {
-        var row = gg.rows[r] || '';
-        for (c = 0; c < gg.w; c++) {
-          cells += '<circle cx="' + (x + c + 0.5) + '" cy="' + (r + 0.5) +
-            '" r="0.39"' + (row.charAt(c) === '#' ? ' class="on"' : '') + '/>';
-        }
-      }
-      x += gg.w + 1;
-    }
-    return '<svg viewBox="0 0 ' + U + ' 7" aria-hidden="true" style="--u:' + U + '">' +
-      cells + '</svg>';
-  }
-
-  /* 点阵数字 span（fnmonitor 的 dmHTML）
-     aria-label 保留纯文本，屏幕阅读器可读。 */
-  function dmDot(str) {
-    var s = (str === null || str === undefined) ? '--' : String(str);
-    return '<span class="dm dm-dot" role="img" aria-label="' + esc(s) + '">' +
-      dotSvg(s) + '</span>';
-  }
 
   /* ---- fnmonitor 数值口径（30-core.js 的 F）---- */
   function fnOk(v) {
@@ -3113,6 +3061,10 @@
   // 暴露给外部（如 app.js）手动触发刷新
   window.FnStyleMonitor = {
     refresh: refresh,
+    /* ⚠️ v1.1.55：测试钩子 —— 供 verify/verify_monitor_render.js 注入
+       /api/power/stats 的结果，验证「标题栏徽标 = 摘要行 = 卡内格」
+       三处电费逐字一致。生产路径不调用。 */
+    __setPowerStatsForTest: function (s) { pstats = s; pstatsAt = Date.now(); },
     start: function () { refresh(); startAuto(); },
     stop: stopAuto,
     // 供 compute.js 的详情抽屉使用：取最近一次采集数据

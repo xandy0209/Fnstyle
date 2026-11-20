@@ -52,7 +52,6 @@
      能耗柱状图与图例色块用它（fnmonitor 深色 #1F9C86 / 浅色 #1E9E8A）。 */
   --e-teal:    #1F9C86;
   /* 点阵数字里「未点亮」的圆点（fnmonitor 的 --off）*/
-  --dm-off:    rgba(255, 255, 255, .08);
 
   /* ---- 存储：NAS 机箱与盘位卡（呈现方式参照 fnmonitor）----
      机箱是「嵌进去」的暗色块，托盘比机箱略亮，形成层次。
@@ -110,7 +109,6 @@
 
     /* 浅色主题下的能耗色与点阵熄灭点色（fnmonitor 浅色主题值） */
     --e-teal:    #1E9E8A;
-    --dm-off:    rgba(14, 14, 14, .075);
 
     /* 浅色主题下的机箱：机身浅灰、托盘略亮，形成「机身内嵌」的层次 */
     --chassis:        #eceef1;
@@ -4577,10 +4575,9 @@ html.mon-scroll-lock body {
   line-height: 1;
   min-width: 0;
 }
-/* .dm 是数字本体：默认普通文本（SF Pro Display）。
-   ⚠️ v1.1.54：能耗卡片的大数字按 fnmonitor 截图还原为 **5×7 LED 点阵**，
-   由 .dm-dot 承载（内含一张 SVG，每个圆点 r=0.39），
-   其它板块（温度 / 存储 / 对比）继续用普通文本，不受影响。 */
+/* .dm 是数字本体：普通文本（SF Pro Display）。
+   ⚠️ v1.1.55：能耗卡片的大数字改回普通文本，与其它板块（温度 / 存储 /
+   对比）的数字完全同款 —— 不再使用 5×7 LED 点阵。 */
 .dnum > .dm {
   font: 700 calc(var(--dm-h) * 1.08) / .8 var(--font-display);
   font-variant-numeric: tabular-nums;
@@ -4591,30 +4588,6 @@ html.mon-scroll-lock body {
   line-height: .8;
   color: var(--text-primary);
 }
-/* ---- LED 点阵数字（fnmonitor 的 .dm + Dot 类）----
-   .dm-dot 内是一张 viewBox="0 0 U 7" 的 SVG：每个格子一个 circle，
-   点亮与否由 class="on" 决定；未点亮的点留淡灰底（--dm-off）。 */
-.dnum > .dm.dm-dot {
-  font: normal;
-  letter-spacing: 0;
-  display: inline-flex;
-  align-items: flex-end;
-  line-height: 0;
-  flex: none;
-  vertical-align: bottom;
-  color: var(--text-primary);
-}
-.dm-dot svg {
-  display: block;
-  height: var(--dm-h);
-  width: calc(var(--dm-h) * var(--u, 7) / 7);
-  overflow: visible;
-}
-.dm-dot circle {
-  fill: var(--dm-off);
-  transition: fill .32s ease;
-}
-.dm-dot circle.on { fill: currentColor; }
 .dnum > .unit {
   font: 600 max(11px, calc(var(--dm-h) * .32)) / 1 var(--font-sans);
   color: var(--text-secondary);
