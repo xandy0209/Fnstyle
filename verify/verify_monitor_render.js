@@ -3418,20 +3418,26 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     ['剩余小时数按本月天数与当前时刻计算',
       /new Date\(now\.getFullYear\(\), now\.getMonth\(\) \+ 1, 0\)\.getDate\(\)/.test(monSrc50) &&
       /remainH = Math\.max\(0, dim - now\.getDate\(\)\) \* 24/.test(monSrc50)],
-    ['徽标文案标明「本月预估电费」并带元',
-      /projCost\.textContent = '本月预估电费 ' \+ fmtYuan\(projYuan\) \+ ' 元'/.test(monSrc50)],
+    ['徽标文案标明「本月预估电费」（⚠️ v1.1.54 改用 fnmonitor 口径 fnYuan，带 ¥ 前缀）',
+      /projCost\.textContent = '本月预估电费 ' \+ fnYuan\(projYuan\)/.test(monSrc50)],
     ['徽标 title 注明按当前功耗折算（与卡内历史平均口径区分）',
       /按当前功耗/.test(monSrc50)],
 
-    /* ② 去掉卡片内顶部此刻功耗 */
-    ['左栏「实时功耗」大数字区已删除（主页总览，不含抽屉 hero）',
-      /<div class="label">实时功耗/.test(powOverviewBody) === false &&
-      /dnum huge/.test(powOverviewBody) === false],
-    ['总功耗改以图例下方「合计 X W」呈现（信息不丢）',
-      /合计 <b>/.test(powOverviewBody) &&
-      /parts\.reduce\(function \(s, q\) \{ return s \+ Number\(q\[1\] \|\| 0\); \}, 0\)/.test(powOverviewBody)],
-    ['摘要行不再重复「此刻 X W」',
-      /txt = '此刻 <b>/.test(powOverviewBody) === false],
+    /* ② 卡片内顶部此刻功耗
+       ⚠️ v1.1.54：用户两次反馈「按图（fnmonitor 截图）调整能耗卡片内的显示内容」，
+          已把 v1.1.50 删掉的「实时功耗」大数字区**恢复**回 fnmonitor 的四段结构；
+          同时把 v1.1.50 自加的「合计 X W」行去掉（fnmonitor 没有这行）。 */
+    ['左栏「实时功耗」标题行 + 来源 pill 已恢复（v1.1.54）',
+      /<div class="label">实时功耗<span class="pill"/.test(powOverviewBody)],
+    ['左栏点阵大数字区已恢复（v1.1.54）',
+      /dnum huge/.test(powOverviewBody) && /dmDot\(has \? fnD1\(p\.total\)/.test(powOverviewBody)],
+    ['口径说明行已恢复（RAPL：整机 = CPU 封装 + 内存 + 主板底座 + 活动硬盘）',
+      /powerBasisText\(p, has\)/.test(powOverviewBody)],
+    ['v1.1.50 自加的「合计 X W」行已删除（fnmonitor 没有这行）',
+      /合计 <b>/.test(powOverviewBody) === false],
+    ['摘要行改回 fnmonitor 原文口径「此刻 X W，按电价 …，本月电费预计 ¥…」',
+      /txt = '此刻 <b>/.test(powOverviewBody) &&
+      /本月电费预计 <b>/.test(powOverviewBody)],
 
     /* ③ 去掉最右侧卡片外壳（多一层卡片） */
     ['index.html #monPowerStats 不再套 .ov-card',
@@ -3506,10 +3512,15 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     const ovHtml50 = els.monPowerOverview ? els.monPowerOverview.innerHTML : '';
     const stHtml50 = els.monPowerStats ? els.monPowerStats.innerHTML : '';
     const renderRules50 = [
-      ['左栏不再有 dnum huge（实时功耗大数字已移除）',
-        /dnum huge/.test(ovHtml50) === false],
-      ['左栏有部件功耗构成标题 + 合计 W',
-        /部件功耗构成/.test(ovHtml50) && /合计 <b>[\d.]+ W<\/b>/.test(ovHtml50)],
+      ['左栏「实时功耗」标题行 + 来源 pill（v1.1.54 恢复）',
+        /实时功耗/.test(ovHtml50) && /class="pill"/.test(ovHtml50)],
+      ['左栏点阵大数字（.dm-dot）+ W 单位（v1.1.54）',
+        /dnum huge/.test(ovHtml50) && /dm-dot/.test(ovHtml50) &&
+        /<span class="unit">W<\/span>/.test(ovHtml50)],
+      ['左栏口径说明行（RAPL 口径原文）',
+        /整机 = CPU 封装（RAPL 实测）\+ 内存 \+ 主板底座 \+ 活动硬盘/.test(ovHtml50)],
+      ['左栏没有 v1.1.50 自加的「合计 X W」行',
+        /合计 <b>/.test(ovHtml50) === false],
       ['左栏仍有堆叠条与图例',
         /class="stack"/.test(ovHtml50) && /class="legend"/.test(ovHtml50)],
       ['右栏 .stat-cells 直接渲染（无 ov-card 外壳）',
@@ -3576,7 +3587,7 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     ['monitor.js 仍保留失败退避（不会每 3 秒重复打接口）',
       /PFAIL_BACKOFF/.test(src51) && /pstatsFailAt/.test(src51) && /pdailyFailAt/.test(src51)],
     ['右栏四格在 pstats 为 null 时仍回退到 -- （不会渲染 NaN）',
-      /pstats \? fmtKwh\(pstats\.today_kwh\) : '--'/.test(src51)],
+      /dmDot\(fnKwh\(pstats && pstats\.today_kwh\)\)/.test(src51)],
   ];
 
   rules51.forEach(([label, ok]) => {
@@ -3678,7 +3689,7 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     ['请求用 days=PDaily_DAYS 变量',
       /power\/daily\?days=['"] \+ PDaily_DAYS/.test(src53)],
     ['标题动态化：近 N 天用电（N = 实际有数据的天数）',
-      /近 ['"] \+ days\.length \+ ['"] 天用电/.test(src53)],
+      /近 ' \+ (days\.length|n) \+ ' 天用电/.test(src53)],
     ['空态标题是「近 30 天用电」（对齐 fnmonitor）',
       /近 30 天用电/.test(src53)],
     ['无数据天不画柱：从第一个有数据的天起 slice',
@@ -3700,6 +3711,218 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
 
   if (bad53) {
     console.error('❌ v1.1.53 断言失败 ' + bad53 + ' 项');
+    process.exitCode = 1;
+  }
+})();
+
+/* ===========================================================================
+   v1.1.54：能耗卡片按 fnmonitor 截图 1:1 还原（内容 + 布局）
+   ---------------------------------------------------------------------------
+   背景：用户两次反馈「请看图，按图上的内容布局调整能耗卡片内的显示内容，
+   这个已经给你说了两次了你还是没有按要求完成」——附图是 fnmonitor 能耗板块截图。
+   v1.1.53 只对齐了数据口径，界面呈现仍差一档，本次逐项还原。
+
+   还原基准（fnmonitor 上游源码）：
+     · ui-src/43-modules.js  energy 模块的 build()/update()  → 左栏四段 +
+       右栏四格 + 摘要行 + 柱状图容器
+     · ui-src/32-bars.js      BarChart 类                     → SVG 柱状图
+     · ui-src/30-core.js      Dot 类 + GLYPH_SRC + F           → 点阵数字 + 数值口径
+     · ui-src/10-style.css    .dnum/.stat-cells/.bars/.tip    → 样式
+
+   逐项：
+     ① 左栏恢复四段结构（标题行 + 来源 pill / 点阵大数字 + W / 口径说明行 /
+       堆叠条 + 图例），并删掉 v1.1.50 自加的「合计 X W」行（fnmonitor 没有）
+     ② 大数字改 5×7 LED 点阵（新增 DOT_RAW 字库 + dotSvg + dmDot）
+     ③ 右栏四格数字改点阵 + fnmonitor 数值口径（金额带 ¥、精度规则）
+     ④ 摘要行改 fnmonitor 原文口径「此刻 X W，按电价 …，本月电费预计 ¥…」
+     ⑤ 每日用电柱状图由 div 实现换成 SVG（网格线 / 圆角 / dim / live-pt / 浮层）
+     ⑥ 主题补 --e-teal（深 #1F9C86 / 浅 #1E9E8A）
+   =========================================================================== */
+(function () {
+  const src54 = fs.readFileSync(SRC, 'utf8');
+  const css54 = fs.readFileSync(
+    path.join(__dirname, '..', 'app', 'ui', 'static', 'css', 'app.css'), 'utf8');
+  const html54 = fs.readFileSync(
+    path.join(__dirname, '..', 'app', 'ui', 'index.html'), 'utf8');
+  const cgi54 = fs.readFileSync(
+    path.join(__dirname, '..', 'app', 'ui', 'index.cgi'), 'utf8');
+  const man54 = fs.readFileSync(path.join(__dirname, '..', 'manifest'), 'utf8');
+  const powOverview54 = (src54.match(/function renderPowerOverview\(d\) \{[\s\S]*?\n  \}/) || [''])[0];
+  let bad54 = 0;
+
+  console.log('\n--- v1.1.54 能耗卡片按 fnmonitor 截图 1:1 还原 ---');
+
+  const rules54 = [
+    /* ---- ① 点阵数字（fnmonitor 的 Dot + GLYPH_SRC）---- */
+    ['有 5×7 LED 字库（DOT_RAW）',
+      /var DOT_RAW = \{/.test(src54)],
+    ['字库含 0-9 全部数字',
+      ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'].every(function (d) {
+        return new RegExp("'" + d + "': \\[").test(src54);
+      })],
+    ['字库含 ¥（右栏金额要点阵显示）',
+      /'¥': \[/.test(src54)],
+    ['字库含小数点与负号',
+      /'\.': \[/.test(src54) && /'-': \[/.test(src54)],
+    ['dotSvg 生成 viewBox 0 0 U 7 的 SVG（7 行点阵）',
+      /viewBox="0 0 ' \+ U \+ ' 7"/.test(src54)],
+    ['圆点半径 0.39（与 fnmonitor 一致）',
+      /r="0\.39"/.test(src54)],
+    ['dmDot 输出 .dm-dot 且保留 aria-label（可访问性）',
+      /class="dm dm-dot" role="img" aria-label="/.test(src54)],
+    ['CSS：.dm-dot 覆盖 .dnum > .dm 的普通文本字体',
+      /\.dnum > \.dm\.dm-dot \{[^}]*font: normal/.test(css54)],
+    ['CSS：点阵 SVG 高度随 --dm-h，宽度按 --u 比例',
+      /\.dm-dot svg \{[^}]*height: var\(--dm-h\)[^}]*var\(--u, 7\) \/ 7/.test(css54)],
+    ['CSS：未点亮的点用 --dm-off，点亮用 currentColor',
+      /\.dm-dot circle \{[^}]*fill: var\(--dm-off\)/.test(css54) &&
+      /\.dm-dot circle\.on \{ fill: currentColor; \}/.test(css54)],
+    ['主题变量 --dm-off 深浅两套（fnmonitor --off）',
+      (css54.match(/--dm-off:/g) || []).length === 2],
+
+    /* ---- ② 左栏四段结构 ---- */
+    ['左栏「实时功耗」标题行 + 来源 pill',
+      /<div class="label">实时功耗<span class="pill" style="margin-left:auto">/.test(src54)],
+    ['左栏点阵大数字 + W 单位（margin-top:18px）',
+      /<div class="dnum huge" style="margin-top:18px">/.test(src54) &&
+      /<span class="unit">W<\/span>/.test(src54)],
+    ['左栏口径说明行（RAPL 原文）',
+      /整机 = CPU 封装（RAPL 实测）\+ 内存 \+ 主板底座 \+ 活动硬盘/.test(src54)],
+    ['iDRAC 口径带电源容量与近 1 分钟区间（fnmonitor 同款）',
+      /iDRAC 实测整机输出/.test(src54) && /电源容量/.test(src54) &&
+      /近 1 分钟/.test(src54)],
+    ['堆叠条 12px 高（fnmonitor）',
+      /class="stack" style="margin-top:22px;height:12px"/.test(src54)],
+    ['删掉了 v1.1.50 自加的「合计 X W」行',
+      !/合计 <b>/.test(powOverview54)],
+
+    /* ---- ③ 右栏四格：点阵 + fnmonitor 数值口径 ---- */
+    ['四格数字全部走 dmDot（点阵）',
+      (src54.match(/dmDot\(fn/g) || []).length === 4],
+    ['金额带 ¥ 前缀（fnmonitor 的 F.yuan）',
+      /return '¥' \+ \(n >= 100 \? String\(Math\.round\(n\)\) : n\.toFixed\(2\)\);/.test(src54)],
+    ['kWh 精度规则：≥100 取整 / ≥10 一位 / 否则两位',
+      /return n >= 100 \? String\(Math\.round\(n\)\) : \(n >= 10 \? n\.toFixed\(1\) : n\.toFixed\(2\)\);/.test(src54)],
+    ['d1 精度规则：≥100 取整，否则一位',
+      /return Math\.abs\(n\) >= 100 \? String\(Math\.round\(n\)\) : n\.toFixed\(1\);/.test(src54)],
+    ['全年估算保留「估算」pill',
+      /全年估算<span class="pill est-pill">估算<\/span>/.test(src54)],
+    ['副标题口径「约 X kWh · 剩余天数按近 N 天平均 W」',
+      /约 ' \+ fnKwh\(pstats\.month_proj_kwh\) \+ ' kWh · 剩余天数按/.test(src54)],
+
+    /* ---- ④ 摘要行（fnmonitor 的 m.r.dek）---- */
+    ['摘要行「此刻 X W，按电价 …，本月电费预计 ¥…」',
+      /txt = '此刻 <b>' \+ fnD1\(p\.total\) \+ ' W<\/b>'/.test(src54) &&
+      /本月电费预计 <b>' \+ fnYuan\(pstats\.month_proj_yuan\)/.test(src54)],
+
+    /* ---- ⑤ 柱状图 SVG（fnmonitor 的 BarChart）---- */
+    ['有 drawPowerBars（SVG 绘制）',
+      /function drawPowerBars\(\)/.test(src54)],
+    ['图表高度 132px（fnmonitor BarChart height）',
+      /var h = 132;/.test(src54)],
+    ['两条水平虚线网格（0.5 / 1.0）',
+      /\[0\.5, 1\]\.forEach\(function \(f\)/.test(src54) &&
+      /class="grid-l"/.test(src54)],
+    ['柱宽 = clamp(slot-3, 3, 22)（fnmonitor 公式）',
+      /var bw = Math\.max\(3, Math\.min\(22, slot - 3\)\);/.test(src54)],
+    ['柱高按 max × 1.08（fnmonitor）',
+      /max = max \* 1\.08 \|\| 1e-9;/.test(src54)],
+    ['柱子是圆角矩形（rx）',
+      /class="b"[\s\S]{0,260}?" rx="' \+ Math\.min\(3, bw \/ 2\)/.test(src54)],
+    ['历史柱 fill-opacity .42（fnmonitor dim）',
+      /r\.dim \? ' style="fill-opacity:\.42"' : ''/.test(src54)],
+    ['今天柱顶小圆点 live-pt（r=2.5）',
+      /class="live-pt"[\s\S]{0,120}?r="2\.5"/.test(src54)],
+    ['X 轴标签用 SVG text（末位固定「今天」）',
+      /class="axis-t"[\s\S]{0,160}?text-anchor="middle"/.test(src54) &&
+      /\? '今天'/.test(src54)],
+    ['逐柱悬浮浮层（.pwr-tip，含 tt / tr）',
+      /class="pwr-tip"/.test(src54) && /<div class="tt">/.test(src54) &&
+      /<div class="tr">/.test(src54)],
+    ['浮层内容「用电 x kWh」',
+      /<i class="kb0"><\/i>用电<\/span><b>/.test(src54)],
+    ['浮层标题带电费与数据时长',
+      /title \+= ' · ' \+ fnYuan\(d\.cost\)/.test(src54) &&
+      /title \+= ' · 数据 ' \+ fnD1\(d\.power_h\) \+ ' 小时'/.test(src54)],
+    ['悬浮事件用 pointermove + closest(\'[data-i]\') 委托',
+      /addEventListener\('pointermove'/.test(src54) &&
+      /closest\('\[data-i\]'\)/.test(src54)],
+    ['已删除 v1.1.53 的 div 实现',
+      !/class="ov-bars"/.test(src54) && !/\.ov-bars \{/.test(css54) &&
+      !/class="ov-bar-col"/.test(src54)],
+
+    /* ---- ⑥ 主题色与样式 ---- */
+    ['新增 --e-teal（深 #1F9C86 / 浅 #1E9E8A）',
+      (css54.match(/--e-teal:/g) || []).length === 2 &&
+      /--e-teal:\s*#1F9C86/.test(css54) && /--e-teal:\s*#1E9E8A/.test(css54)],
+    ['柱子与图例色块用 teal',
+      /\.pwr-bars rect\.b \{[^}]*fill: var\(--e-teal\)/.test(css54) &&
+      /\.chart-legend \.lk i \{[^}]*background: var\(--e-teal\)/.test(css54)],
+    ['柱状图容器 132px',
+      /\.pwr-bars \{[^}]*height: 132px/.test(css54)],
+    ['虚线网格样式（1 4 虚线）',
+      /\.pwr-bars \.grid-l \{[^}]*stroke-dasharray: 1 4/.test(css54)],
+    ['浮层黑底白字（fnmonitor 的 .tip）',
+      /\.pwr-tip \{[^}]*background: #0b0e14/.test(css54)],
+    ['堆叠条高度 12px（CSS 层对齐 fnmonitor）',
+      /\.stack \{[^}]*height: 12px/.test(css54)],
+
+    /* ---- ⑦ 版本号 ---- */
+    ['manifest 版本 1.1.54', /version\s+= 1\.1\.54/.test(man54)],
+    ['index.cgi 版本 1.1.54', /APP_VERSION="1\.1\.54"/.test(cgi54)],
+    ['index.html 版本 1.1.54', /id="verPill"[^>]*>v1\.1\.54</.test(html54)],
+    ['app.js 版本 1.1.54',
+      /var APP_VERSION = '1\.1\.54';/.test(
+        fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'js', 'app.js'), 'utf8'))],
+  ];
+
+  rules54.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad54++;
+  });
+
+  /* ---- 渲染级：主页总览 HTML ---- */
+  try {
+    const DATA54 = {
+      success: true, available: true,
+      power: {
+        ok: true, source: 'rapl', total: 29.2,
+        package: 2.4, core: 1.8, uncore: 0.6, dram: 0.3,
+        base: 8, disksW: 18.5, disksActive: 3, nics: 1,
+      },
+      storage: { disks: [] },
+    };
+    global.window.FnStyleMonitor.__renderForTest(DATA54);
+    const ov54 = els.monPowerOverview ? els.monPowerOverview.innerHTML : '';
+    const st54 = els.monPowerStats ? els.monPowerStats.innerHTML : '';
+    const renderRules54 = [
+      ['左栏渲染出点阵大数字（.dm-dot）+ W 单位',
+        /dnum huge/.test(ov54) && /dm-dot/.test(ov54) &&
+        /<span class="unit">W<\/span>/.test(ov54)],
+      ['左栏渲染出来源 pill（硬件 RAPL）',
+        /class="pill"[^>]*>硬件 RAPL</.test(ov54)],
+      ['左栏口径行渲染出 RAPL 口径原文',
+        /整机 = CPU 封装（RAPL 实测）\+ 内存 \+ 主板底座 \+ 活动硬盘/.test(ov54)],
+      ['左栏有堆叠条与图例',
+        /class="stack"/.test(ov54) && /class="legend"/.test(ov54)],
+      ['左栏没有「合计 X W」行',
+        !/合计 <b>/.test(ov54)],
+      ['右栏四格全部是点阵（4 个 .dm-dot）',
+        (st54.match(/dm-dot/g) || []).length === 4],
+      ['右栏四格齐全（今日/本月/本月预计/全年）',
+        (st54.match(/class="stat-cell"/g) || []).length === 4],
+    ];
+    renderRules54.forEach(([label, ok]) => {
+      console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+      if (!ok) bad54++;
+    });
+  } catch (e) {
+    console.error('  ❌ v1.1.54 渲染级断言抛异常: ' + e.message);
+    bad54++;
+  }
+
+  if (bad54) {
+    console.error('❌ v1.1.54 断言失败 ' + bad54 + ' 项');
     process.exitCode = 1;
   }
 })();

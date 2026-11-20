@@ -35,7 +35,7 @@
     </div>
     <!-- 顶栏右侧：当前版本号 + 检查更新入口 + 新页面打开 -->
     <div class="topbar-right" id="topbarUpdate">
-      <span class="ver-pill" id="verPill" title="当前版本">v1.1.53</span>
+      <span class="ver-pill" id="verPill" title="当前版本">v1.1.54</span>
       <span class="ub-status" id="tbUpdateStatus"></span>
       <button class="btn sm icon-btn" id="tbCheckUpdate" type="button" title="检查更新" aria-label="检查更新">
         <svg class="upd-ico" viewBox="0 0 24 24" aria-hidden="true">
@@ -214,9 +214,9 @@
         <!-- 总览形态（对齐 fnmonitor energy 模块：1.1fr 1fr + 下方柱状图） -->
         <p class="mod-dek" id="monPowerDek">—</p>
         <div class="energy">
-          <!-- ⚠️ v1.1.50：左栏去掉「此刻功耗 / 实时功耗」大数字区
-               （标题栏已有本月预估电费徽标，卡内不再重复显示瞬时功耗）；
-               只保留部件功耗堆叠条 + 图例。 -->
+          <!-- ⚠️ v1.1.54：左栏恢复 fnmonitor 的四段结构 ——
+               「实时功耗」标题行（含来源 pill）+ 点阵大数字 + 口径说明行
+               + 部件功耗堆叠条与图例（按用户附图 / fnmonitor 截图还原）。 -->
           <div class="ov-card ov-tap energy-live" id="monPowerOverview" data-sheet="power"
                tabindex="0" role="button" title="查看能耗详情">
             <div class="loading"><span class="spin"></span> 读取功耗…</div>

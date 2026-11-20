@@ -1775,6 +1775,26 @@
 
   var SRC_TXT = { rapl: '硬件 RAPL', idrac: 'iDRAC 实测', estimated: '模型估算' };
 
+  /* 实时功耗的口径说明行（fnmonitor 的 x.wSub）
+     rapl  ：整机 = CPU 封装（RAPL 实测）+ 内存 + 主板底座 + 活动硬盘
+     idrac ：iDRAC 实测整机输出（+ 电源容量 / 近 1 分钟区间）
+     其它  ：无 RAPL：按 TDP × CPU 占用 + 硬盘 + 网卡 + 主板底座估算 */
+  function powerBasisText(p, has) {
+    if (!has) return '无法读取 RAPL，也无法估算整机功耗';
+    if (p.source === 'idrac') {
+      var t = 'iDRAC 实测整机输出';
+      if (fnOk(p.capacity)) t += ' · 电源容量 ' + fnInt(p.capacity) + ' W';
+      if (fnOk(p.min) && fnOk(p.max)) {
+        t += ' · 近 1 分钟 ' + fnInt(p.min) + '–' + fnInt(p.max) + ' W';
+      }
+      return t;
+    }
+    if (p.source === 'rapl') {
+      return '整机 = CPU 封装（RAPL 实测）+ 内存 + 主板底座 + 活动硬盘';
+    }
+    return '无 RAPL：按 TDP × CPU 占用 + 硬盘 + 网卡 + 主板底座估算';
+  }
+
   function renderPowerOverview(d) {
     var box = $('#monPowerOverview');
     var statsBox = $('#monPowerStats');
@@ -1784,19 +1804,25 @@
     /* 电价优先取后端返回的实际费率（用户在设置里改过就是那个值）*/
     var rate = (pstats && pstats.rate_yuan_per_kwh) ? pstats.rate_yuan_per_kwh : 0.6;
 
-    /* ---- 左栏：部件功耗堆叠条 + 图例 ----
-       ⚠️ v1.1.50：按用户要求去掉卡片顶部的「此刻功耗 / 实时功耗」大数字区
-       （标题栏已加「本月预估电费」徽标，卡内不再重复显示瞬时功耗）。
-       左栏只保留部件功耗构成条 + 图例。 */
+    /* ---- 左栏：1:1 对齐 fnmonitor energy 模块的左卡 ----
+       fnmonitor 的四段结构：
+         ① .label「实时功耗」+ 右侧来源 .pill
+         ② .dnum.huge 点阵大数字 + .unit「W」
+         ③ .sub 口径说明行
+         ④ .stack 堆叠条 + .legend 图例
+       ⚠️ v1.1.54：v1.1.50 曾按要求删掉左栏的「实时功耗」大数字区，
+          本次按用户附图（fnmonitor 截图）恢复 —— 图里左栏就是这四段。
+          堆叠条与图例的结构不变。 */
     var html = '';
-    html += '<div class="label">部件功耗构成</div>';
+    html += '<div class="label">实时功耗<span class="pill" style="margin-left:auto">' +
+      esc(has ? (SRC_TXT[p.source] || '来源未知') : '不可用') + '</span></div>';
+    html += '<div class="dnum huge" style="margin-top:18px">' +
+      dmDot(has ? fnD1(p.total) : '--') + '<span class="unit">W</span></div>';
+    html += '<div class="sub" style="margin-top:6px">' + powerBasisText(p, has) + '</div>';
 
-    /* 堆叠条 + 图例（fnmonitor：堆叠条 12px 高、2px gap；图例色块 8px）
-       ⚠️ v1.1.50：实时功耗大数字已移除，但总功耗信息不能丢 ——
-       在部件标题行右侧补一个「合计 X W」，并把来源 pill 挪到下方说明里。 */
+    /* 堆叠条 + 图例（fnmonitor：堆叠条 12px 高、2px gap；色块 8px）*/
     var parts = has ? powerParts(p) : [];
     if (parts.length) {
-      var totalW = parts.reduce(function (s, q) { return s + Number(q[1] || 0); }, 0);
       html += '<div class="stack" style="margin-top:22px;height:12px">' +
         parts.map(function (q) {
           var style = q[2] === 'hatch' ? '' : ' style="background:' + q[2] + '"';
@@ -1805,12 +1831,10 @@
         }).join('') + '</div>';
       html += '<div class="legend">' + parts.map(function (q) {
         return '<span>' + ovStackSwatch(q[2]) + esc(q[0]) +
-          ' <b>' + fmt1(q[1]) + ' W</b></span>';
+          ' <b>' + fnD1(q[1]) + ' W</b></span>';
       }).join('') + '</div>';
-      html += '<div class="sub" style="margin-top:10px">合计 <b>' + fmt1(totalW) + ' W</b>' +
-        ' · ' + esc(has ? (SRC_TXT[p.source] || '来源未知') : '不可用') + '</div>';
     } else {
-      html += '<div class="mon-info">未读取到部件功耗构成数据</div>';
+      html += '<div class="mon-info" style="margin-top:22px">未读取到部件功耗构成数据</div>';
     }
     box.innerHTML = html;
 
@@ -1824,43 +1848,48 @@
 
     /* ---- 右栏：四格（今日 / 本月 / 本月预计 / 全年）----
        ⚠️ v1.1.50：#monPowerStats 容器已去掉 .ov-card 外壳，
-       .stat-cells 直接作为 .energy 网格项 → 不再有「多了一层卡片」。 */
+       .stat-cells 直接作为 .energy 网格项 → 不再有「多了一层卡片」。
+       ⚠️ v1.1.54：数字改点阵 + fnmonitor 数值口径（金额带 ¥）。 */
     statsBox.innerHTML = '<div class="stat-cells">' +
       '<div class="stat-cell"><div class="eyebrow">今日用电</div>' +
-        '<div class="dnum"><span class="dm">' + (pstats ? fmtKwh(pstats.today_kwh) : '--') + '</span><span class="unit">kWh</span></div>' +
-        '<div class="sub">' + (pstats ? '电费 ' + fmtYuan(pstats.today_yuan) : '--') + '</div></div>' +
+        '<div class="dnum">' + dmDot(fnKwh(pstats && pstats.today_kwh)) +
+        '<span class="unit">kWh</span></div>' +
+        '<div class="sub">' + (pstats ? '电费 ' + fnYuan(pstats.today_yuan) : '--') + '</div></div>' +
       '<div class="stat-cell"><div class="eyebrow">本月用电</div>' +
-        '<div class="dnum"><span class="dm">' + (pstats ? fmtKwh(pstats.month_kwh) : '--') + '</span><span class="unit">kWh</span></div>' +
-        '<div class="sub">' + (pstats ? '电费 ' + fmtYuan(pstats.month_yuan) : '--') + '</div></div>' +
+        '<div class="dnum">' + dmDot(fnKwh(pstats && pstats.month_kwh)) +
+        '<span class="unit">kWh</span></div>' +
+        '<div class="sub">' + (pstats ? '电费 ' + fnYuan(pstats.month_yuan) : '--') + '</div></div>' +
       '<div class="stat-cell"><div class="eyebrow">本月预计电费</div>' +
-        '<div class="dnum"><span class="dm">' + (pstats && pstats.month_proj_yuan !== null && pstats.month_proj_yuan !== undefined
-          ? fmtYuan(pstats.month_proj_yuan) : '--') + '</span></div>' +
+        '<div class="dnum">' + dmDot(fnYuan(pstats && pstats.month_proj_yuan)) + '</div>' +
         '<div class="sub">' + (pstats && pstats.month_proj_kwh
-          ? '约 ' + fmtKwh(pstats.month_proj_kwh) + ' kWh · 剩余天数按' + esc(pstats.avg_basis || '平均') + ' ' + fmt1(pstats.avg_w) + ' W'
+          ? '约 ' + fnKwh(pstats.month_proj_kwh) + ' kWh · 剩余天数按' +
+            esc(pstats.avg_basis || '平均') + ' ' + fnD1(pstats.avg_w) + ' W'
           : '本月数据不足') + '</div></div>' +
       '<div class="stat-cell"><div class="eyebrow">全年估算<span class="pill est-pill">估算</span></div>' +
-        '<div class="dnum"><span class="dm">' + (pstats && pstats.year_proj_yuan !== null && pstats.year_proj_yuan !== undefined
-          ? fmtYuan(pstats.year_proj_yuan) : '--') + '</span></div>' +
+        '<div class="dnum">' + dmDot(fnYuan(pstats && pstats.year_proj_yuan)) + '</div>' +
         '<div class="sub">' + (pstats && pstats.year_proj_kwh
-          ? '约 ' + fmtInt(pstats.year_proj_kwh) + ' kWh · ' + esc(pstats.avg_basis || '平均') + ' ' + fmt1(pstats.avg_w) + ' W × 8760 小时'
+          ? '约 ' + fnInt(pstats.year_proj_kwh) + ' kWh · ' +
+            esc(pstats.avg_basis || '平均') + ' ' + fnD1(pstats.avg_w) + ' W × 8760 小时'
           : '暂无可用的功率数据') + '</div></div>' +
     '</div>';
 
     /* ---- 摘要行（对齐 fnmonitor 的 m.r.dek）----
-       ⚠️ v1.1.50：左栏实时功耗大数字已移除，摘要行也不再重复「此刻 X W」，
-       改为直接说明口径与本月预估（实时读数折算口径与标题栏徽标一致）。 */
+       fnmonitor 原文：「此刻 <b>29.2 W</b>，按电价 0.6 元/kWh，
+       本月电费预计 <b>¥6.37</b>。3 块硬盘休眠中。」 */
     var dek = $('#monPowerDek');
     if (dek) {
       var txt = '';
       if (!has) {
         txt = '功耗不可用。';
       } else {
-        txt = '部件功耗构成（' +
-          (p.source === 'idrac' ? 'iDRAC 实测整机输出'
-            : p.source === 'rapl' ? 'CPU 封装 RAPL 实测 + 内存 + 主板底座 + 活动硬盘'
-            : '无 RAPL：按 TDP × CPU 占用 + 硬盘 + 网卡 + 主板底座估算') + '）';
+        txt = '此刻 <b>' + fnD1(p.total) + ' W</b>';
         if (pstats) {
-          txt += '，电价 ' + rate + ' 元/kWh';
+          txt += '，按电价 ' + esc(Number(rate).toFixed(3).replace(/\.?0+$/, '')) +
+            ' 元/kWh';
+        }
+        if (pstats && pstats.month_proj_yuan !== null &&
+            pstats.month_proj_yuan !== undefined) {
+          txt += '，本月电费预计 <b>' + fnYuan(pstats.month_proj_yuan) + '</b>';
         }
         txt += '。';
         /* 休眠硬盘提示（fnmonitor 会追加「N 块硬盘休眠中」）*/
@@ -1896,28 +1925,35 @@
         var nowW = Number(p.total) || 0;
         var projKwh = monthKwh + nowW / 1000 * remainH;
         var projYuan = projKwh * rateY;
-        projCost.textContent = '本月预估电费 ' + fmtYuan(projYuan) + ' 元';
-        projCost.title = '按当前功耗 ' + fmt1(nowW) + ' W 折算本月剩余 ' +
+        projCost.textContent = '本月预估电费 ' + fnYuan(projYuan);
+        projCost.title = '按当前功耗 ' + fnD1(nowW) + ' W 折算本月剩余 ' +
           Math.round(remainH) + ' 小时（电价 ' + rateY + ' 元/kWh）\n' +
-          '本月已用电 ' + fmtKwh(monthKwh) + ' kWh + 预计新增 ' +
-          fmtKwh(nowW / 1000 * remainH) + ' kWh';
+          '本月已用电 ' + fnKwh(monthKwh) + ' kWh + 预计新增 ' +
+          fnKwh(nowW / 1000 * remainH) + ' kWh';
       }
     }
   }
 
-  /* 每日用电柱状图（对齐 fnmonitor 的 energy 模块下方 .card.chart-card）
-     fnmonitor 的口径：
-       · 请求 days=30（DAY_BARS），后端返回完整 N 天序列；
-       · **从第一个有数据的天起 slice**（findIndex(d => d.has_data && pick(d))），
-         前面没数据的天不画；
-       · 标题 = 「近 N 天用电」，N = 实际画出来的天数（不是请求天数）；
-       · 无数据时标题写「近 30 天用电」；
-       · 柱高 = 当天 kWh / 最大值 × 100%（最大值上浮 8%）；
-       · X 轴标签：n>14 每 7 个一标、n>7 每 3 个一标、否则每个都标；
-         最后一个固定写「今天」
-       · 最后一天（今天）高亮，其余半透明
-     ⚠️ v1.1.53：回调 v1.1.52 的两处偏差 —— ① 标题改回动态 N；
-        ② 无数据天不画柱（v1.1.52 画的是淡色空柱 + 标题固定 6 天）。 */
+  /* 每日用电柱状图（1:1 对齐 fnmonitor 的 BarChart —— SVG 实现）
+     fnmonitor 的口径与形态（32-bars.js 的 BarChart + 43-modules.js 的 barOpts）：
+       · 请求 days=30（DAY_BARS），后端返回完整序列；
+       · **从第一个有数据的天起 slice**，中间没数据的天保留空位（不画柱）；
+       · 标题 = 「近 N 天用电」，N = 实际渲染天数；无数据时写「近 30 天用电」；
+       · 柱高 = 当天 kWh / (max × 1.08)，最大值上浮 8%；
+       · 两条水平虚线网格（0.5 / 1.0 位置）；
+       · 非今天的数据柱 fill-opacity .42，今天的柱满色 + 柱顶小圆点（live-pt）；
+       · X 轴标签：末位固定「今天」，其余按 step 间隔（M/D）；
+       · 逐柱悬浮浮层：标题（日期 · 电费 · 数据时长）+「用电 x kWh」。
+     ⚠️ v1.1.54：v1.1.53 是 div 实现（无网格线 / 无小圆点 / 无浮层），
+        本次按用户附图换成 SVG 实现，细节与 fnmonitor 逐项对齐。 */
+
+  /* 柱状图的当前数据（浮层内容要用）*/
+  var pwrBarState = { rows: [], list: [], labels: [] };
+  var pwrBarLast = '';        /* 上次绘制的签名，宽度/行数不变就不重画 */
+  var pwrBarsRO = null;       /* 容器尺寸变化时重画 */
+  var pwrHoverBound = false;  /* 悬浮事件只绑一次 */
+  var pwrBarRetry = 0;        /* 首帧没布局时的重试次数上限 */
+
   function renderPowerDaily(res) {
     var box = $('#monPowerDaily');
     if (!box) return;
@@ -1928,41 +1964,175 @@
       if (all[fi] && all[fi].has_data && all[fi].kwh !== null &&
           all[fi].kwh !== undefined) { first = fi; break; }
     }
-    var days = first < 0 ? [] : all.slice(first);
+    var list = first < 0 ? [] : all.slice(first);
+    /* 短标签 M/D（fnmonitor 的 barOpts.title / xLabel 用同一个日期）*/
+    var labels = list.map(function (d) {
+      var parts = String(d.day || '').split('-');
+      return (parts.length === 3) ? (Number(parts[1]) + '/' + Number(parts[2])) : (d.day || '');
+    });
+    var n = list.length;
     var html = '<div class="chart-head"><div class="chart-title">' +
-      (days.length ? ('近 ' + days.length + ' 天用电') : '近 30 天用电') + '</div>' +
+      (n ? ('近 ' + n + ' 天用电') : '近 30 天用电') + '</div>' +
       '<div class="chart-legend"><span><span class="lk"><i class="kb0"></i></span>' +
       '<span>每日 kWh · 功率历史积分</span></span></div></div>';
-    if (!days.length) {
+    if (!n) {
       html += '<div class="chart-empty-s">暂无功率数据：采集满一段时间后这里会显示每天的用电量</div>';
       box.innerHTML = html;
+      pwrBarState.rows = [];
+      pwrBarLast = '';
       return;
     }
-    /* 柱高：最大值上浮 8%（与 fnmonitor 的 max = Math.max(...) * 1.08 一致）*/
-    var max = Math.max.apply(null, days.map(function (d) { return d.kwh || 0; })) * 1.08 || 1;
-    var n = days.length;
-    var step = n > 14 ? 7 : (n > 7 ? 3 : 1);
-    html += '<div class="ov-bars">' + days.map(function (d, i) {
-      var h = Math.max(1, (d.kwh || 0) / max * 100);
-      var last = i === n - 1;
-      var parts = String(d.day || '').split('-');
-      var shortLabel = parts.length === 3
-        ? (Number(parts[1]) + '/' + Number(parts[2])) : (d.day || '');
-      /* X 轴标签：末位固定「今天」，其余按 step 间隔 */
-      var lb = last ? '今天'
-        : (((n - 1 - i) % step === 0) ? shortLabel : '');
-      var tip = shortLabel + (last ? ' · 今天' : '');
-      tip += ' · ' + fmtKwh(d.kwh) + ' kWh';
-      var cost = (d.cost !== null && d.cost !== undefined) ? (' · ' + fmtYuan(d.cost) + ' 元') : '';
-      var hrs = (d.power_h !== null && d.power_h !== undefined && d.power_h < 23.5)
-        ? (' · 数据 ' + fmt1(d.power_h) + ' 小时') : '';
-      tip += cost + hrs;
-      return '<div class="ov-bar-col' + (last ? ' last' : '') +
-        '" title="' + esc(tip) + '">' +
-        '<div class="ov-bar" style="height:' + h.toFixed(1) + '%"></div>' +
-        '<div class="ov-bar-lb">' + esc(lb) + '</div></div>';
-    }).join('') + '</div>';
+    html += '<div class="pwr-bars" id="monPowerBars"></div>';
     box.innerHTML = html;
+
+    /* rows：中间没数据的天保留空位（kwh 缺省 → 不画柱）*/
+    var rows = list.map(function (d, i) {
+      var r = { dim: i !== n - 1, day: d.day };
+      if (d.kwh !== null && d.kwh !== undefined && !isNaN(Number(d.kwh))) {
+        r.kwh = Number(d.kwh);
+      }
+      return r;
+    });
+    pwrBarState.rows = rows;
+    pwrBarState.list = list;
+    pwrBarState.labels = labels;
+    pwrBarLast = '';
+    drawPowerBars();
+    bindPowerBarsHover();
+    ensurePowerBarsObserver(box);
+  }
+
+  /* 画柱状图（fnmonitor 的 BarChart.render，SVG 版）
+     几何与 fnmonitor 一致：T=8 / B=22 / max=×1.08 / bw=clamp(slot-3, 3, 22)。*/
+  function drawPowerBars() {
+    var host = $('#monPowerBars');
+    if (!host) return;
+    var rows = pwrBarState.rows || [];
+    var w = host.clientWidth || 0;
+    var h = 132;                 /* fnmonitor: new BarChart(..., 132) */
+    if (!w || !rows.length) {
+      /* 首帧容器还没布局（display:none / 宽度为 0）→ 下一帧重试，最多重试 5 次 */
+      if (!w && rows.length && pwrBarRetry < 5) {
+        pwrBarRetry++;
+        requestAnimationFrame(drawPowerBars);
+      }
+      return;
+    }
+    pwrBarRetry = 0;
+    var last = rows[rows.length - 1] || {};
+    var sig = w + '|' + h + '|' + rows.length + '|' + (last.kwh || 0);
+    if (sig === pwrBarLast) return;
+    pwrBarLast = sig;
+
+    var T = 8, B = 22;
+    var PH = h - T - B;
+    var n = rows.length;
+    var max = 0;
+    rows.forEach(function (r) { max = Math.max(max, Number(r.kwh) || 0); });
+    max = max * 1.08 || 1e-9;
+    var slot = w / n;
+    var bw = Math.max(3, Math.min(22, slot - 3));
+    var svg = '';
+    /* 两条水平虚线网格（0.5 / 1.0）*/
+    [0.5, 1].forEach(function (f) {
+      var y = Math.round(T + PH * (1 - f / 1.08)) + 0.5;
+      svg += '<line class="grid-l" x1="0" x2="' + w + '" y1="' + y + '" y2="' + y + '"/>';
+    });
+    var hasDim = rows.some(function (r) { return r.dim; });
+    var step = n > 14 ? 7 : (n > 7 ? 3 : 1);
+    rows.forEach(function (r, i) {
+      var x = slot * i + (slot - bw) / 2;
+      var hh = (Number(r.kwh) || 0) / max * PH;
+      svg += '<g data-i="' + i + '">';
+      /* 命中区（整列）*/
+      svg += '<rect x="' + (slot * i).toFixed(1) + '" y="0" width="' + slot.toFixed(1) +
+        '" height="' + h + '" fill="transparent"/>';
+      if (hh > 0) {
+        var y = T + PH - hh;
+        svg += '<rect class="b" x="' + x.toFixed(1) + '" y="' + y.toFixed(1) +
+          '" width="' + bw.toFixed(1) + '" height="' + Math.max(1, hh).toFixed(1) +
+          '" rx="' + Math.min(3, bw / 2) + '"' +
+          (r.dim ? ' style="fill-opacity:.42"' : '') + '/>';
+        /* 今天柱顶的小圆点（只在存在历史柱时才画，fnmonitor 同款）*/
+        if (!r.dim && hasDim) {
+          svg += '<circle class="live-pt" cx="' + (x + bw / 2).toFixed(1) +
+            '" cy="' + (y - 6).toFixed(1) + '" r="2.5"/>';
+        }
+      }
+      svg += '</g>';
+      /* X 轴标签：末位固定「今天」，其余按 step 间隔 */
+      var lb = (i === n - 1) ? '今天'
+        : (((n - 1 - i) % step === 0) ? (pwrBarState.labels[i] || '') : '');
+      if (lb) {
+        svg += '<text class="axis-t" x="' + (x + bw / 2).toFixed(1) + '" y="' + (h - 4) +
+          '" text-anchor="middle">' + esc(lb) + '</text>';
+      }
+    });
+    host.innerHTML = '<svg role="img">' + svg + '</svg><div class="pwr-tip"></div>';
+  }
+
+  /* 逐柱悬浮浮层（fnmonitor 的 BarChart.hover）
+     事件委托绑在 #monPowerDaily 上（只绑一次，不随 innerHTML 重建失效）。*/
+  function bindPowerBarsHover() {
+    if (pwrHoverBound) return;
+    var box = $('#monPowerDaily');
+    if (!box) return;
+    pwrHoverBound = true;
+    box.addEventListener('pointermove', function (e) {
+      var g = (e.target && e.target.closest) ? e.target.closest('[data-i]') : null;
+      hoverPowerBar(g ? Number(g.getAttribute('data-i')) : -1);
+    });
+    box.addEventListener('pointerleave', function () { hoverPowerBar(-1); });
+  }
+
+  function hoverPowerBar(i) {
+    var host = $('#monPowerBars');
+    if (!host) return;
+    var tip = host.querySelector('.pwr-tip');
+    if (!tip) return;
+    var rows = pwrBarState.rows || [];
+    if (i < 0 || i >= rows.length) {
+      host.classList.remove('hovering');
+      tip.classList.remove('show');
+      Array.prototype.forEach.call(host.querySelectorAll('rect.b'), function (r) {
+        r.classList.remove('on');
+      });
+      return;
+    }
+    host.classList.add('hovering');
+    Array.prototype.forEach.call(host.querySelectorAll('g[data-i] rect.b'), function (r) {
+      var g = r.parentNode;
+      r.classList.toggle('on', !!(g && Number(g.getAttribute('data-i')) === i));
+    });
+    var d = (pwrBarState.list || [])[i] || {};
+    var r = rows[i];
+    var title = (pwrBarState.labels || [])[i] || (d.day || '');
+    if (i === rows.length - 1) title += ' · 今天';
+    if (d.cost !== null && d.cost !== undefined) title += ' · ' + fnYuan(d.cost);
+    if (d.power_h !== null && d.power_h !== undefined && d.power_h < 23.5) {
+      title += ' · 数据 ' + fnD1(d.power_h) + ' 小时';
+    }
+    tip.innerHTML = '<div class="tt">' + esc(title) + '</div>' +
+      '<div class="tr"><span><i class="kb0"></i>用电</span><b>' +
+      esc(fnKwh(r.kwh) + ' kWh') + '</b></div>';
+    /* 定位：水平居中于柱子上方，垂直浮出图表顶部（fnmonitor 同款）*/
+    var w = host.clientWidth || 0;
+    var slot = w / rows.length;
+    var x = slot * (i + 0.5);
+    var tw = tip.offsetWidth || 140;
+    tip.style.left = clampN(x - tw / 2, 0, Math.max(0, w - tw)) + 'px';
+    tip.style.top = '-8px';
+    tip.style.transform = 'translateY(-100%)';
+    tip.classList.add('show');
+  }
+
+  /* 容器宽度变化时重画（fnmonitor 用 ResizeObserver 观察 host）*/
+  function ensurePowerBarsObserver(box) {
+    if (pwrBarsRO || typeof ResizeObserver === 'undefined') return;
+    try {
+      pwrBarsRO = new ResizeObserver(function () { drawPowerBars(); });
+      pwrBarsRO.observe(box);
+    } catch (e) { /* 忽略：不影响主流程 */ }
   }
 
   /* 风扇图标（对齐 fnmonitor 的 #i-fan symbol：中心轴 + 三片扇叶）
@@ -2198,6 +2368,110 @@
     }
 
     return html;
+  }
+
+  /* =====================================================================
+     能耗：LED 点阵数字 + fnmonitor 数值口径
+     ---------------------------------------------------------------------
+     ① 点阵：fnmonitor 的大数字是 5×7 的 LED 点阵（每格一颗圆点，未点亮的点
+        留淡灰底），截图里「29.2 / 0.25 / ¥6.37」都是这个形态。
+        v1.1.53 之前 FnStyle 用的是普通无衬线粗体数字，视觉上差一档，
+        v1.1.54 按用户附图还原为点阵。
+        实现差异：fnmonitor 是 DOM API 逐格改 class（复用 cells，点位淡入淡出）；
+        FnStyle 总览是 innerHTML 字符串整体重建，这里直接生成 SVG 字符串，
+        点位状态用 CSS transition 做过渡。字库只保留能耗面板用得到的字符。
+     ② 数值口径：fnmonitor 的 F.int / F.d1 / F.kwh / F.yuan（30-core.js）。
+        与 FnStyle 原有的 fmtInt / fmt1 / fmtKwh / fmtYuan 精度不同，
+        且 fnmonitor 的金额带 ¥ 前缀。这里另起一套 fnInt / fnD1 / fnKwh /
+        fnYuan，能耗卡片统一用 fnmonitor 口径；详情抽屉保持原样不动。
+     ===================================================================== */
+
+  /* 5×7 LED 字库（fnmonitor GLYPH_SRC 的能耗子集）*/
+  var DOT_RAW = {
+    '0': ['.###.', '#...#', '#..##', '#.#.#', '##..#', '#...#', '.###.'],
+    '1': ['..#..', '.##..', '..#..', '..#..', '..#..', '..#..', '.###.'],
+    '2': ['.###.', '#...#', '....#', '...#.', '..#..', '.#...', '#####'],
+    '3': ['#####', '...#.', '..#..', '...#.', '....#', '#...#', '.###.'],
+    '4': ['...#.', '..##.', '.#.#.', '#..#.', '#####', '...#.', '...#.'],
+    '5': ['#####', '#....', '####.', '....#', '....#', '#...#', '.###.'],
+    '6': ['..##.', '.#...', '#....', '####.', '#...#', '#...#', '.###.'],
+    '7': ['#####', '....#', '...#.', '..#..', '.#...', '.#...', '.#...'],
+    '8': ['.###.', '#...#', '#...#', '.###.', '#...#', '#...#', '.###.'],
+    '9': ['.###.', '#...#', '#...#', '.####', '....#', '...#.', '.##..'],
+    '.': ['.', '.', '.', '.', '.', '.', '#'],
+    '-': ['....', '....', '....', '####', '....', '....', '....'],
+    '¥': ['#...#', '.#.#.', '..#..', '#####', '..#..', '#####', '..#..'],
+    '?': ['.###.', '#...#', '....#', '...#.', '..#..', '.....', '..#..'],
+    ' ': ['..', '..', '..', '..', '..', '..', '..']
+  };
+  var DOT_CACHE = {};
+  function dotGlyph(ch) {
+    var g = DOT_CACHE[ch];
+    if (!g) {
+      var rows = DOT_RAW[ch] || DOT_RAW[ch.toUpperCase()] || DOT_RAW['?'];
+      g = { w: rows[0].length, rows: rows };
+      DOT_CACHE[ch] = g;
+    }
+    return g;
+  }
+
+  /* 点阵 SVG（fnmonitor Dot.build + set 的字符串版）
+     viewBox = 0 0 U 7（U = 各字符列宽之和 + 字符间隔），
+     圆点半径 0.39（相对 7 高的坐标系），与 fnmonitor 一致。 */
+  function dotSvg(str) {
+    var s = (str === null || str === undefined) ? '--' : String(str);
+    var chars = s.split('');
+    var gl = [], U = 0, k;
+    for (k = 0; k < chars.length; k++) {
+      var g = dotGlyph(chars[k]);
+      gl.push(g);
+      U += g.w + (k < chars.length - 1 ? 1 : 0);
+    }
+    var cells = '', x = 0;
+    for (k = 0; k < gl.length; k++) {
+      var gg = gl[k], r, c;
+      for (r = 0; r < 7; r++) {
+        var row = gg.rows[r] || '';
+        for (c = 0; c < gg.w; c++) {
+          cells += '<circle cx="' + (x + c + 0.5) + '" cy="' + (r + 0.5) +
+            '" r="0.39"' + (row.charAt(c) === '#' ? ' class="on"' : '') + '/>';
+        }
+      }
+      x += gg.w + 1;
+    }
+    return '<svg viewBox="0 0 ' + U + ' 7" aria-hidden="true" style="--u:' + U + '">' +
+      cells + '</svg>';
+  }
+
+  /* 点阵数字 span（fnmonitor 的 dmHTML）
+     aria-label 保留纯文本，屏幕阅读器可读。 */
+  function dmDot(str) {
+    var s = (str === null || str === undefined) ? '--' : String(str);
+    return '<span class="dm dm-dot" role="img" aria-label="' + esc(s) + '">' +
+      dotSvg(s) + '</span>';
+  }
+
+  /* ---- fnmonitor 数值口径（30-core.js 的 F）---- */
+  function fnOk(v) {
+    return v !== null && v !== undefined && !isNaN(v);
+  }
+  function fnInt(v) {
+    return fnOk(v) ? String(Math.round(Number(v))) : '--';
+  }
+  function fnD1(v) {
+    if (!fnOk(v)) return '--';
+    var n = Number(v);
+    return Math.abs(n) >= 100 ? String(Math.round(n)) : n.toFixed(1);
+  }
+  function fnKwh(v) {
+    if (!fnOk(v)) return '--';
+    var n = Number(v);
+    return n >= 100 ? String(Math.round(n)) : (n >= 10 ? n.toFixed(1) : n.toFixed(2));
+  }
+  function fnYuan(v) {
+    if (!fnOk(v)) return '--';
+    var n = Number(v);
+    return '¥' + (n >= 100 ? String(Math.round(n)) : n.toFixed(2));
   }
 
   /* ---------------- 4. 能耗 ---------------- */
@@ -2495,7 +2769,7 @@
   function renderPowerDailyEmpty() {
     var box = $('#monPowerDaily');
     if (!box) return;
-    if (box.querySelector('.ov-bars')) return;      /* 已有数据就不覆盖 */
+    if (box.querySelector('.pwr-bars')) return;      /* 已有数据就不覆盖 */
     box.innerHTML = '<div class="chart-head"><div class="chart-title">近 30 天用电</div></div>' +
       '<div class="chart-empty-s">每日用电数据暂不可用，稍后会自动重试</div>';
   }

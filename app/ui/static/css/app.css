@@ -48,6 +48,12 @@
   --spark-1:   #5585E8;
   --spark-2:   #B761B1;
 
+  /* ---- 能耗主题色（对齐 fnmonitor 的 --e-teal）----
+     能耗柱状图与图例色块用它（fnmonitor 深色 #1F9C86 / 浅色 #1E9E8A）。 */
+  --e-teal:    #1F9C86;
+  /* 点阵数字里「未点亮」的圆点（fnmonitor 的 --off）*/
+  --dm-off:    rgba(255, 255, 255, .08);
+
   /* ---- 存储：NAS 机箱与盘位卡（呈现方式参照 fnmonitor）----
      机箱是「嵌进去」的暗色块，托盘比机箱略亮，形成层次。
      所有半透明层都带蓝灰色相，避免换底色后发灰发脏。 */
@@ -101,6 +107,10 @@
     /* 浅色主题下的趋势图曲线（fnmonitor 浅色主题值） */
     --spark-1:   #3368D6;
     --spark-2:   #A3489D;
+
+    /* 浅色主题下的能耗色与点阵熄灭点色（fnmonitor 浅色主题值） */
+    --e-teal:    #1E9E8A;
+    --dm-off:    rgba(14, 14, 14, .075);
 
     /* 浅色主题下的机箱：机身浅灰、托盘略亮，形成「机身内嵌」的层次 */
     --chassis:        #eceef1;
@@ -4484,7 +4494,7 @@ html.mon-scroll-lock body {
 .stack {
   display: flex;
   gap: 2px;
-  height: 10px;
+  height: 12px;
   border-radius: 5px;
   overflow: hidden;
 }
@@ -4567,7 +4577,10 @@ html.mon-scroll-lock body {
   line-height: 1;
   min-width: 0;
 }
-/* .dm 是数字本体（fnmonitor 里默认点阵，用户明确要普通文本） */
+/* .dm 是数字本体：默认普通文本（SF Pro Display）。
+   ⚠️ v1.1.54：能耗卡片的大数字按 fnmonitor 截图还原为 **5×7 LED 点阵**，
+   由 .dm-dot 承载（内含一张 SVG，每个圆点 r=0.39），
+   其它板块（温度 / 存储 / 对比）继续用普通文本，不受影响。 */
 .dnum > .dm {
   font: 700 calc(var(--dm-h) * 1.08) / .8 var(--font-display);
   font-variant-numeric: tabular-nums;
@@ -4578,6 +4591,30 @@ html.mon-scroll-lock body {
   line-height: .8;
   color: var(--text-primary);
 }
+/* ---- LED 点阵数字（fnmonitor 的 .dm + Dot 类）----
+   .dm-dot 内是一张 viewBox="0 0 U 7" 的 SVG：每个格子一个 circle，
+   点亮与否由 class="on" 决定；未点亮的点留淡灰底（--dm-off）。 */
+.dnum > .dm.dm-dot {
+  font: normal;
+  letter-spacing: 0;
+  display: inline-flex;
+  align-items: flex-end;
+  line-height: 0;
+  flex: none;
+  vertical-align: bottom;
+  color: var(--text-primary);
+}
+.dm-dot svg {
+  display: block;
+  height: var(--dm-h);
+  width: calc(var(--dm-h) * var(--u, 7) / 7);
+  overflow: visible;
+}
+.dm-dot circle {
+  fill: var(--dm-off);
+  transition: fill .32s ease;
+}
+.dm-dot circle.on { fill: currentColor; }
 .dnum > .unit {
   font: 600 max(11px, calc(var(--dm-h) * .32)) / 1 var(--font-sans);
   color: var(--text-secondary);
@@ -4613,56 +4650,109 @@ html.mon-scroll-lock body {
 .chart-legend > span { display: inline-flex; align-items: center; gap: 6px; }
 .chart-legend .lk { display: inline-flex; align-items: center; gap: 6px; }
 .chart-legend .lk i {
-  width: 10px;
-  height: 3px;
+  width: 8px;
+  height: 8px;
   border-radius: 2px;
-  background: var(--spark-1);
+  background: var(--e-teal);
   display: inline-block;
+  flex: none;
 }
 
-/* 每日用电柱状图（fnmonitor 的 .bars） */
-.ov-bars {
+/* ---- 每日用电柱状图（fnmonitor 的 .bars + BarChart SVG）----
+   v1.1.54：v1.1.53 的 div 实现换成 SVG —— 两条水平虚线网格、圆角柱、
+   历史柱 fill-opacity .42、今日柱顶小圆点（live-pt）、逐柱悬浮浮层。
+   与 fnmonitor 的差异只有一处：类名前缀用 .pwr- 避免与其它图表冲突。 */
+.pwr-bars {
   position: relative;
   height: 132px;
-  display: flex;
-  align-items: flex-end;
-  gap: 2px;
-  padding-top: 8px;
 }
-.ov-bar-col {
-  flex: 1 1 0;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  align-items: center;
-  height: 100%;
-}
-.ov-bar {
+.pwr-bars svg {
+  position: absolute;
+  inset: 0;
   width: 100%;
-  max-width: 22px;
-  min-height: 2px;
-  border-radius: 3px 3px 1px 1px;
-  background: var(--spark-1);
-  opacity: .72;
-  transition: height .9s cubic-bezier(.22, .8, .24, 1), opacity .14s ease;
+  height: 100%;
+  overflow: visible;
 }
-.ov-bar-col:hover .ov-bar { opacity: 1; }
-/* 最后一天（今天）高亮 */
-.ov-bar-col.last .ov-bar { background: var(--spark-2); opacity: 1; }
-/* ⚠️ v1.1.53：删除了 v1.1.52 的 .ov-bar-col.nodata 样式 ——
-   现在无数据的天根本不画柱（从第一个有数据的天起 slice），
-   与 fnmonitor 行为一致，不需要「淡色基线」这种占位样式。 */
-.ov-bar-lb {
-  margin-top: 6px;
-  font-size: 10.5px;
-  color: var(--text-muted);
+/* 水平虚线网格（fnmonitor 的 .grid-l）*/
+.pwr-bars .grid-l {
+  stroke: var(--text-muted);
+  stroke-width: 1;
+  stroke-dasharray: 1 4;
+  stroke-linecap: round;
+  opacity: .7;
+  shape-rendering: auto;
+}
+/* 柱子（fnmonitor 的 rect.b）*/
+.pwr-bars rect.b {
+  fill: var(--e-teal);
+  transition: opacity .14s ease;
+}
+.pwr-bars.hovering rect.b { opacity: .45; }
+.pwr-bars.hovering rect.b.on { opacity: 1; }
+/* 今天柱顶的小圆点（fnmonitor 的 .live-pt）*/
+.pwr-bars .live-pt {
+  fill: var(--text-primary);
+}
+/* X 轴标签（fnmonitor 的 .axis-t）*/
+.pwr-bars .axis-t {
+  fill: var(--text-muted);
+  font-size: .65625rem;
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
+}
+/* 悬浮浮层（fnmonitor 的 .tip：黑底白字，浮在图表上方）*/
+.pwr-tip {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  min-width: 120px;
+  padding: 9px 12px;
+  border-radius: 12px;
+  background: #0b0e14;
+  color: #f2f4f8;
+  box-shadow: 0 18px 50px -12px rgba(0, 0, 0, .8), 0 0 0 1px rgba(255, 255, 255, .07);
+  font-family: var(--font-mono);
+  font-size: .6875rem;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity .14s ease, transform .14s ease;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
 }
-.ov-bar-col.last .ov-bar-lb { color: var(--text-primary); font-weight: 600; }
+.pwr-tip.show { opacity: 1; }
+.pwr-tip .tt {
+  color: rgba(242, 244, 248, .55);
+  margin-bottom: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.pwr-tip .tr {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+  line-height: 1.7;
+}
+.pwr-tip .tr i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  display: inline-block;
+  margin-right: 8px;
+  vertical-align: middle;
+  background: var(--e-teal);
+}
+.pwr-tip .tr b {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+/* 图例色块（fnmonitor 的 .kb0：8×8 方块 + --k 色）*/
+.kb0 {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--e-teal);
+  flex: none;
+}
 
 /* 空状态（fnmonitor 的 .empty-s / .chart-empty-s） */
 .empty-s {
