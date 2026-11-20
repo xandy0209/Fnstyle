@@ -1,5 +1,5 @@
 appname               = fnstyle
-version               = 1.1.55
+version               = 1.1.56
 display_name          = FnStyle
 desc                  = 集中管理飞牛个性化设置与丰富主题库：网站标题、登录框、LOGO、壁纸、毛玻璃、任务栏等独立配置，内置多源主题库，支持一键应用到 fnOS 系统，卸载后自动还原系统默认样式。
 platform              = all
@@ -16,4 +16,4 @@ service_port          = 9910
 checkport             = false
 ctl_stop              = true
 changelog             = 1.1.55：能耗卡片去 LED 点阵 + 三个「本月预估电费」口径统一。① 按用户要求「数字不使用 LED 点阵，调整为与其他的数字一样的样式」——移除 v1.1.54 引入的 5×7 LED 点阵整套代码（DOT_RAW 字库 / dotSvg / dmDot / .dm-dot CSS / --dm-off 变量），大数字改回普通文本 .dnum > .dm，与温度 / 存储 / 对比板块完全同款。② 修后端 energy_stats 的单位 bug：fnmonitor 的 monthProj 写 `mk + a.w * (end - d) / 3.6e9`，其中 (end - d) 是毫秒差；本实现把剩余时长换成了秒却沿用 3.6e9 → 结果小了 1000 倍，month_proj_kwh ≈ month_kwh（实机 0.5388 vs 0.5317），于是「本月预计电费」几乎等于「本月已用电费」。现改为秒口径 3.6e6，剩余时长精确到「下月 1 日 00:00」（与 fnmonitor 的 new Date(y, m+1, 1) 一致）。③ 前端标题栏徽标改为直接取后端 month_proj_yuan，与卡内「本月预计电费」格、摘要行「本月电费预计」逐字相同；「按当前实时功耗」折算值降级为 hover 提示里的参考值。右栏「今日用电 / 本月用电」下的标签改为「已计电费」并加 title 说明，与「本月预计电费」区分。verify 新增 v1.1.55 断言 32 项（含「三处电费逐字一致」渲染级断言），前端 985 项全通过；verify_power_daily.py 49 项全通过（含 4 项单位 bug 回归断言）。
-checksum              = e46e940a447c9fe10ab89feca537e3b4
+checksum              = bbdc4e32eab367523e93be830de1b934

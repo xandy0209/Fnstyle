@@ -41,11 +41,14 @@ function mkEl(id) {
      #monTempSide / #monPowerOverview / #monPowerStats / #monPowerDaily，
      旧的 monTemp / monPower 容器已移除（内容移到抽屉） */
   'monTempOverview', 'monTempSide', 'monTempDek',
-  'monPowerOverview', 'monPowerStats', 'monPowerDaily', 'monPowerDek',
+  'monPowerOverview', 'monPowerStats', 'monPowerDaily',
   /* v1.1.49：#monTempCount 统计标签已按用户要求移除，不再是页面元素 */
-  'monPowerSource', 'btnMonRefresh', 'monAuto',
-  /* v1.1.55：标题栏「本月预估电费」徽标（验证三处电费一致） */
-  'monPowerProjCost',
+  'btnMonRefresh', 'monAuto',
+  /* ⚠️ v1.1.56：能耗板块的三个元素按用户要求删除 ——
+     #monPowerDek（标题下摘要行「此刻 X W，按电价 …」）、
+     #monPowerSource（标题栏「硬件 RAPL」来源徽标）、
+     #monPowerProjCost（标题栏「本月预估电费」徽标）。
+     电价说明改到右栏「本月预计电费」格内。 */
   /* v1.1.41：趋势图宿主容器（独立于内容区，避免每 3 秒轮询被清空） */
   'monTempCharts', 'monPowerCharts',
   'btnMonScan', 'monDrawerOverlay', 'monDrawerTitle', 'monDrawerSub', 'monDrawerBody',
@@ -2421,14 +2424,14 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
   let tempHtml = '', powerHtml = '';
   /* v1.1.43：总览卡片进新容器；抽屉内容用导出接口单独取 */
   let tempOverviewHtml = '', tempSideHtml = '';
-  let powerOverviewHtml = '', powerStatsHtml = '', powerDekHtml = '';
+  let powerOverviewHtml = '', powerStatsHtml = '';
   try {
     global.window.FnStyleMonitor.__renderForTest(TEMP_POWER_DATA);
     tempOverviewHtml = els.monTempOverview ? els.monTempOverview.innerHTML : '';
     tempSideHtml = els.monTempSide ? els.monTempSide.innerHTML : '';
     powerOverviewHtml = els.monPowerOverview ? els.monPowerOverview.innerHTML : '';
     powerStatsHtml = els.monPowerStats ? els.monPowerStats.innerHTML : '';
-    powerDekHtml = els.monPowerDek ? els.monPowerDek.innerHTML : '';
+    /* v1.1.56：能耗摘要行 #monPowerDek 已删除，不再取其内容 */
     /* 抽屉内容（v1.1.42 成果，v1.1.43 保持）*/
     tempHtml = global.window.FnStyleMonitor.tempSheetHtml
       ? global.window.FnStyleMonitor.tempSheetHtml(TEMP_POWER_DATA) : '';
@@ -2745,8 +2748,9 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       /class="[^"]*energy-live[^"]*" id="monPowerOverview"/.test(htmlTxt2)],
     ['温度摘要行 #monTempDek',
       /id="monTempDek"/.test(htmlTxt2)],
-    ['能耗摘要行 #monPowerDek',
-      /id="monPowerDek"/.test(htmlTxt2)],
+    /* ⚠️ v1.1.56：能耗摘要行 #monPowerDek 已按用户要求删除 */
+    ['能耗摘要行 #monPowerDek 已移除（v1.1.56）',
+      !/id="monPowerDek"/.test(htmlTxt2)],
     ['旧容器 #monTemp / #monPower 已移除（内容进抽屉）',
       !/id="monTemp"/.test(htmlTxt2) && !/id="monPower"/.test(htmlTxt2)],
   ];
@@ -3409,28 +3413,20 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
   const powOverviewBody = (monSrc50.match(/function renderPowerOverview\(d\) \{[\s\S]*?\n  \}/) || [''])[0];
 
   const rules50 = [
-    /* ① 标题栏本月预估电费徽标 */
-    ['index.html 新增 #monPowerProjCost 徽标（标题栏内）',
-      /<span class="theme-count" id="monPowerProjCost">/.test(htmlSrc50)],
-    ['monitor.js 计算 #monPowerProjCost（当前实际功耗折算）',
-      /var projCost = \$\('#monPowerProjCost'\)/.test(monSrc50)],
-    /* ⚠️ v1.1.55：v1.1.50 时徽标用「此刻实时功耗」单独算一套，
-       与卡内「历史平均功耗」口径不同 → 同屏三个电费互不相同
-       （老板反馈「3 个本月预估电费都不一样」）。
-       现在徽标改为直接取后端的 month_proj_yuan，
-       与卡内「本月预计电费」格、摘要行「本月电费预计」**逐字相同**；
-       当前实时功耗折算值降级为 hover 提示里的参考值。 */
-    ['徽标统一取后端 month_proj_yuan（与卡内/摘要行同源，v1.1.55）',
-      /projCost\.textContent = '本月预估电费 ' \+ fnYuan\(pstats\.month_proj_yuan\)/.test(monSrc50)],
-    ['徽标不再单独用当前功耗计算总额（避免口径分叉）',
-      /var projYuan = projKwh \* rateY;/.test(monSrc50) === false],
-    ['当前实时功耗折算值保留在 hover 提示里作参考',
-      /按当前实时功耗/.test(monSrc50)],
-    ['徽标文案标明「本月预估电费」',
-      /projCost\.textContent = '本月预估电费 /.test(monSrc50)],
-    ['徽标 title 说明已用 / 预计用电 / 电价 / 参考值',
-      /本月已用电/.test(monSrc50) &&
-      /本月预计用电/.test(monSrc50)],
+    /* ① 标题栏本月预估电费徽标
+       ⚠️ v1.1.56：老板按截图要求「上面两个红框中的内容去掉不显示」，
+          标题栏的「本月预估电费」徽标与「硬件 RAPL」来源徽标一并删除，
+          摘要行（#monPowerDek）也删除 → 下面几条断言反向校验。 */
+    ['index.html 已移除 #monPowerProjCost 徽标（v1.1.56）',
+      /<span class="theme-count" id="monPowerProjCost">/.test(htmlSrc50) === false],
+    ['index.html 已移除 #monPowerSource 徽标（v1.1.56）',
+      /id="monPowerSource"/.test(htmlSrc50) === false],
+    ['monitor.js 不再计算 #monPowerProjCost（v1.1.56）',
+      /var projCost = \$\('#monPowerProjCost'\)/.test(monSrc50) === false],
+    ['monitor.js 不再计算 #monPowerSource（v1.1.56）',
+      /var src = \$\('#monPowerSource'\)/.test(monSrc50) === false],
+    ['monitor.js 不再渲染能耗摘要行 #monPowerDek（v1.1.56）',
+      /var dek = \$\('#monPowerDek'\)/.test(monSrc50) === false],
 
     /* ② 卡片内顶部此刻功耗
        ⚠️ v1.1.54：用户两次反馈「按图（fnmonitor 截图）调整能耗卡片内的显示内容」，
@@ -3447,9 +3443,9 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       /powerBasisText\(p, has\)/.test(powOverviewBody)],
     ['v1.1.50 自加的「合计 X W」行已删除（fnmonitor 没有这行）',
       /合计 <b>/.test(powOverviewBody) === false],
-    ['摘要行改回 fnmonitor 原文口径「此刻 X W，按电价 …，本月电费预计 ¥…」',
-      /txt = '此刻 <b>/.test(powOverviewBody) &&
-      /本月电费预计 <b>/.test(powOverviewBody)],
+    ['摘要行已删除（v1.1.56：标题下「此刻 X W，按电价 …」整行去掉）',
+      /txt = '此刻 <b>/.test(powOverviewBody) === false &&
+      /本月电费预计 <b>/.test(powOverviewBody) === false],
 
     /* ③ 去掉最右侧卡片外壳（多一层卡片） */
     ['index.html #monPowerStats 不再套 .ov-card',
@@ -3814,10 +3810,11 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     ['副标题口径「约 X kWh · 剩余天数按近 N 天平均 W」',
       /fnKwh\(pstats && pstats\.month_proj_kwh\) \+ ' kWh · 剩余天数按/.test(src54)],
 
-    /* ---- ④ 摘要行（fnmonitor 的 m.r.dek）---- */
-    ['摘要行「此刻 X W，按电价 …，本月电费预计 ¥…」',
-      /txt = '此刻 <b>' \+ fnD1\(p\.total\) \+ ' W<\/b>'/.test(src54) &&
-      /本月电费预计 <b>' \+ fnYuan\(pstats\.month_proj_yuan\)/.test(src54)],
+    /* ---- ④ 摘要行（fnmonitor 的 m.r.dek）----
+       ⚠️ v1.1.56：摘要行已按用户要求删除 → 反向断言。 */
+    ['摘要行已删除（v1.1.56：标题下整行去掉）',
+      /txt = '此刻 <b>' \+ fnD1\(p\.total\) \+ ' W<\/b>'/.test(src54) === false &&
+      /本月电费预计 <b>' \+ fnYuan\(pstats\.month_proj_yuan\)/.test(src54) === false],
 
     /* ---- ⑤ 柱状图 SVG（fnmonitor 的 BarChart）---- */
     ['有 drawPowerBars（SVG 绘制）',
@@ -3871,12 +3868,12 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     ['堆叠条高度 12px（CSS 层对齐 fnmonitor）',
       /\.stack \{[^}]*height: 12px/.test(css54)],
 
-    /* ---- ⑦ 版本号 ---- */
-    ['manifest 版本 1.1.55', /version\s+= 1\.1\.55/.test(man54)],
-    ['index.cgi 版本 1.1.55', /APP_VERSION="1\.1\.55"/.test(cgi54)],
-    ['index.html 版本 1.1.55', /id="verPill"[^>]*>v1\.1\.55</.test(html54)],
-    ['app.js 版本 1.1.55',
-      /var APP_VERSION = '1\.1\.55';/.test(
+    /* ---- ⑦ 版本号（v1.1.56）---- */
+    ['manifest 版本 1.1.56', /version\s+= 1\.1\.56/.test(man54)],
+    ['index.cgi 版本 1.1.56', /APP_VERSION="1\.1\.56"/.test(cgi54)],
+    ['index.html 版本 1.1.56', /id="verPill"[^>]*>v1\.1\.56</.test(html54)],
+    ['app.js 版本 1.1.56',
+      /var APP_VERSION = '1\.1\.56';/.test(
         fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'js', 'app.js'), 'utf8'))],
   ];
 
@@ -4001,17 +3998,20 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     ['month_proj_yuan = month_proj_kwh × eff（未改）',
       /month_proj_yuan.*month_proj_kwh.*eff/.test(hist55)],
 
-    /* ---- ③ 三处电费口径统一 ---- */
-    ['标题栏徽标取后端 month_proj_yuan（与卡内/摘要行同源）',
-      /projCost\.textContent = '本月预估电费 ' \+ fnYuan\(pstats\.month_proj_yuan\)/.test(powOverview55)],
+    /* ---- ③ 电费口径统一 ----
+       ⚠️ v1.1.56：标题栏徽标与摘要行已按用户要求删除，
+          「本月预计电费」只剩卡内一格 → 断言改为「卡内取 month_proj_yuan，
+          标题栏/摘要行不再渲染」。 */
+    ['标题栏徽标不再渲染（v1.1.56 已删）',
+      /projCost\.textContent = '本月预估电费 /.test(powOverview55) === false],
     ['标题栏不再单独算 projYuan（消除口径分叉）',
       /var projYuan = projKwh \* rateY;/.test(powOverview55) === false],
-    ['当前实时功耗折算值保留在 hover 提示作参考',
-      /按当前实时功耗/.test(powOverview55)],
+    ['当前实时功耗折算值不再单独出现（v1.1.56 整段删除）',
+      /按当前实时功耗/.test(powOverview55) === false],
     ['卡内「本月预计电费」格取 month_proj_yuan',
       /fnYuan\(pstats && pstats\.month_proj_yuan\)/.test(powOverview55)],
-    ['摘要行「本月电费预计」取 month_proj_yuan',
-      /本月电费预计 <b>' \+ fnYuan\(pstats\.month_proj_yuan\)/.test(powOverview55)],
+    ['摘要行「本月电费预计」不再渲染（v1.1.56 已删）',
+      /本月电费预计 <b>' \+ fnYuan\(pstats\.month_proj_yuan\)/.test(powOverview55) === false],
     ['「已用电费」与「本月预计电费」标签区分（避免误读为同类）',
       /已计电费 /.test(powOverview55)],
     ['右栏两格加 title 说明口径（已用 vs 预计）',
@@ -4023,7 +4023,7 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     if (!ok) bad55++;
   });
 
-  /* ---- 渲染级：三处电费必须逐字相同 ---- */
+  /* ---- 渲染级：电价说明下沉到「本月预计电费」格（v1.1.56） ---- */
   try {
     const DATA55 = {
       power: {
@@ -4040,12 +4040,11 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       year_proj_kwh: 260.4, year_proj_yuan: 156.72,
       avg_w: 29.7, avg_basis: '近 2 天平均',
       rate_yuan_per_kwh: 0.6,
+      eff_rate_yuan_per_kwh: 0.6,
     });
     global.window.FnStyleMonitor.__renderForTest(DATA55);
     const ov55 = els.monPowerOverview ? els.monPowerOverview.innerHTML : '';
     const st55 = els.monPowerStats ? els.monPowerStats.innerHTML : '';
-    const dek55 = els.monPowerDek ? els.monPowerDek.innerHTML : '';
-    const badge55 = els.monPowerProjCost ? els.monPowerProjCost.textContent : '';
 
     const renderRules55 = [
       ['左栏渲染出普通文本数字（无 .dm-dot）',
@@ -4055,16 +4054,18 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
         /dm-dot/.test(st55) === false],
       ['右栏「本月预计电费」渲染为 ¥4.87',
         /本月预计电费<\/div><div class="dnum"><span class="dm">¥4\.87/.test(st55)],
-      ['摘要行「本月电费预计」为 ¥4.87',
-        /本月电费预计 <b>¥4\.87<\/b>/.test(dek55)],
-      ['标题栏徽标为「本月预估电费 ¥4.87」',
-        /本月预估电费 ¥4\.87/.test(badge55)],
-      ['三处电费逐字一致（徽标 == 摘要行 == 卡内格）',
-        /¥4\.87/.test(badge55) &&
-        /¥4\.87/.test(dek55) &&
-        /¥4\.87/.test(st55)],
+      ['「本月预计电费」格内新增电价说明（sub-rate）',
+        /class="sub sub-rate"/.test(st55) &&
+        /<span class="rate-lbl">电价<\/span>/.test(st55)],
+      ['电价说明显示「0.6 元/kWh」',
+        /0\.6 元\/kWh/.test(st55)],
       ['「本月用电」格标为「已计电费」（与预计区分）',
         /已计电费 ¥0\.32/.test(st55)],
+      ['全页不再出现「本月预估电费」徽标文案（v1.1.56 已删）',
+        /本月预估电费/.test(st55) === false &&
+        /本月预估电费/.test(ov55) === false],
+      ['不再出现「此刻 X W」摘要行文案（v1.1.56 已删）',
+        /此刻 <b>/.test(st55) === false && /此刻 <b>/.test(ov55) === false],
     ];
     renderRules55.forEach(([label, ok]) => {
       console.log((ok ? '  ✓ ' : '  ✗ ') + label);
@@ -4077,6 +4078,79 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
 
   if (bad55) {
     console.error('❌ v1.1.55 断言失败 ' + bad55 + ' 项');
+    process.exitCode = 1;
+  }
+})();
+
+/* ---------------------------------------------------------------------------
+   v1.1.56：能耗标题栏去徽标 + 去摘要行 + 「本月预计电费」格新增电价说明
+   ---------------------------------------------------------------------------
+   老板截图反馈三处：
+     ① 标题栏右上两个徽标（`硬件 RAPL` + `本月预估电费 ¥4.90`）→ 去掉不显示
+     ② 标题下的摘要行（`此刻 30.7 W，按电价 0.6 元/kWh，本月电费预计 ¥4.90。`）
+        → 去掉不显示
+     ③ 右下「本月预计电费」格里 → 新增电价的说明
+   实现：
+     · index.html 删除 #monPowerSource / #monPowerProjCost / #monPowerDek
+     · monitor.js 删除对应的三段渲染代码
+     · 「本月预计电费」格内追加 .sub.sub-rate 行：
+       「电价 0.6 元/kWh」（口径取后端 eff_rate_yuan_per_kwh = 本月实际均价，
+        与 fnmonitor 的 eff = 本月电费 / 本月用电 同源）
+   =========================================================================== */
+(function () {
+  const src56 = fs.readFileSync(SRC, 'utf8');
+  const html56 = fs.readFileSync(
+    path.join(__dirname, '..', 'app', 'ui', 'index.html'), 'utf8');
+  const css56 = fs.readFileSync(
+    path.join(__dirname, '..', 'app', 'ui', 'static', 'css', 'app.css'), 'utf8');
+  let bad56 = 0;
+
+  console.log('\n--- v1.1.56 能耗标题栏去徽标/摘要行 + 电价说明下沉 ---');
+
+  const rules56 = [
+    /* ---- ① 标题栏两个徽标已删 ---- */
+    ['index.html 已无 #monPowerSource 徽标',
+      /id="monPowerSource"/.test(html56) === false],
+    ['index.html 已无 #monPowerProjCost 徽标',
+      /id="monPowerProjCost"/.test(html56) === false],
+    ['monitor.js 已无 #monPowerSource 赋值',
+      /monPowerSource/.test(src56) === false],
+    ['monitor.js 已无 #monPowerProjCost 赋值',
+      /monPowerProjCost/.test(src56) === false],
+    /* ---- ② 摘要行已删 ---- */
+    ['index.html 已无 #monPowerDek 摘要行',
+      /id="monPowerDek"/.test(html56) === false],
+    ['monitor.js 已无 #monPowerDek 渲染代码（注释里的历史说明不算）',
+      /var dek = \$\('#monPowerDek'\)/.test(src56) === false &&
+      /dek\.innerHTML = txt;/.test(src56) === false],
+    ['monitor.js 已无「此刻 <b>… W</b>」摘要文案',
+      /此刻 <b>/.test(src56) === false],
+    /* ---- ③ 「本月预计电费」格新增电价说明 ---- */
+    ['「本月预计电费」格内新增 .sub-rate 电价行',
+      /class="sub sub-rate"/.test(src56)],
+    ['电价行带「电价」标签',
+      /<span class="rate-lbl">电价<\/span>/.test(src56)],
+    ['电价行显示「元/kWh」',
+      /元\/kWh/.test(src56)],
+    ['电价口径优先取后端 eff_rate_yuan_per_kwh（本月实际均价）',
+      /eff_rate_yuan_per_kwh/.test(src56)],
+    ['CSS 有 .stat-cell .sub-rate 样式',
+      /\.stat-cell \.sub-rate \{/.test(css56)],
+    ['CSS 有 .sub-rate .rate-lbl 标签样式',
+      /\.stat-cell \.sub-rate \.rate-lbl \{/.test(css56)],
+    /* ---- ④ 版本号 ---- */
+    ['manifest 版本 1.1.56',
+      /version\s+= 1\.1\.56/.test(
+        fs.readFileSync(path.join(__dirname, '..', 'manifest'), 'utf8'))],
+  ];
+
+  rules56.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad56++;
+  });
+
+  if (bad56) {
+    console.error('❌ v1.1.56 断言失败 ' + bad56 + ' 项');
     process.exitCode = 1;
   }
 })();

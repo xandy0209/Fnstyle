@@ -1846,11 +1846,22 @@
       });
     }
 
-    /* ---- 右栏：四格（今日 / 本月 / 本月预计 / 全年）----
+    /* ---- ⚠️ v1.1.56：右栏四格 + 「本月预计电费」格新增电价说明 ----
        ⚠️ v1.1.50：#monPowerStats 容器已去掉 .ov-card 外壳，
        .stat-cells 直接作为 .energy 网格项 → 不再有「多了一层卡片」。
        ⚠️ v1.1.55：数字改回普通文本（与其它板块的 .dnum > .dm 同款）；
-       数值口径仍是 fnmonitor 的（金额带 ¥、kWh 精度规则）。 */
+       数值口径仍是 fnmonitor 的（金额带 ¥、kWh 精度规则）。
+       ⚠️ v1.1.56：标题栏两个徽标（来源 / 本月预估电费）与摘要行
+          （#monPowerDek）已按用户要求删除 —— 电价与口径说明
+          下沉到「本月预计电费」格里，避免同一屏出现 3 处电费数字。 */
+    /* 电价文案：优先用后端算出的「本月实际均价 eff_rate_yuan_per_kwh」
+       （无数据时回落到配置的 rate_yuan_per_kwh）。
+       fnmonitor 用 eff = 本月电费 / 本月用电，没有分时电价时
+       它与基础电价相同，这里保持同一口径。 */
+    var effRate = (pstats && pstats.eff_rate_yuan_per_kwh)
+      ? Number(pstats.eff_rate_yuan_per_kwh)
+      : Number(rate);
+    var rateTxt = String(Math.round(effRate * 1000) / 1000);
     statsBox.innerHTML = '<div class="stat-cells">' +
       '<div class="stat-cell"><div class="eyebrow">今日用电</div>' +
         '<div class="dnum"><span class="dm">' + esc(fnKwh(pstats && pstats.today_kwh)) +
@@ -1871,7 +1882,10 @@
         '<div class="sub" title="本月已用 + 剩余天数按平均功耗推算">约 ' +
           fnKwh(pstats && pstats.month_proj_kwh) + ' kWh · 剩余天数按' +
           esc(pstats && pstats.avg_basis || '平均') + ' ' +
-          fnD1(pstats && pstats.avg_w) + ' W</div></div>' +
+          fnD1(pstats && pstats.avg_w) + ' W</div>' +
+        '<div class="sub sub-rate" title="电价（本月实际均价）：' + esc(rateTxt) +
+          ' 元/kWh"><span class="rate-lbl">电价</span>' + esc(rateTxt) +
+          ' 元/kWh</div></div>' +
       '<div class="stat-cell"><div class="eyebrow">全年估算<span class="pill est-pill">估算</span></div>' +
         '<div class="dnum"><span class="dm">' + esc(fnYuan(pstats && pstats.year_proj_yuan)) + '</span></div>' +
         '<div class="sub" title="平均功耗 × 8760 小时">约 ' +
@@ -1879,71 +1893,6 @@
           esc(pstats && pstats.avg_basis || '平均') + ' ' +
           fnD1(pstats && pstats.avg_w) + ' W × 8760 小时</div></div>' +
     '</div>';
-
-    /* ---- 摘要行（对齐 fnmonitor 的 m.r.dek）----
-       fnmonitor 原文：「此刻 <b>29.2 W</b>，按电价 0.6 元/kWh，
-       本月电费预计 <b>¥6.37</b>。3 块硬盘休眠中。」 */
-    var dek = $('#monPowerDek');
-    if (dek) {
-      var txt = '';
-      if (!has) {
-        txt = '功耗不可用。';
-      } else {
-        txt = '此刻 <b>' + fnD1(p.total) + ' W</b>';
-        if (pstats) {
-          txt += '，按电价 ' + esc(Number(rate).toFixed(3).replace(/\.?0+$/, '')) +
-            ' 元/kWh';
-        }
-        if (pstats && pstats.month_proj_yuan !== null &&
-            pstats.month_proj_yuan !== undefined) {
-          txt += '，本月电费预计 <b>' + fnYuan(pstats.month_proj_yuan) + '</b>';
-        }
-        txt += '。';
-        /* 休眠硬盘提示（fnmonitor 会追加「N 块硬盘休眠中」）*/
-        var sleeping = (d.storage && d.storage.disks || []).filter(function (x) {
-          return x && (x.standby || x.state === 'standby');
-        }).length;
-        if (sleeping) txt += sleeping + ' 块硬盘休眠中。';
-      }
-      dek.innerHTML = txt;
-    }
-
-    var src = $('#monPowerSource');
-    if (src) {
-      src.textContent = has ? (SRC_TXT[p.source] || '来源未知') : '不可用';
-    }
-
-    /* ---- ⚠️ v1.1.50：标题栏「本月预估电费」徽标 ----
-       口径（用户要求：「根据当前的实际功耗折算本月的预估电费」）：
-         本月预估电费 =（本月已用电量 kWh + 当前实时功耗 W ÷ 1000 × 本月剩余小时数）× 电价
-       ⚠️ v1.1.55：与卡内「本月预计电费」统一为**同一个数**。
-          此前这里用「此刻实时功耗」推算，卡内用「历史平均功耗」推算，
-          两者算法不同 → 同屏三个电费互不相同（老板反馈「3 个都不一样」）。
-          现在两处统一取后端的 month_proj_yuan（后端已修好单位 bug），
-          保证：标题栏徽标 = 摘要行「本月电费预计」= 右栏「本月预计电费」，
-          三处**逐字相同**。当前实时功耗折算值放到 hover 提示里作参考。 */
-    var projCost = $('#monPowerProjCost');
-    if (projCost) {
-      if (!has || !pstats || pstats.month_proj_yuan === null ||
-          pstats.month_proj_yuan === undefined) {
-        projCost.textContent = '本月预估电费 —';
-      } else {
-        var rateY = (pstats.rate_yuan_per_kwh) ? Number(pstats.rate_yuan_per_kwh) : 0.6;
-        var now = new Date();
-        var dim = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-        var remainH = Math.max(0, dim - now.getDate()) * 24 + (24 - now.getHours());
-        var monthKwh = Number(pstats.month_kwh) || 0;
-        var nowW = Number(p.total) || 0;
-        /* 当前实时功耗折算的参考值（仅用于 hover 说明，不作为显示值）*/
-        var curProjYuan = (monthKwh + nowW / 1000 * remainH) * rateY;
-        projCost.textContent = '本月预估电费 ' + fnYuan(pstats.month_proj_yuan);
-        projCost.title = '本月已用电 ' + fnKwh(monthKwh) + ' kWh\n' +
-          '本月预计用电 ' + fnKwh(pstats.month_proj_kwh) + ' kWh（按' +
-          esc(pstats.avg_basis || '平均') + ' ' + fnD1(pstats.avg_w) + ' W 推算剩余用电）\n' +
-          '电价 ' + rateY + ' 元/kWh → ' + fnYuan(pstats.month_proj_yuan) + '\n' +
-          '（按当前实时功耗 ' + fnD1(nowW) + ' W 折算为 ' + fnYuan(curProjYuan) + '）';
-      }
-    }
   }
 
   /* 每日用电柱状图（1:1 对齐 fnmonitor 的 BarChart —— SVG 实现）

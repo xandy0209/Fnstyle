@@ -4558,6 +4558,26 @@ html.mon-scroll-lock body {
   margin-top: 6px;
   font-size: .75rem;
 }
+/* ⚠️ v1.1.56：能耗「本月预计电费」格新增的电价说明行。
+   与上一行「约 X kWh · 剩余天数按…」同属 .sub，但用一枚淡色标签
+   单独成行，让「电价」这一口径一眼可辨（原来只在标题栏摘要行里出现，
+   摘要行按用户要求已删除，电价下沉到这里）。 */
+.stat-cell .sub-rate {
+  margin-top: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.stat-cell .sub-rate .rate-lbl {
+  color: var(--text-primary);
+  font-weight: 600;
+}
 
 /* 大数字（fnmonitor 的 .dnum + .dm 体系）
    ⚠️ fnmonitor 的字号不是写死的 font-size，而是由 --dm-h 变量驱动：
