@@ -4579,6 +4579,288 @@ html.mon-scroll-lock body {
   font-weight: 600;
 }
 
+/* ⚠️ v1.1.57：阶梯电价下的谷/平构成（能耗卡片右栏）
+   单行不换行（用户明确要求标签/标题单行显示）。 */
+.stat-cell .sub-split {
+  margin-top: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  font-size: .69rem;
+}
+.stat-cell .sub-split .rate-tag {
+  font-weight: 600;
+  font-size: 10px;
+  line-height: 1.5;
+  padding: 0 4px;
+  border-radius: 3px;
+  color: #fff;
+}
+.stat-cell .sub-split .rate-tag-v {
+  background: #378ADD;
+}
+.stat-cell .sub-split .rate-tag-f {
+  background: #BA7517;
+}
+
+/* ⚠️ v1.1.57：电价设置面板（能耗详情抽屉） */
+.tariff-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 10px);
+  background: var(--bg-card, var(--bg-hover));
+}
+.tariff-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-primary);
+  user-select: none;
+}
+.tariff-switch input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent, #378ADD);
+  cursor: pointer;
+  margin: 0;
+}
+.tariff-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.tariff-lbl {
+  font-size: 12px;
+  color: var(--text-secondary);
+  min-width: 58px;
+  white-space: nowrap;
+}
+.tariff-select,
+.tariff-input {
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-input, var(--bg-card, #fff));
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: inherit;
+}
+.tariff-select:focus,
+.tariff-input:focus {
+  outline: none;
+  border-color: var(--accent, #378ADD);
+}
+.tariff-h {
+  width: 84px;
+}
+.tariff-sep {
+  font-size: 12px;
+  color: var(--text-tertiary, var(--text-secondary));
+}
+.tariff-input {
+  width: 140px;
+}
+.tariff-unit {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.tariff-table {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 12px;
+}
+.tariff-tb-row {
+  display: grid;
+  grid-template-columns: 52px 1fr 62px 62px 62px;
+  gap: 4px;
+  padding: 5px 10px;
+  align-items: center;
+  white-space: nowrap;
+}
+.tariff-tb-row + .tariff-tb-row {
+  border-top: 1px solid var(--border);
+}
+.tariff-tb-head {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  font-size: .69rem;
+}
+.tariff-note {
+  font-size: .69rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+.tariff-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.tariff-save {
+  height: 28px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--accent, #378ADD);
+  color: #fff;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.tariff-save:disabled {
+  opacity: .55;
+  cursor: default;
+}
+.tariff-msg {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+/* 不执行分时的地区：价目表少两列（用 .tariff-tb-tou 显式切换，
+   不用 :has() —— 兼容性白名单里不保证支持） */
+.tariff-table .tariff-tb-row {
+  grid-template-columns: 52px 1fr 62px;
+}
+.tariff-table.tariff-tb-tou .tariff-tb-row {
+  grid-template-columns: 52px 1fr 62px 62px;
+}
+.tariff-tb-note {
+  padding: 6px 10px;
+  border-top: 1px solid var(--border);
+  font-size: .69rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+/* ── 季节参数（v1.1.57）─────────────────────────────────────
+   成都电价分两个季节维度：
+     · 丰水期 / 枯平期 → 低谷价不同
+     · 夏季 / 非夏季   → 阶梯档位电量不同
+   默认值已按官方口径内置，这里让用户可覆盖（地方电网口径差异、
+   或政策调整后档位变化时不用等发版）。 */
+.tariff-season {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.tariff-season-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--bg-hover);
+  font-size: .69rem;
+  color: var(--text-secondary);
+}
+.tariff-season-body {
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tariff-season-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.tariff-season-lbl {
+  font-size: 12px;
+  color: var(--text-secondary);
+  min-width: 68px;
+  white-space: nowrap;
+}
+.tariff-months {
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+.tariff-month {
+  width: 26px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-input, var(--bg-card, #fff));
+  color: var(--text-tertiary, var(--text-secondary));
+  font-size: .69rem;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+.tariff-month.on {
+  background: var(--accent, #378ADD);
+  border-color: var(--accent, #378ADD);
+  color: #fff;
+}
+.tariff-season-prices {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+/* ⚠️ v1.1.57 修复：谷价输入框竖着排成一列（每个占满整行）。
+   原因：input[type=number] 有 width:100%，而 flex 容器里
+   「input + 标签」共 6 个元素放不下一行 → flex-wrap 换行，
+   每个 input 独占一行并被拉伸到容器宽度。
+   修法：flex-basis 固定 + flex-shrink 0，让 3 个 input 与标签
+   稳定地排成 1 行（不够宽时才换行，而不是被拉成竖列）。 */
+.tariff-season-prices .tariff-season-price,
+.tariff-season-tier .tariff-season-price {
+  flex: 0 0 86px;
+  width: 86px;
+  min-width: 86px;
+}
+/* 档位标签（如「一档」「第2档」）——放在输入框**前**，读作「一档 0.175」 */
+.tariff-season-tag {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.tariff-season-price {
+  width: 78px;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-input, var(--bg-card, #fff));
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: inherit;
+}
+.tariff-season-price:focus {
+  outline: none;
+  border-color: var(--accent, #378ADD);
+}
+.tariff-season-tier {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.tariff-season-tier input {
+  flex: 0 0 64px;
+  width: 64px;
+  min-width: 64px;
+}
+.tariff-season-cur {
+  font-size: .69rem;
+  color: var(--text-secondary);
+  padding: 0 10px 8px;
+  line-height: 1.6;
+}
+
 /* 大数字（fnmonitor 的 .dnum + .dm 体系）
    ⚠️ fnmonitor 的字号不是写死的 font-size，而是由 --dm-h 变量驱动：
         .dnum { --dm-h: 40px; ... }

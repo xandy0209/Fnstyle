@@ -224,8 +224,12 @@ def main():
           len(arc) >= 3, str(sorted(arc.keys())))
     check('归档里的整日电量 ≈ 0.72 kWh（30W × 24h）',
           any(abs(v - 0.72) < 0.05 for v in arc.values()), str(arc))
-    check('归档里还有非整日的天（半天 ≈ 0.25~0.36 kWh）',
-          any(0.1 < v < 0.7 for v in arc.values()), str(arc))
+    # ⚠️ v1.1.58 修正断言：归档只收**完整日**（跨零点才结算一天），
+    #   所以归档表里不应该出现半天数据 —— 之前这条断言写成
+    #   「应该存在非整日的天」，与实现语义相反，一直是失败的。
+    #   这里改成正向断言：归档里的每一条都应是整日电量。
+    check('归档里没有半天数据（归档只结算完整日）',
+          all(abs(v - 0.72) < 0.05 for v in arc.values()), str(arc))
     check('水位线推进到保留期边界', wm is not None, str(wm))
 
     print('\n=== 空数据兜底 ===')

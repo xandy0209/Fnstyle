@@ -435,6 +435,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_power_stats()
         if p == "/api/power/daily":
             return self._handle_power_daily()
+        if p == "/api/power/tariff":
+            if self.command == "POST":
+                return self._handle_tariff_save()
+            return self._handle_tariff_get()
         if p == "/api/storage/scan":
             return self._handle_storage_scan()
         if p == "/api/storage/history":
@@ -621,6 +625,10 @@ class Handler(BaseHTTPRequestHandler):
 
         以历史库里的 power 指标（整机瓦数）梯形积分成 kWh，
         口径与 fnmonitor 的能耗统计一致。
+
+        ⚠️ v1.1.57：电费不再只有一个标量单价。
+           启用了阶梯+分时电价（power_tariff）后，本月电费按
+           「谷段/平段拆分 + 阶梯判定」计算，与国网账单口径一致。
         """
         try:
             import history_collect
@@ -630,12 +638,25 @@ class Handler(BaseHTTPRequestHandler):
         snap = _MONITOR.snapshot() if _MONITOR is not None else None
         uptime = (snap or {}).get("uptimeSeconds")
 
+        # ⚠️ v1.1.57 修正：这里的 rate 参数**取不到**真实电价。
+        #   monitor_collect 的 estimation_params 只有
+        #   tdp_w / disk_typical_w / nic_fixed_w / base_w 四个字段，
+        #   **不含电价** → params.get("rate_yuan_per_kwh") 恒为 None
+        #   → 整段逻辑恒回落硬编码 0.6（v1.1.56 及之前都是死代码）。
+        #   现在电价统一由 power_tariff 模块负责：
+        #     · 未启用阶梯 → 仍用 0.6（向后兼容，显示不变）
+        #     · 启用了阶梯 → 按谷/平 + 阶梯算，energy_stats 内部覆盖
+        try:
+            import power_tariff as pt
+            tcfg = pt.load_config()
+        except Exception:
+            tcfg = None
         rate = 0.6
-        if snap:
-            power = snap.get("power") or {}
-            params = power.get("estimation_params") or {}
-            # 电价暂用固定默认值（与 fnmonitor 的 power_rate_yuan 默认一致）
-            rate = float(params.get("rate_yuan_per_kwh") or 0.6)
+        if tcfg and tcfg.get("enabled") and tcfg.get("rate_override"):
+            try:
+                rate = float(tcfg["rate_override"])
+            except Exception:
+                rate = 0.6
 
         if history_collect is None:
             self._send_json(200, {
@@ -652,6 +673,56 @@ class Handler(BaseHTTPRequestHandler):
 
         stats["success"] = True
         self._send_json(200, stats)
+        return True
+
+    def _handle_tariff_get(self):
+        """读取电价配置与内置地区表：GET /api/power/tariff"""
+        try:
+            import power_tariff as pt
+        except Exception as e:
+            self._send_json(500, {"success": False, "error": str(e)})
+            return True
+        try:
+            data = pt.describe()
+            data["success"] = True
+            self._send_json(200, data)
+        except Exception as e:
+            self._send_json(500, {"success": False, "error": str(e)})
+        return True
+
+    def _handle_tariff_save(self):
+        """保存电价配置：POST /api/power/tariff
+
+        body = {"region": "sichuan", "enabled": true,
+                "valley_start": 23, "valley_end": 7, "rate_override": null}
+        """
+        try:
+            import power_tariff as pt
+        except Exception as e:
+            self._send_json(500, {"success": False, "error": str(e)})
+            return True
+
+        body = self._read_json_body()
+        if not isinstance(body, dict):
+            self._send_json(400, {"success": False, "error": "请求体格式错误"})
+            return True
+
+        # enabled 允许 "true"/1/"1" 等写法
+        if "enabled" in body:
+            v = body["enabled"]
+            if isinstance(v, str):
+                body["enabled"] = v.strip().lower() in ("1", "true", "yes", "on")
+            else:
+                body["enabled"] = bool(v)
+
+        ok, msg = pt.save_config(body)
+        if not ok:
+            self._send_json(400, {"success": False, "error": msg})
+            return True
+        data = pt.describe()
+        data["success"] = True
+        data["message"] = msg
+        self._send_json(200, data)
         return True
 
     def _handle_power_daily(self):
@@ -688,8 +759,22 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             days = 30
 
+        # ⚠️ v1.1.57：开启阶梯电价后，各天的 cost 用「本月实际综合均价」
+        #   折算，与本月总账口径自洽（阶梯本身是按月清算的，不逐日套用）。
+        eff_rate = None
         try:
-            result = history_collect.daily_energy(0.6, days)
+            import power_tariff as pt
+            tcfg = pt.load_config()
+            if tcfg.get("enabled"):
+                st = history_collect.energy_stats(0.6, None)
+                er = st.get("eff_rate_yuan_per_kwh")
+                if er:
+                    eff_rate = float(er)
+        except Exception:
+            eff_rate = None
+
+        try:
+            result = history_collect.daily_energy(0.6, days, eff_rate=eff_rate)
         except Exception as e:
             self._send_json(500, {"success": False, "error": str(e), "days": []})
             return True
@@ -773,6 +858,17 @@ class Handler(BaseHTTPRequestHandler):
             buf.write(chunk)
             remaining -= len(chunk)
         return buf.getvalue()
+
+    def _read_json_body(self):
+        """读请求体并解析成 JSON 对象；解析失败返回 None。"""
+        raw = self._read_body()
+        if not raw:
+            return None
+        try:
+            obj = json.loads(raw.decode("utf-8", "replace"))
+        except Exception:
+            return None
+        return obj
 
     # ---------------- 静态文件 ----------------
     def _serve_static(self):

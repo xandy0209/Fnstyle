@@ -3868,12 +3868,12 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     ['堆叠条高度 12px（CSS 层对齐 fnmonitor）',
       /\.stack \{[^}]*height: 12px/.test(css54)],
 
-    /* ---- ⑦ 版本号（v1.1.56）---- */
-    ['manifest 版本 1.1.56', /version\s+= 1\.1\.56/.test(man54)],
-    ['index.cgi 版本 1.1.56', /APP_VERSION="1\.1\.56"/.test(cgi54)],
-    ['index.html 版本 1.1.56', /id="verPill"[^>]*>v1\.1\.56</.test(html54)],
-    ['app.js 版本 1.1.56',
-      /var APP_VERSION = '1\.1\.56';/.test(
+    /* ---- ⑦ 版本号（随当前版本递增；v1.1.58 起为 1.1.58）---- */
+    ['manifest 版本 1.1.58', /version\s+= 1\.1\.58/.test(man54)],
+    ['index.cgi 版本 1.1.58', /APP_VERSION="1\.1\.58"/.test(cgi54)],
+    ['index.html 版本 1.1.58', /id="verPill"[^>]*>v1\.1\.58</.test(html54)],
+    ['app.js 版本 1.1.58',
+      /var APP_VERSION = '1\.1\.58';/.test(
         fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'js', 'app.js'), 'utf8'))],
   ];
 
@@ -4138,9 +4138,9 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       /\.stat-cell \.sub-rate \{/.test(css56)],
     ['CSS 有 .sub-rate .rate-lbl 标签样式',
       /\.stat-cell \.sub-rate \.rate-lbl \{/.test(css56)],
-    /* ---- ④ 版本号 ---- */
-    ['manifest 版本 1.1.56',
-      /version\s+= 1\.1\.56/.test(
+    /* ---- ④ 版本号（v1.1.58 起）---- */
+    ['manifest 版本 1.1.58',
+      /version\s+= 1\.1\.58/.test(
         fs.readFileSync(path.join(__dirname, '..', 'manifest'), 'utf8'))],
   ];
 
@@ -4151,6 +4151,242 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
 
   if (bad56) {
     console.error('❌ v1.1.56 断言失败 ' + bad56 + ' 项');
+    process.exitCode = 1;
+  }
+})();
+
+/* ===========================================================================
+   v1.1.57：阶梯电价 + 分时电价
+   =========================================================================== */
+(function () {
+  const UI = path.join(__dirname, '..', 'app', 'ui');
+  const src = fs.readFileSync(path.join(UI, 'static', 'js', 'monitor.js'), 'utf8');
+  const comp = fs.readFileSync(path.join(UI, 'static', 'js', 'compute.js'), 'utf8');
+  const css = fs.readFileSync(path.join(UI, 'static', 'css', 'app.css'), 'utf8');
+  const srv = fs.readFileSync(path.join(UI, 'fnstyle_server.py'), 'utf8');
+  const hist = fs.readFileSync(path.join(UI, 'history_collect.py'), 'utf8');
+  const tar = fs.readFileSync(path.join(UI, 'power_tariff.py'), 'utf8');
+  const man = fs.readFileSync(path.join(__dirname, '..', 'manifest'), 'utf8');
+  let bad = 0;
+
+  console.log('\n--- v1.1.57 阶梯电价 + 分时电价 ---');
+
+  const rules = [
+    /* ---- ① 后端模块 ---- */
+    ['存在 power_tariff.py 模块', tar.length > 0],
+    ['内置四川电价表（0.5224/0.6224/0.8224）',
+      /0\.5224/.test(tar) && /0\.6224/.test(tar) && /0\.8224/.test(tar)],
+    ['内置四川低谷价（丰水 0.175 / 枯平 0.2535）',
+      /0\.1750/.test(tar) && /0\.2535/.test(tar)],
+    ['四川夏季阶梯 260/460、非夏季 180/280',
+      /tiers_summer"\s*:\s*\[260\.0, 460\.0, None\]/.test(tar) &&
+      /tiers_other"\s*:\s*\[180\.0, 280\.0, None\]/.test(tar)],
+    ['四川标记 has_time_of_use=True', /"has_time_of_use": True/.test(tar)],
+    ['天津标记 has_time_of_use=False（居民不执行分时）',
+      /"has_time_of_use": False/.test(tar)],
+    ['阶梯加价按平段电量计算（谷段不推高档）',
+      /阶梯加价按平段电量计算/.test(tar)],
+    ['低谷电量计入阶梯总电量',
+      /低谷电量计入阶梯总电量/.test(tar)],
+    ['阶梯结转规则起始 2027-01', /"2027-01"/.test(tar)],
+    ['丰水期月份 6-10', /"wet_months": \[6, 7, 8, 9, 10\]/.test(tar)],
+    /* ---- ② 后端接线 ---- */
+    ['history_collect 引入 power_tariff',
+      /import power_tariff as pt/.test(hist)],
+    ['history_collect 有谷/平拆分函数',
+      /def split_energy_by_period/.test(hist)],
+    ['history_collect 按小时分桶拆分（kwh@HH）',
+      /kwh@%/.test(hist)],
+    ['energy_stats 返回 tariff_mode',
+      /"tariff_mode"/.test(hist)],
+    ['energy_stats 返回谷/平电量',
+      /"valley_kwh"/.test(hist) && /"flat_kwh"/.test(hist)],
+    ['energy_stats 返回阶梯明细',
+      /"tariff_detail"/.test(hist) && /"tier_kwh"/.test(hist)],
+    ['后端有 /api/power/tariff 路由',
+      /\/api\/power\/tariff/.test(srv)],
+    ['后端 tariff GET/POST 处理器',
+      /_handle_tariff_get/.test(srv) && /_handle_tariff_save/.test(srv)],
+    ['修掉 rate_yuan_per_kwh 死代码（不再从 estimation_params 取）',
+      /params\.get\("rate_yuan_per_kwh"\)/.test(srv) === false ||
+      /rate = float\(params\.get/.test(srv) === false],
+    ['daily_energy 支持 eff_rate 参数',
+      /def daily_energy\([^)]*eff_rate/.test(hist)],
+    /* ---- ③ 前端 ---- */
+    ['前端有电价设置面板',
+      /data-tariff-box/.test(src)],
+    ['前端有电价配置加载函数 loadTariff',
+      /function loadTariff/.test(src)],
+    ['loadTariff 已导出',
+      /loadTariff: loadTariff/.test(src)],
+    ['compute.js 调用 loadTariff',
+      /loadTariff/.test(comp)],
+    ['前端有启用开关',
+      /data-tariff-enabled/.test(src)],
+    ['前端有地区选择',
+      /data-tariff-region/.test(src)],
+    ['前端有谷时段选择',
+      /data-tariff-vstart/.test(src) && /data-tariff-vend/.test(src)],
+    ['前端有价目表渲染',
+      /function tariffTableHtml/.test(src)],
+    ['阶梯模式下卡片显示谷/平构成',
+      /sub-split/.test(src) && /rate-tag-v/.test(src) && /rate-tag-f/.test(src)],
+    ['阶梯模式下抽屉显示谷段/平段明细',
+      /谷段/.test(src) && /平段/.test(src)],
+    ['抽屉用电区在阶梯模式显示地区名',
+      /tariff_region_name/.test(src)],
+    /* ---- ③-b ⚠️ 回归防护：电价面板不能覆盖抽屉内容 ----
+       v1.1.57 初版 bug：loadTariff(body) 里直接 box.innerHTML = ...，
+       而 body 是**整个抽屉**，导致实时功耗 / 堆叠条 / 趋势图 /
+       部件明细 / 用电与电费 / 估算参数 全被冲掉（用户反馈「抽屉内容没了」）。 */
+    ['loadTariff 先定位 [data-tariff-box] 再更新',
+      /querySelector\('\[data-tariff-box\]'\)/.test(src)],
+    ['loadTariff 不再直接对 scope 写 innerHTML',
+      /function loadTariff\(scope\)[\s\S]{0,400}scope\.innerHTML/.test(src) === false],
+    ['applyTariff 只写面板容器',
+      /function applyTariff\(tbox, d\) \{[\s\S]{0,900}tbox\.innerHTML = tariffPanelHtml\(d\)/.test(src)],
+    ['抽屉原有内容仍在（实时功耗 hero）',
+      /mon-hero/.test(src)],
+    ['抽屉原有内容仍在（部件明细）',
+      /部件明细/.test(src)],
+    ['抽屉原有内容仍在（估算参数）',
+      /估算参数/.test(src)],
+    ['抽屉原有内容仍在（用电与电费区）',
+      /data-pwr-energy/.test(src)],
+    /* ---- ④ CSS ---- */
+    ['CSS 有 .sub-split 样式', /\.stat-cell \.sub-split \{/.test(css)],
+    ['CSS 有谷/平标签配色',
+      /\.rate-tag-v \{/.test(css) && /\.rate-tag-f \{/.test(css)],
+    ['CSS 有电价面板样式',
+      /\.tariff-box \{/.test(css) && /\.tariff-table \{/.test(css)],
+    ['CSS 有价目表行样式', /\.tariff-tb-row \{/.test(css)],
+    ['CSS 有价目表季节说明样式', /\.tariff-tb-note \{/.test(css)],
+    /* ---- ⑤ 价目表档位必须用当前生效的那套（不能混用夏季/非夏季）---- */
+    ['前端价目表用 active_tiers（当前生效档位）',
+      /active\.active_tiers/.test(src)],
+    ['前端价目表用 active_valley_rates（当前生效低谷价）',
+      /active\.active_valley_rates/.test(src)],
+    ['前端不再混用 tiers_summer[0] 与 tiers_other',
+      /i === 0 \? '0–' \+ ts\[0\]/.test(src) === false],
+    ['后端 describe 返回当前生效档位',
+      /"active_tiers"/.test(tar)],
+    ['后端 describe 返回季节状态',
+      /"is_summer_tier"/.test(tar) && /"is_wet_season"/.test(tar)],
+    /* ---- ⑤ 版本号 ---- */
+    ['manifest 版本 1.1.58', /version\s+= 1\.1\.58/.test(man)],
+    ['index.cgi 版本 1.1.58',
+      /APP_VERSION="1\.1\.58"/.test(
+        fs.readFileSync(path.join(UI, 'index.cgi'), 'utf8'))],
+    ['app.js 版本 1.1.58',
+      /var APP_VERSION = '1\.1\.58'/.test(
+        fs.readFileSync(path.join(UI, 'static', 'js', 'app.js'), 'utf8'))],
+  ];
+
+  rules.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* ---- 渲染级：阶梯模式下卡片显示谷/平构成 ---- */
+  try {
+    const DATA57 = {
+      power: {
+        ok: true, total: 30.2, source: 'rapl',
+        cpu_pkg: 2.9, mem: 0.8, disks: 18.5, base: 8.0,
+      },
+      storage: { disks: [] },
+    };
+    /* 造一组阶梯模式的 stats */
+    global.window.FnStyleMonitor.__setPowerStatsForTest({
+      today_kwh: 0.6419, today_yuan: 0.39,
+      month_kwh: 0.8935, month_yuan: 0.40,
+      month_proj_kwh: 8.1005, month_proj_yuan: 3.66,
+      year_proj_kwh: 260.5, year_proj_yuan: 116.7,
+      avg_w: 29.7, avg_basis: '近 2 天平均',
+      rate_yuan_per_kwh: 0.6,
+      eff_rate_yuan_per_kwh: 0.4477,
+      tariff_mode: 'tiered',
+      tariff_region: 'sichuan',
+      tariff_region_name: '四川省居民（成都）',
+      valley_kwh: 0.2361, flat_kwh: 0.6574,
+      valley_yuan: 0.0598, flat_yuan: 0.3434,
+      tier_kwh: [0.8935, 0, 0],
+      tier_rates: [0.5224, 0.6224, 0.8224],
+      valley_label: '23:00–07:00',
+      tariff_detail: [
+        { tier: 1, kwh: 0.8935, flat_kwh: 0.6574, valley_kwh: 0.2361,
+          peak_rate: 0.5224, valley_rate: 0.2535, yuan: 0.4033 },
+        { tier: 2, kwh: 0, flat_kwh: 0, valley_kwh: 0,
+          peak_rate: 0.6224, valley_rate: 0.3535, yuan: 0 },
+        { tier: 3, kwh: 0, flat_kwh: 0, valley_kwh: 0,
+          peak_rate: 0.8224, valley_rate: 0.5535, yuan: 0 },
+      ],
+    });
+    global.window.FnStyleMonitor.__renderForTest(DATA57);
+    const st57 = els.monPowerStats ? els.monPowerStats.innerHTML : '';
+
+    const renderRules57 = [
+      ['阶梯模式渲染出 .sub-split 谷/平行',
+        /class="sub sub-split"/.test(st57)],
+      ['谷/平行带「谷」「平」标签',
+        /rate-tag-v">谷</.test(st57) && /rate-tag-f">平</.test(st57)],
+      ['谷/平行显示谷段电量（fnKwh 两位小数）',
+        /0\.24 kWh/.test(st57)],
+      ['谷/平行显示平段电量（fnKwh 两位小数）',
+        /0\.66 kWh/.test(st57)],
+      ['阶梯模式均价标签改为「均价」',
+        /<span class="rate-lbl">均价<\/span>/.test(st57)],
+      ['阶梯模式显示综合单价 0.448 元/kWh',
+        /0\.448 元\/kWh/.test(st57)],
+      ['阶梯模式不再显示笼统的「电价 0.6」',
+        /<span class="rate-lbl">电价<\/span>0\.6/.test(st57) === false],
+      ['本月已计电费为阶梯算出的 ¥0.40',
+        /已计电费 ¥0\.40/.test(st57)],
+    ];
+    renderRules57.forEach(([label, ok]) => {
+      console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+      if (!ok) bad++;
+    });
+  } catch (e) {
+    console.log('  ✗ 渲染级断言异常：' + e.message);
+    bad++;
+  }
+
+  /* ---- 渲染级：未启用阶梯时保持原样（向后兼容） ---- */
+  try {
+    global.window.FnStyleMonitor.__setPowerStatsForTest({
+      today_kwh: 0.2801, today_yuan: 0.17,
+      month_kwh: 0.5317, month_yuan: 0.32,
+      month_proj_kwh: 8.0933, month_proj_yuan: 4.87,
+      year_proj_kwh: 260.4, year_proj_yuan: 156.72,
+      avg_w: 29.7, avg_basis: '近 2 天平均',
+      rate_yuan_per_kwh: 0.6,
+      eff_rate_yuan_per_kwh: 0.6,
+    });
+    global.window.FnStyleMonitor.__renderForTest({
+      power: { ok: true, total: 30.2, source: 'rapl' },
+      storage: { disks: [] },
+    });
+    const st57b = els.monPowerStats ? els.monPowerStats.innerHTML : '';
+    const renderRules57b = [
+      ['未启用时仍显示「电价 0.6 元/kWh」',
+        /<span class="rate-lbl">电价<\/span>0\.6 元\/kWh/.test(st57b)],
+      ['未启用时不渲染 .sub-split',
+        /class="sub sub-split"/.test(st57b) === false],
+      ['未启用时不渲染谷/平标签',
+        /rate-tag-v/.test(st57b) === false],
+    ];
+    renderRules57b.forEach(([label, ok]) => {
+      console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+      if (!ok) bad++;
+    });
+  } catch (e) {
+    console.log('  ✗ 向后兼容渲染断言异常：' + e.message);
+    bad++;
+  }
+
+  if (bad) {
+    console.error('❌ v1.1.57 断言失败 ' + bad + ' 项');
     process.exitCode = 1;
   }
 })();

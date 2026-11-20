@@ -1,5 +1,5 @@
 appname               = fnstyle
-version               = 1.1.56
+version           = 1.1.58
 display_name          = FnStyle
 desc                  = 集中管理飞牛个性化设置与丰富主题库：网站标题、登录框、LOGO、壁纸、毛玻璃、任务栏等独立配置，内置多源主题库，支持一键应用到 fnOS 系统，卸载后自动还原系统默认样式。
 platform              = all
@@ -15,5 +15,5 @@ desktop_applaunchname = fnstyle.main
 service_port          = 9910
 checkport             = false
 ctl_stop              = true
-changelog             = 1.1.55：能耗卡片去 LED 点阵 + 三个「本月预估电费」口径统一。① 按用户要求「数字不使用 LED 点阵，调整为与其他的数字一样的样式」——移除 v1.1.54 引入的 5×7 LED 点阵整套代码（DOT_RAW 字库 / dotSvg / dmDot / .dm-dot CSS / --dm-off 变量），大数字改回普通文本 .dnum > .dm，与温度 / 存储 / 对比板块完全同款。② 修后端 energy_stats 的单位 bug：fnmonitor 的 monthProj 写 `mk + a.w * (end - d) / 3.6e9`，其中 (end - d) 是毫秒差；本实现把剩余时长换成了秒却沿用 3.6e9 → 结果小了 1000 倍，month_proj_kwh ≈ month_kwh（实机 0.5388 vs 0.5317），于是「本月预计电费」几乎等于「本月已用电费」。现改为秒口径 3.6e6，剩余时长精确到「下月 1 日 00:00」（与 fnmonitor 的 new Date(y, m+1, 1) 一致）。③ 前端标题栏徽标改为直接取后端 month_proj_yuan，与卡内「本月预计电费」格、摘要行「本月电费预计」逐字相同；「按当前实时功耗」折算值降级为 hover 提示里的参考值。右栏「今日用电 / 本月用电」下的标签改为「已计电费」并加 title 说明，与「本月预计电费」区分。verify 新增 v1.1.55 断言 32 项（含「三处电费逐字一致」渲染级断言），前端 985 项全通过；verify_power_daily.py 49 项全通过（含 4 项单位 bug 回归断言）。
-checksum              = bbdc4e32eab367523e93be830de1b934
+changelog             = 1.1.58：修复电价设置面板的两个用户反馈问题。① 「选择固定单价时自定义单价输入后会被清空」—— 三重根因：能耗抽屉每 3 秒 live 重建一次会重置 body.innerHTML（连同用户正在输入的输入框一起冲掉）、loadTariff 每轮都重绘面板（内容被覆盖）、重绘后光标位置丢失。现改为三处同时修：compute.js updateLive 把旧 [data-tariff-box] 节点原样搬回（参照图表节点做法）、monitor.js loadTariff 检测面板已渲染则跳过重绘（只后台刷新缓存，保住用户编辑与焦点）、applyTariff 重绘前捕获表单状态、重绘后回填（兜底，覆盖切地区/主动保存等确需重绘的场景）。② 「都固定单价了为什么还有档位信息」—— 固定单价地区 tiers 全为 None，前端仍渲染出「第1档 0–null」三行表。现给 profile 增加 has_tiers 标记，flat 地区为 False，前端据此整块隐藏价目表，只留「按单一固定单价计费」说明。另：切地区时自定义单价按新地区清空（不把旧地区的值带过去算错电费）。verify 新增 verify_tariff_flat.py 22 项 + verify_tariff_input_keep.js 20 项，全量回归全绿。
+checksum              = 25feda4e90776c4038adc83460444a7d

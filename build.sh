@@ -51,7 +51,7 @@ OUT="${APP_NAME}_${VERSION}_${PLATFORM}.fpk"
 echo "[1/6] 版本号: $VERSION"
 
 # ---- 2. 检查必需文件 ----
-REQUIRED="manifest app/ui/fnstyle_server.py app/ui/index.cgi app/ui/index.html app/seed/default_themes.json app/seed/theme_cache cmd/main cmd/install_callback cmd/uninstall_callback cmd/restore_system.py cmd/restore_deferred.sh"
+REQUIRED="manifest app/ui/fnstyle_server.py app/ui/index.cgi app/ui/index.html app/ui/power_tariff.py app/seed/default_themes.json app/seed/theme_cache cmd/main cmd/install_callback cmd/uninstall_callback cmd/restore_system.py cmd/restore_deferred.sh"
 for f in $REQUIRED; do
     if [ ! -e "$f" ]; then
         echo "[fail] 缺少必需文件: $f" >&2

@@ -180,7 +180,210 @@ def _day_key(ts):
     return "%04d-%02d-%02d" % (lt.tm_year, lt.tm_mon, lt.tm_mday)
 
 
-def daily_energy(rate_yuan_per_kwh=0.6, max_days=30, fill_days=0):
+# ---------------------------------------------------------------------------
+# 谷段 / 平段电量拆分
+#
+# FnStyle 每 60 秒采一次整机功率，天然就能把电量按「谷段 / 平段」拆开 ——
+# 这正是国网账单的做法（四川口径：谷段 23:00-次日 7:00 享低谷优惠价，
+# 阶梯加价按平段电量计算）。
+#
+# ⚠️ v1.1.57：这里的积分口径必须与 energy_stats / daily_energy 完全一致，
+#    否则「总电量」和「拆分后的电量」对不上，界面上的电费就自相矛盾。
+#    统一口径：e = 瞬时功率(W) × 该采样代表的间隔秒数 / 3600000，
+#    间隔取相邻采样的实际差，断档（> 3 倍中位间隔）只按一个典型间隔计。
+# ---------------------------------------------------------------------------
+
+def _integrate_points(pts, default_dt=60.0, since_ts=None):
+    """把功率采样点积分成电量（kWh），返回 (总电量, 分段电量列表)。
+
+    分段方式：优先用 daily_summary 里已归档的 **小时分桶**（kwh@HH），
+    因为它永久保留 400 天，而 metrics 原始点只留 7 天。
+    归档水位线之后的实时尾段用原始点现算。
+
+    since_ts：只统计该时间戳之后的电量（None = 不限）。
+    用于「本月用电量」这类按月口径。
+
+    返回 {"total": kWh, "flat": kWh, "valley": kWh, "by_hour": {HH: kWh}}
+    """
+    store = _store()
+    out = {"total": 0.0, "flat": 0.0, "valley": 0.0, "by_hour": {}}
+    if store is None:
+        return out
+
+    since_day = None
+    if since_ts is not None:
+        since_day = _day_key(since_ts)
+
+    # ---- 1) 已归档部分：直接读 daily_summary 的 kwh@HH 分桶 ----
+    try:
+        conn = store._connect()
+        try:
+            if since_day:
+                rows = conn.execute(
+                    "SELECT day, metric, value FROM daily_summary "
+                    "WHERE metric LIKE 'kwh@%' AND day >= ?", (since_day,)).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT day, metric, value FROM daily_summary "
+                    "WHERE metric LIKE 'kwh@%'").fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        rows = []
+
+    for _day, metric, value in rows:
+        try:
+            hh = int(metric[4:])
+        except Exception:
+            continue
+        if not (0 <= hh <= 23):
+            continue
+        out["by_hour"][hh] = out["by_hour"].get(hh, 0.0) + float(value or 0.0)
+
+    # ---- 2) 水位线之后的实时尾段：用原始点算 ----
+    tail_by_hour = {}
+    try:
+        conn = store._connect()
+        try:
+            wm, has = store._daily_watermark(conn)
+            tail_start = wm if has else store._day_start(time.time())
+            if since_ts is not None and tail_start < since_ts:
+                tail_start = since_ts
+            pts_now = conn.execute(
+                "SELECT ts, value FROM metrics WHERE metric='power' AND ts>=? "
+                "ORDER BY ts", (tail_start,)).fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        pts_now = []
+
+    if pts_now:
+        # 取前一个点作为积分起点（与 _daily_aggregate 同款口径）
+        try:
+            conn = store._connect()
+            try:
+                pr = conn.execute(
+                    "SELECT ts, value FROM metrics WHERE metric='power' AND ts<? "
+                    "ORDER BY ts DESC LIMIT 1", (tail_start,)).fetchone()
+            finally:
+                conn.close()
+        except Exception:
+            pr = None
+        seq = ([pr] if pr else []) + list(pts_now)
+        ts_list = [float(r[0]) for r in seq]
+        dts = sorted(ts_list[i + 1] - ts_list[i] for i in range(len(ts_list) - 1)
+                     if ts_list[i + 1] > ts_list[i])
+        med = dts[len(dts) // 2] if dts else float(default_dt)
+        cap = 3.0 * max(med, float(default_dt or 0))
+        last = None
+        for t, v in seq:
+            t = float(t)
+            gap = (t - last) if last is not None else None
+            dt = gap if (gap is not None and 0 < gap <= cap) else med
+            last = t
+            e = (float(v) or 0.0) * dt / 3600000.0
+            hh = time.localtime(t).tm_hour
+            tail_by_hour[hh] = tail_by_hour.get(hh, 0.0) + e
+            out["by_hour"][hh] = out["by_hour"].get(hh, 0.0) + e
+
+    # ---- 3) 按谷时段拆成平段 / 谷段 ----
+    try:
+        import power_tariff as pt
+        cfg = pt.load_config()
+        vs = int(cfg.get("valley_start", 23)) % 24
+        ve = int(cfg.get("valley_end", 7)) % 24
+    except Exception:
+        vs, ve = 23, 7
+
+    valley_hours = set()
+    h = vs
+    for _ in range(24):
+        valley_hours.add(h)
+        h = (h + 1) % 24
+        if h == ve:
+            break
+
+    for hh, v in out["by_hour"].items():
+        if hh in valley_hours:
+            out["valley"] += v
+        else:
+            out["flat"] += v
+    out["total"] = out["flat"] + out["valley"]
+    return out
+
+
+def split_energy_by_period(cfg=None):
+    """把**本月**已用电量拆成谷段 / 平段。
+
+    返回 {"total", "flat", "valley", "by_hour"}（kWh）。
+    """
+    now = time.time()
+    lt = time.localtime(now)
+    month_start = time.mktime((lt.tm_year, lt.tm_mon, 1, 0, 0, 0, 0, 0, -1))
+    return _integrate_points(None, since_ts=month_start)
+
+
+def tariff_bill(flat_kwh, valley_kwh, cfg=None):
+    """按当前电价配置计算电费（阶梯 + 分时）。"""
+    try:
+        import power_tariff as pt
+    except Exception:
+        return None
+    try:
+        return pt.compute_bill(flat_kwh, valley_kwh, cfg)
+    except Exception:
+        return None
+
+
+def update_tier_ledger(flat_kwh, valley_kwh):
+    """把本月已用电量写进阶梯台账（供下月结转用）。
+
+    只在「启用阶梯 + 该地区有结转规则」时才写。
+    """
+    try:
+        import power_tariff as pt
+    except Exception:
+        return False
+    try:
+        cfg = pt.load_config()
+        if not cfg.get("enabled"):
+            return False
+        prof = pt.PROFILES.get(cfg.get("region")) or {}
+        since = prof.get("carry_over_since")
+        if not since:
+            return False
+        mk = pt._month_key()
+        if mk < since:
+            return False
+        total = max(0.0, float(flat_kwh or 0.0)) + max(0.0, float(valley_kwh or 0.0))
+        lt = time.localtime()
+        month = lt.tm_mon
+        tiers = (prof["tiers_summer"] if month in (prof.get("summer_months") or [])
+                 else prof["tiers_other"])
+        caps = pt._tier_caps(tiers)
+        # 已用的阶梯容量（按平段电量判档位）
+        fl = max(0.0, float(flat_kwh or 0.0))
+        used = [0.0, 0.0, 0.0]
+        for i, cap in enumerate(caps):
+            if cap <= 0:
+                continue
+            a = min(fl, cap)
+            used[i] += a
+            fl -= a
+        # 结转量也算进一/二档
+        led = pt.load_ledger(mk)
+        carry = float(led.get("tier1_used") or 0.0) + float(led.get("tier2_used") or 0.0)
+        if carry > 0:
+            used[0] += carry
+        # 一档用量 = 一档总量；二档用量 = 二档总量
+        pt.save_ledger(mk, used[0], used[1])
+        _ = total
+        return True
+    except Exception:
+        return False
+
+
+def daily_energy(rate_yuan_per_kwh=0.6, max_days=30, fill_days=0, eff_rate=None):
     """按天聚合用电量（1:1 对齐 fnmonitor 的 /api/daily 口径）。
 
     ⚠️ v1.1.53：数据来源改为「daily_summary 归档表 + 水位线后的实时尾段」
@@ -193,6 +396,11 @@ def daily_energy(rate_yuan_per_kwh=0.6, max_days=30, fill_days=0):
       dt 取相邻采样的实际间隔；断档（> 3 倍中位间隔）只按一个典型间隔计，
       避免机器休眠后把那段时间算成巨大的耗电量。
 
+    ⚠️ v1.1.57：阶梯电价是**按月**清算的，不能逐日套用。
+       所以每天的 cost 仍按「单一单价」折算（与柱状图语义一致），
+       但允许外部传入 eff_rate（本月实际综合均价），
+       让开启阶梯后各天的 cost 与本月总账口径保持自洽。
+
     返回：{
       "days": [{"day": "2026-11-15", "kwh": 0.12, "cost": 0.07,
                 "power_h": 23.5, "avg_w": 28.1, "has_data": True}, ...],
@@ -203,6 +411,11 @@ def daily_energy(rate_yuan_per_kwh=0.6, max_days=30, fill_days=0):
     （对齐 fnmonitor：缺失是 null 不是 0）。
     """
     rate = float(rate_yuan_per_kwh or 0.6)
+    if eff_rate is not None:
+        try:
+            rate = float(eff_rate)
+        except Exception:
+            pass
     store = _store()
     if store is None:
         return {"days": [], "rate_yuan_per_kwh": rate, "success": True}
@@ -296,6 +509,22 @@ def energy_stats(rate_yuan_per_kwh=0.6, uptime_seconds=None):
         "avg_w": None, "avg_basis": "",
     }
 
+    # ⚠️ v1.1.57：电价模型。
+    #   启用了阶梯+分时后，month_yuan 不再是「月电量 × 单一单价」，
+    #   而要按谷/平拆开 + 阶梯判定来算，与国网账单口径一致。
+    #   未启用时保持原样（单一固定单价），确保向后兼容。
+    tariff = None
+    split = None
+    try:
+        import power_tariff as pt
+        tcfg = pt.load_config()
+        if tcfg.get("enabled"):
+            split = split_energy_by_period(tcfg)
+            tariff = pt.compute_bill(split.get("flat", 0.0), split.get("valley", 0.0), tcfg)
+    except Exception:
+        tariff = None
+        split = None
+
     now = time.time()
     lt = time.localtime(now)
     today_start = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1))
@@ -328,6 +557,28 @@ def energy_stats(rate_yuan_per_kwh=0.6, uptime_seconds=None):
         result["month_kwh"] = round(month_kwh, 4)
         result["today_yuan"] = round(today_kwh * rate, 2)
         result["month_yuan"] = round(month_kwh * rate, 2)
+
+    # ---- 阶梯+分时：覆盖上面的固定单价电费 ----
+    if tariff is not None and split is not None:
+        result["month_kwh"] = round(float(split.get("total") or 0.0), 4)
+        result["month_yuan"] = round(float(tariff.get("yuan") or 0.0), 2)
+        result["tariff_mode"] = tariff.get("mode")
+        result["tariff_region"] = tariff.get("region")
+        result["tariff_region_name"] = tariff.get("region_name")
+        result["valley_kwh"] = round(float(split.get("valley") or 0.0), 4)
+        result["flat_kwh"] = round(float(split.get("flat") or 0.0), 4)
+        result["valley_yuan"] = round(float(tariff.get("valley_yuan") or 0.0), 4)
+        result["flat_yuan"] = round(float(tariff.get("flat_yuan") or 0.0), 4)
+        result["tier_kwh"] = tariff.get("tier_kwh")
+        result["tier_rates"] = tariff.get("tier_rates")
+        result["tariff_detail"] = tariff.get("detail")
+        result["valley_label"] = tariff.get("valley_label")
+        result["tariff_carry_in"] = tariff.get("carry_in")
+        # 本月用电量写进阶梯台账（供下月结转）
+        try:
+            update_tier_ledger(split.get("flat", 0.0), split.get("valley", 0.0))
+        except Exception:
+            pass
 
     # 开机累计：按当前功率 × 开机时长估算
     if uptime_seconds and uptime_seconds > 0:
@@ -388,6 +639,21 @@ def energy_stats(rate_yuan_per_kwh=0.6, uptime_seconds=None):
             result["month_proj_yuan"] = round(result["month_proj_kwh"] * eff, 2)
         if result["year_proj_kwh"] is not None:
             result["year_proj_yuan"] = round(result["year_proj_kwh"] * eff, 2)
+
+    # ---- 阶梯模式：补上电费构成明细，供前端展示 ----
+    if tariff is not None:
+        result.setdefault("tariff_mode", tariff.get("mode"))
+        result.setdefault("tariff_region", tariff.get("region"))
+        result.setdefault("tariff_region_name", tariff.get("region_name"))
+        result.setdefault("valley_kwh", round(float(split.get("valley") or 0.0), 4))
+        result.setdefault("flat_kwh", round(float(split.get("flat") or 0.0), 4))
+        result.setdefault("valley_yuan", round(float(tariff.get("valley_yuan") or 0.0), 4))
+        result.setdefault("flat_yuan", round(float(tariff.get("flat_yuan") or 0.0), 4))
+        result.setdefault("tier_kwh", tariff.get("tier_kwh"))
+        result.setdefault("tier_rates", tariff.get("tier_rates"))
+        result.setdefault("tariff_detail", tariff.get("detail"))
+        result.setdefault("valley_label", tariff.get("valley_label"))
+        result.setdefault("tariff_carry_in", tariff.get("carry_in"))
 
     return result
 

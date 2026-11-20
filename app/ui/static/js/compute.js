@@ -1059,6 +1059,10 @@
     if (kind === 'power' && window.FnStyleMonitor && window.FnStyleMonitor.loadPowerEnergy) {
       window.FnStyleMonitor.loadPowerEnergy(body);
     }
+    /* ⚠️ v1.1.57：电价设置面板也要异步加载（配置在 /api/power/tariff） */
+    if (kind === 'power' && window.FnStyleMonitor && window.FnStyleMonitor.loadTariff) {
+      window.FnStyleMonitor.loadTariff(body);
+    }
   }
 
   function closeCompute() {
@@ -1103,6 +1107,31 @@
 
     /* ① 保留旧图表节点（实例与 range 选择都在里面） */
     var chartNode = body.querySelector('[data-charts]');
+    /* ①-b 保留旧电价设置面板（v1.1.58）
+       能耗抽屉每 3 秒 live 重建一次，body.innerHTML 重置会把
+       [data-tariff-box] 连同用户**正在输入**的「自定义单价」一起冲掉。
+       参照图表节点的思路，把旧面板原样搬回，
+       用户编辑不会被 3 秒一次的重绘吃掉。 */
+    var tariffNode = body.querySelector('[data-tariff-box]');
+    /* ①-c 记住焦点落在电价面板的哪个输入框上（v1.1.58）
+       ⚠️ body.innerHTML = html 会把面板节点从文档树上**摘除**，
+          浏览器在元素被移除时会自动 blur → 用户正在输入时焦点被踢掉，
+          无法连续输入。所以要在重绘前记住焦点元素与光标位置，
+          重绘后手动恢复。 */
+    var active = document.activeElement;
+    var focusRestore = null;
+    if (active && tariffNode && tariffNode.contains(active)) {
+      focusRestore = {
+        sel: active.getAttribute('data-tariff-rate') !== null ? 'data-tariff-rate'
+          : (active.getAttribute('data-tariff-season-price') !== null
+            ? 'data-tariff-season-price'
+            : (active.getAttribute('data-tariff-season-tier') !== null
+              ? 'data-tariff-season-tier' : null)),
+        idx: active.getAttribute('data-i'),
+        start: (typeof active.selectionStart === 'number') ? active.selectionStart : null,
+        end: (typeof active.selectionEnd === 'number') ? active.selectionEnd : null
+      };
+    }
     /* ② 记录滚动位置（innerHTML 重置后恢复） */
     var st = body.scrollTop;
 
@@ -1124,6 +1153,32 @@
       var slot = body.querySelector('[data-charts]');
       if (slot && slot.parentNode) slot.parentNode.replaceChild(chartNode, slot);
     }
+    /* ④-b 旧电价面板放回同位置（v1.1.58）：保住用户未保存的输入 */
+    if (tariffNode) {
+      var tslot = body.querySelector('[data-tariff-box]');
+      if (tslot && tslot.parentNode) tslot.parentNode.replaceChild(tariffNode, tslot);
+    }
+    /* ④-c 恢复焦点与光标位置（v1.1.58）
+       innerHTML 重置把面板节点摘除过，浏览器已自动 blur，
+       这里手动 focus 回去，用户可以连续输入不被打断。 */
+    if (focusRestore && focusRestore.sel) {
+      var target = null;
+      if (focusRestore.sel === 'data-tariff-rate') {
+        target = body.querySelector('[data-tariff-rate]');
+      } else {
+        target = body.querySelector('[' + focusRestore.sel + '][data-i="' +
+          focusRestore.idx + '"]');
+      }
+      if (target) {
+        try {
+          target.focus();
+          if (focusRestore.start !== null &&
+            typeof target.setSelectionRange === 'function') {
+            target.setSelectionRange(focusRestore.start, focusRestore.end);
+          }
+        } catch (e) { /* number 类型输入框不支持 setSelectionRange，忽略 */ }
+      }
+    }
 
     /* ⑤ 每核点阵（处理器 / 内存抽屉） */
     if (kind === 'cpu' || kind === 'mem') {
@@ -1134,6 +1189,10 @@
     /* ⑥ 能耗抽屉的电费统计回填（60 秒缓存，命中时不发请求） */
     if (kind === 'power' && window.FnStyleMonitor && window.FnStyleMonitor.loadPowerEnergy) {
       window.FnStyleMonitor.loadPowerEnergy(body);
+    }
+    /* ⑥-b 电价设置面板回填（v1.1.57） */
+    if (kind === 'power' && window.FnStyleMonitor && window.FnStyleMonitor.loadTariff) {
+      window.FnStyleMonitor.loadTariff(body);
     }
     /* ⑦ 恢复滚动位置 */
     body.scrollTop = st;
