@@ -186,6 +186,27 @@ _UPDATE_LOCK = threading.Lock()
 _UPDATE_DIR = os.environ.get("TMPDIR") or "/tmp"
 
 
+def _json_safe(obj):
+    """把对象里的 inf / nan 递归替换成 None，保证能序列化成**合法 JSON**。
+
+    ⚠️ v1.1.59：json.dumps 默认 allow_nan=True，会输出裸的 `Infinity` / `NaN`
+    —— 浏览器 JSON.parse 会直接抛 SyntaxError，整个前端模块静默失败。
+    这里做一层兜底：任何 inf / nan 都降级成 null。
+
+    同时把 dict 的非字符串键转成字符串（JSON 只接受字符串键）。
+    """
+    import math
+    if isinstance(obj, float):
+        if math.isinf(obj) or math.isnan(obj):
+            return None
+        return obj
+    if isinstance(obj, dict):
+        return dict((str(k), _json_safe(v)) for k, v in obj.items())
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    return obj
+
+
 def _update_set(**kw):
     with _UPDATE_LOCK:
         for k, v in kw.items():
@@ -397,9 +418,19 @@ class Handler(BaseHTTPRequestHandler):
 
     def _send_json(self, code, obj):
         try:
-            body = json.dumps(obj, ensure_ascii=False).encode("utf-8", "replace")
+            # ⚠️ v1.1.59 修复（致命）：json.dumps 默认 allow_nan=True，
+            #    会把 float('inf') / float('nan') 写成裸的 `Infinity` / `NaN`
+            #    —— 这**不是合法 JSON**，浏览器 JSON.parse 直接抛 SyntaxError
+            #    → 前端整个模块静默失败（实测：电价面板显示「读取失败」）。
+            #    allow_nan=False 会在遇到这类值时抛异常 → 这里统一降级成 null。
+            body = json.dumps(obj, ensure_ascii=False, allow_nan=False).encode(
+                "utf-8", "replace")
         except Exception:
-            body = b"{}"
+            try:
+                body = json.dumps(_json_safe(obj), ensure_ascii=False,
+                                  allow_nan=False).encode("utf-8", "replace")
+            except Exception:
+                body = b"{}"
         self._send(code, body, "application/json; charset=utf-8")
 
     def _maybe_api_local(self):

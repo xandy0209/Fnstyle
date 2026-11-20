@@ -312,14 +312,30 @@ def _integrate_points(pts, default_dt=60.0, since_ts=None):
     return out
 
 
-def split_energy_by_period(cfg=None):
-    """把**本月**已用电量拆成谷段 / 平段。
+def split_energy_by_period(cfg=None, months=1):
+    """把**计费周期**已用电量拆成谷段 / 平段。
+
+    参数：
+      months  计费周期月数（1 = 本月；2 = 两个月抄一次的双月周期）。
+              ⚠️ 抄表周期为两个月时，电价表按双月结算 → 档位门槛 ×2
+                 （川发改价格〔2012〕560号五），用电量口径也必须取**双月**，
+                 否则门槛翻倍而电量不翻倍 → 严重低估电费。
 
     返回 {"total", "flat", "valley", "by_hour"}（kWh）。
     """
     now = time.time()
     lt = time.localtime(now)
-    month_start = time.mktime((lt.tm_year, lt.tm_mon, 1, 0, 0, 0, 0, 0, -1))
+    try:
+        m = max(1, int(months or 1))
+    except Exception:
+        m = 1
+    if m <= 1:
+        y, mo = lt.tm_year, lt.tm_mon
+    else:
+        # 回退 m-1 个月（跨年自动处理）
+        total_m = lt.tm_year * 12 + (lt.tm_mon - 1) - (m - 1)
+        y, mo = total_m // 12, total_m % 12 + 1
+    month_start = time.mktime((y, mo, 1, 0, 0, 0, 0, 0, -1))
     return _integrate_points(None, since_ts=month_start)
 
 
@@ -336,49 +352,21 @@ def tariff_bill(flat_kwh, valley_kwh, cfg=None):
 
 
 def update_tier_ledger(flat_kwh, valley_kwh):
-    """把本月已用电量写进阶梯台账（供下月结转用）。
+    """把本月**未使用完的阶梯电量**写进台账（供下月结转用）。
 
-    只在「启用阶梯 + 该地区有结转规则」时才写。
+    ⚠️ v1.1.59 重写：原来这里**另写了一份**分档逻辑，
+       与 power_tariff.compute_bill 的口径**不一致**
+       （没算结转额度、没算「一户多人口」加成），
+       导致台账数据自相矛盾，且同月内重复调用会自我污染。
+       现在统一委托给 power_tariff.update_tier_ledger，
+       保证「算出来的账」与「记下来的账」严格一致。
     """
     try:
         import power_tariff as pt
     except Exception:
         return False
     try:
-        cfg = pt.load_config()
-        if not cfg.get("enabled"):
-            return False
-        prof = pt.PROFILES.get(cfg.get("region")) or {}
-        since = prof.get("carry_over_since")
-        if not since:
-            return False
-        mk = pt._month_key()
-        if mk < since:
-            return False
-        total = max(0.0, float(flat_kwh or 0.0)) + max(0.0, float(valley_kwh or 0.0))
-        lt = time.localtime()
-        month = lt.tm_mon
-        tiers = (prof["tiers_summer"] if month in (prof.get("summer_months") or [])
-                 else prof["tiers_other"])
-        caps = pt._tier_caps(tiers)
-        # 已用的阶梯容量（按平段电量判档位）
-        fl = max(0.0, float(flat_kwh or 0.0))
-        used = [0.0, 0.0, 0.0]
-        for i, cap in enumerate(caps):
-            if cap <= 0:
-                continue
-            a = min(fl, cap)
-            used[i] += a
-            fl -= a
-        # 结转量也算进一/二档
-        led = pt.load_ledger(mk)
-        carry = float(led.get("tier1_used") or 0.0) + float(led.get("tier2_used") or 0.0)
-        if carry > 0:
-            used[0] += carry
-        # 一档用量 = 一档总量；二档用量 = 二档总量
-        pt.save_ledger(mk, used[0], used[1])
-        _ = total
-        return True
+        return bool(pt.update_tier_ledger(flat_kwh, valley_kwh))
     except Exception:
         return False
 
@@ -515,15 +503,21 @@ def energy_stats(rate_yuan_per_kwh=0.6, uptime_seconds=None):
     #   未启用时保持原样（单一固定单价），确保向后兼容。
     tariff = None
     split = None
+    bill_months = 1
     try:
         import power_tariff as pt
         tcfg = pt.load_config()
         if tcfg.get("enabled"):
-            split = split_energy_by_period(tcfg)
+            # ⚠️ v1.1.59：抄表周期为两个月时，档位门槛 ×2，
+            #   用电窗口也必须同步取**双月**（口径自洽），否则低估电费。
+            tprof = pt.effective_profile(tcfg.get("region"), tcfg)
+            bill_months = pt._meter_months_of(tcfg, tprof)
+            split = split_energy_by_period(tcfg, months=bill_months)
             tariff = pt.compute_bill(split.get("flat", 0.0), split.get("valley", 0.0), tcfg)
     except Exception:
         tariff = None
         split = None
+        bill_months = 1
 
     now = time.time()
     lt = time.localtime(now)
@@ -574,6 +568,11 @@ def energy_stats(rate_yuan_per_kwh=0.6, uptime_seconds=None):
         result["tariff_detail"] = tariff.get("detail")
         result["valley_label"] = tariff.get("valley_label")
         result["tariff_carry_in"] = tariff.get("carry_in")
+        # 计费周期月数（v1.1.59）：2 = 两个月抄一次（档位门槛 ×2）
+        result["bill_months"] = int(bill_months or 1)
+        result["tariff_voltage"] = tariff.get("voltage")
+        result["tariff_voltage_name"] = tariff.get("voltage_name")
+        result["tariff_multi_person_extra"] = tariff.get("multi_person_extra")
         # 本月用电量写进阶梯台账（供下月结转）
         try:
             update_tier_ledger(split.get("flat", 0.0), split.get("valley", 0.0))

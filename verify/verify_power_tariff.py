@@ -136,30 +136,48 @@ expect3 = 180.0 * 0.5224 + 100.0 * 0.6224 + 20.0 * 0.8224
 check('电费 = %.4f' % expect3, approx(b3['yuan'], expect3, 1e-4), b3['yuan'])
 
 # ---------------------------------------------------------------------------
-print('\n=== 7. 阶梯加价按平段电量算（谷段不推高档位） ===')
-# 官方口径：「低谷电量计入阶梯总电量，阶梯加价按平段电量计算」
-# 平段 100 + 谷段 100 → 档位按平段 100 判定 → 全部落一档
+print('\n=== 7. 阶梯按月总电量判档（官方口径，v1.1.59） ===')
+# ⚠️ v1.1.59 口径修正（依据《四川省电网居民生活电价表》2026-07-01 版）：
+#    官方表原文「月用电量在 260 千瓦时及以下部分 / 261-460 千瓦时部分 /
+#    460 千瓦时以上部分」→ 档位门槛是**月总电量**（峰+平+谷），
+#    不是只算平段。之前按平段判档是错的。
+#
+# 平段 100 + 谷段 100 = 总 200 kWh → 全部落一档（200 ≤ 180? 不，
+# 一档上限 180 → 180 + 20 二档）
 b4 = pt.compute_bill(100.0, 100.0, c, ts=ts_nov)
-check('平段100+谷段100 → 全部落一档',
-      approx(b4['tier_kwh'][0], 200.0, 1e-6) and b4['tier_kwh'][1] == 0.0,
+check('平段100+谷段100（总200）→ 一档180 + 二档20',
+      approx(b4['tier_kwh'][0], 180.0, 1e-6) and
+      approx(b4['tier_kwh'][1], 20.0, 1e-6),
       b4['tier_kwh'])
-check('二档三档均为 0', b4['tier_kwh'][1] == 0.0 and b4['tier_kwh'][2] == 0.0)
-expect4 = 100.0 * 0.5224 + 100.0 * 0.2535
-check('电费 = 平×0.5224 + 谷×0.2535 = %.4f' % expect4,
+check('三档均为 0', b4['tier_kwh'][2] == 0.0)
+# 每档内平/谷按占比分摊：平占比 = 100/200 = 0.5
+expect4 = 180.0 * 0.5 * 0.5224 + 180.0 * 0.5 * 0.2535 + \
+          20.0 * 0.5 * 0.6224 + 20.0 * 0.5 * 0.3535
+check('电费 = 各档平/谷分摊 = %.4f' % expect4,
       approx(b4['yuan'], expect4, 1e-4), b4['yuan'])
 
-# 关键对比：平段 200（跨二档）vs 平段 100+谷段 100（总量相同但档位不同）
+# 关键对比：同为 200 kWh，纯平段 vs 平段+谷段
+#  纯平段：全部按平段价（无谷段优惠）→ 更贵
+#  含谷段：一半电量走低谷价 → 更便宜
 b5 = pt.compute_bill(200.0, 0.0, c, ts=ts_nov)
-check('同为 200 kWh：纯平段电费 > 含谷段电费（阶梯加价只按平段）',
+check('同为 200 kWh：纯平段电费 > 含谷段电费（谷段有优惠）',
       b5['yuan'] > b4['yuan'], '%.4f vs %.4f' % (b5['yuan'], b4['yuan']))
 
-# 谷段电量不推高档：平段 100 + 谷段 500 → 档位仍按平段 100 判一档
+# 谷段同样占用高档位容量：平段 100 + 谷段 500 = 总 600
+#  → 一档180 + 二档100 + 三档320
+#  各档内平/谷分摊占比：平 = 100/600 = 1/6，谷 = 500/600 = 5/6
 b4b = pt.compute_bill(100.0, 500.0, c, ts=ts_nov)
-check('平段100+谷段500 → 仍全落一档（谷段不推高档）',
-      approx(b4b['tier_kwh'][0], 600.0, 1e-6) and b4b['tier_kwh'][1] == 0.0,
+check('平段100+谷段500（总600）→ 180/100/320 三档',
+      approx(b4b['tier_kwh'][0], 180.0, 1e-6) and
+      approx(b4b['tier_kwh'][1], 100.0, 1e-6) and
+      approx(b4b['tier_kwh'][2], 320.0, 1e-6),
       b4b['tier_kwh'])
-expect4b = 100.0 * 0.5224 + 500.0 * 0.2535
-check('电费 = 平×0.5224 + 谷×0.2535 = %.4f' % expect4b,
+fs = 100.0 / 600.0
+vs_ = 500.0 / 600.0
+expect4b = (180.0 * fs * 0.5224 + 180.0 * vs_ * 0.2535 +
+             100.0 * fs * 0.6224 + 100.0 * vs_ * 0.3535 +
+             320.0 * fs * 0.8224 + 320.0 * vs_ * 0.5535)
+check('电费 = %.4f' % expect4b,
       approx(b4b['yuan'], expect4b, 1e-4), b4b['yuan'])
 
 # 三档总量守恒
@@ -180,23 +198,78 @@ check('十一月 200 kWh 跨二档（上限 180）',
       approx(b['tier_kwh'][0], 0.0) is False or True)
 
 # ---------------------------------------------------------------------------
-print('\n=== 9. 阶梯电量结转（2027-01 起） ===')
-mk27 = '2027-01'
-ts_jan27 = time.mktime((2027, 1, 10, 12, 0, 0, 0, 0, -1))
-# 先写台账：上月用掉 150 kWh（一档内）
-pt.save_ledger(mk27, 150.0, 0.0)
-b7 = pt.compute_bill(50.0, 0.0, c, ts=ts_jan27)
-check('结转量被计入', approx(b7['carry_in'], 150.0, 1e-6), b7['carry_in'])
-# 平段 50 + 结转 150 = 200 → 一档 180，二档 20
-check('结转后跨二档：一档180 二档20',
-      approx(b7['tier_kwh'][0], 180.0, 1e-6) and approx(b7['tier_kwh'][1], 20.0, 1e-6),
-      b7['tier_kwh'])
-
-# 结转前（2026-12）不应结转
+print('\n=== 9. 阶梯电量结转（2027-01 起，剩余额度口径） ===')
+# ⚠️ v1.1.59 语义修正（两处）：
+#   ① 官方注4 —— 结转的是**未使用完的**一/二档电量（台账字段 tier1_remaining）。
+#   ② 结转额度来自**上个月**的台账！
+#      原来读的是**当月**台账 → 跨月结转永远读到 0，功能形同虚设（致命缺陷）。
+#      现在：台账 ledger[2026-12] 存 12 月的剩余额度，
+#            计算 2027-01 的账单时读 ledger[2026-12]。
+#      官方注4 还规定「年内后续月份」结转、「年末清零」→ 跨年不结转。
+mk_dec26 = '2026-12'
+mk_jan27 = '2027-01'
 ts_dec26 = time.mktime((2026, 12, 10, 12, 0, 0, 0, 0, -1))
-b8 = pt.compute_bill(50.0, 0.0, c, ts=ts_dec26)
-check('2026-12 不结转（规则自 2027-01 起）',
+ts_jan27 = time.mktime((2027, 1, 10, 12, 0, 0, 0, 0, -1))
+ts_feb27 = time.mktime((2027, 2, 10, 12, 0, 0, 0, 0, -1))
+
+# 场景1：1 月剩一档 150 度 → 2 月一档可用 180+150=330
+# （规则自 2027-01 起，故用 2027-01 的台账滚入 2027-02）
+pt.save_ledger(mk_jan27, 150.0, 0.0)
+b7 = pt.compute_bill(50.0, 0.0, c, ts=ts_feb27)
+check('结转量被计入（读上月台账）', approx(b7['carry_in'], 150.0, 1e-6), b7['carry_in'])
+check('结转扩容后本月 50 kWh 全落一档',
+      approx(b7['tier_kwh'][0], 50.0, 1e-6) and
+      approx(b7['tier_kwh'][1], 0.0, 1e-6) and
+      approx(b7['tier_kwh'][2], 0.0, 1e-6),
+      b7['tier_kwh'])
+check('结转后电费 = 50×0.5224 = %.4f' % (50.0 * 0.5224),
+      approx(b7['yuan'], 50.0 * 0.5224, 1e-4), b7['yuan'])
+
+# 场景2：上月无结转 → carry_in = 0
+pt.save_ledger(mk_jan27, 0.0, 0.0)
+b7b = pt.compute_bill(50.0, 0.0, c, ts=ts_feb27)
+check('无结转时 carry_in = 0', approx(b7b['carry_in'], 0.0, 1e-6), b7b['carry_in'])
+check('无结转时 50 kWh 全落一档（电量一致）',
+      approx(b7b['tier_kwh'][0], 50.0, 1e-6), b7b['tier_kwh'])
+
+# 场景3：结转量足够大时，本月用电会被推进二档
+#   一档剩余 250 → 本月一档可用 180+250=430；本月用电 300 → 一档300，二档0
+pt.save_ledger(mk_jan27, 250.0, 0.0)
+b7c = pt.compute_bill(300.0, 0.0, c, ts=ts_feb27)
+check('结转 250 后本月 300 kWh 全落一档（扩容到430）',
+      approx(b7c['tier_kwh'][0], 300.0, 1e-6) and b7c['tier_kwh'][1] == 0.0,
+      b7c['tier_kwh'])
+#   一档也结转 100 → 二档可用 100+100=200；本月用电 500 → 一档430 二档70
+pt.save_ledger(mk_jan27, 250.0, 100.0)
+b7d = pt.compute_bill(500.0, 0.0, c, ts=ts_feb27)
+check('一档250+二档100 结转后 500 kWh → 一档430 二档70',
+      approx(b7d['tier_kwh'][0], 430.0, 1e-6) and
+      approx(b7d['tier_kwh'][1], 70.0, 1e-6),
+      b7d['tier_kwh'])
+
+# 场景4：跨年清零（官方注4「年内后续月份」「年末清零」）
+#   2026-12 的剩余额度结转到 2027-01 → **跨年 → 清零**
+pt.save_ledger(mk_dec26, 999.0, 0.0)
+b8 = pt.compute_bill(50.0, 0.0, c, ts=ts_jan27)
+check('年末清零：2026-12 剩余不结转到 2027-01',
       approx(b8['carry_in'], 0.0, 1e-6), b8['carry_in'])
+#   同年内的 1 月 → 2 月 → **应结转**
+pt.save_ledger(mk_jan27, 60.0, 0.0)
+b8b = pt.compute_bill(50.0, 0.0, c, ts=ts_feb27)
+check('年内结转：1月剩余 60 度滚入 2 月',
+      approx(b8b['carry_in'], 60.0, 1e-6), b8b['carry_in'])
+
+# 场景5：结转规则生效起始月之前不结转（2026-12 本身）
+b8c = pt.compute_bill(50.0, 0.0, c, ts=ts_dec26)
+check('2026-12 不结转（规则自 2027-01 起）',
+      approx(b8c['carry_in'], 0.0, 1e-6), b8c['carry_in'])
+
+# 场景6：台账写入口径 —— 记「剩余额度」而非「已用量」
+led_jan = pt.load_ledger(mk_jan27)
+check('台账字段为 tier1_remaining（剩余额度语义）',
+      'tier1_remaining' in led_jan and 'tier2_remaining' in led_jan, led_jan)
+check('台账不含旧字段 tier1_used',
+      'tier1_used' not in led_jan, led_jan)
 
 # ---------------------------------------------------------------------------
 print('\n=== 10. 用户手工单价覆盖一切 ===')
@@ -277,8 +350,8 @@ cf = pt.default_config()
 cf['enabled'] = True
 cf['region'] = 'flat'
 bf = pt.compute_bill(100.0, 50.0, cf, ts=ts_nov)
-check('固定单价地区 mode=tiered（仍走阶梯分支但价同）',
-      bf['mode'] == 'tiered', bf['mode'])
+check('固定单价地区 mode=fixed（v1.1.59：显式走无阶梯分支）',
+      bf['mode'] == 'fixed', bf['mode'])
 check('固定单价地区电费 = 150×0.6',
       approx(bf['yuan'], 150.0 * 0.6, 1e-4), bf['yuan'])
 

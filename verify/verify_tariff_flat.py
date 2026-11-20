@@ -59,7 +59,9 @@ def main():
     # ---------- ④ profile_list() 透出 has_tiers ----------
     lst = pt.profile_list()
     ids = [x["id"] for x in lst]
-    ok("profile_list 含三个地区", ids == ["sichuan", "tianjin", "flat"], str(ids))
+    # v1.1.59 新增「合表居民」地区（sichuan_shared），共 4 个
+    ok("profile_list 含四个地区",
+       ids == ["sichuan", "sichuan_shared", "tianjin", "flat"], str(ids))
     by_id = {x["id"]: x for x in lst}
     ok("profile_list flat.has_tiers=False",
        by_id["flat"].get("has_tiers") is False)
@@ -67,6 +69,10 @@ def main():
        by_id["sichuan"].get("has_tiers") is True)
     ok("profile_list tianjin.has_tiers=True",
        by_id["tianjin"].get("has_tiers") is True)
+    ok("profile_list sichuan_shared.has_tiers=False（合表居民不分阶梯）",
+       by_id["sichuan_shared"].get("has_tiers") is False)
+    ok("profile_list sichuan_shared.has_time_of_use=False（合表不分时）",
+       by_id["sichuan_shared"].get("has_time_of_use") is False)
 
     # ---------- ⑤ describe() 透出 has_tiers ----------
     tmp = tempfile.mkdtemp()

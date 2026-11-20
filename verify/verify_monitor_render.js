@@ -3868,12 +3868,12 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     ['堆叠条高度 12px（CSS 层对齐 fnmonitor）',
       /\.stack \{[^}]*height: 12px/.test(css54)],
 
-    /* ---- ⑦ 版本号（随当前版本递增；v1.1.58 起为 1.1.58）---- */
-    ['manifest 版本 1.1.58', /version\s+= 1\.1\.58/.test(man54)],
-    ['index.cgi 版本 1.1.58', /APP_VERSION="1\.1\.58"/.test(cgi54)],
-    ['index.html 版本 1.1.58', /id="verPill"[^>]*>v1\.1\.58</.test(html54)],
+    /* ---- ⑦ 版本号（随当前版本递增；v1.1.59 起为 1.1.59）---- */
+    ['manifest 版本 1.1.58', /version\s+= 1\.1\.59/.test(man54)],
+    ['index.cgi 版本 1.1.58', /APP_VERSION="1\.1\.59"/.test(cgi54)],
+    ['index.html 版本 1.1.58', /id="verPill"[^>]*>v1\.1\.59</.test(html54)],
     ['app.js 版本 1.1.58',
-      /var APP_VERSION = '1\.1\.58';/.test(
+      /var APP_VERSION = '1\.1\.59';/.test(
         fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'js', 'app.js'), 'utf8'))],
   ];
 
@@ -4138,9 +4138,9 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       /\.stat-cell \.sub-rate \{/.test(css56)],
     ['CSS 有 .sub-rate .rate-lbl 标签样式',
       /\.stat-cell \.sub-rate \.rate-lbl \{/.test(css56)],
-    /* ---- ④ 版本号（v1.1.58 起）---- */
+    /* ---- ④ 版本号（v1.1.59 起）---- */
     ['manifest 版本 1.1.58',
-      /version\s+= 1\.1\.58/.test(
+      /version\s+= 1\.1\.59/.test(
         fs.readFileSync(path.join(__dirname, '..', 'manifest'), 'utf8'))],
   ];
 
@@ -4184,8 +4184,8 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     ['四川标记 has_time_of_use=True', /"has_time_of_use": True/.test(tar)],
     ['天津标记 has_time_of_use=False（居民不执行分时）',
       /"has_time_of_use": False/.test(tar)],
-    ['阶梯加价按平段电量计算（谷段不推高档）',
-      /阶梯加价按平段电量计算/.test(tar)],
+    ['阶梯按月总电量判定（官方口径，v1.1.59）',
+      /档位按\*\*月总电量\*\*判定/.test(tar)],
     ['低谷电量计入阶梯总电量',
       /低谷电量计入阶梯总电量/.test(tar)],
     ['阶梯结转规则起始 2027-01', /"2027-01"/.test(tar)],
@@ -4272,13 +4272,31 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       /"active_tiers"/.test(tar)],
     ['后端 describe 返回季节状态',
       /"is_summer_tier"/.test(tar) && /"is_wet_season"/.test(tar)],
+    /* ---- ⑥ v1.1.59：生效档位必须反映抄表周期/人口加成/结转 ---- */
+    ['后端有 effective_tier_limits（生效档位计算）',
+      /def effective_tier_limits/.test(tar)],
+    ['后端 effective_tier_limits 用了 _effective_caps',
+      /_effective_caps\(tiers, carry1, carry2, mp_extra\)/.test(tar)],
+    ['后端 describe 返回 multi_person_extra',
+      /"multi_person_extra"/.test(tar)],
+    ['后端 profiles 每项带 effective_tiers',
+      /"effective_tiers": eff_limits/.test(tar)],
+    ['前端切地区用 effective_tiers（不再用原始档位）',
+      /hit\.effective_tiers/.test(src)],
+    /* ---- ⑦ v1.1.59：电压等级切换要即时刷新价目表峰价 ---- */
+    ['前端有电压下拉的 change 监听',
+      /vtSel\.addEventListener\('change'/.test(src)],
+    ['前端按电压等级取峰价（voltage_levels → peak_rates）',
+      /lvList\[i\]\.peak_rates/.test(src) || /lvList\[li\]\.peak_rates/.test(src)],
+    ['前端 tariffTableHtml 按 active.voltage 取峰价',
+      /active\.voltage/.test(src)],
     /* ---- ⑤ 版本号 ---- */
-    ['manifest 版本 1.1.58', /version\s+= 1\.1\.58/.test(man)],
+    ['manifest 版本 1.1.58', /version\s+= 1\.1\.59/.test(man)],
     ['index.cgi 版本 1.1.58',
-      /APP_VERSION="1\.1\.58"/.test(
+      /APP_VERSION="1\.1\.59"/.test(
         fs.readFileSync(path.join(UI, 'index.cgi'), 'utf8'))],
     ['app.js 版本 1.1.58',
-      /var APP_VERSION = '1\.1\.58'/.test(
+      /var APP_VERSION = '1\.1\.59'/.test(
         fs.readFileSync(path.join(UI, 'static', 'js', 'app.js'), 'utf8'))],
   ];
 

@@ -187,7 +187,7 @@ mk = pt._month_key()
 led = pt.load_ledger(mk)
 # 2026 年（现在）不满足 carry_over_since=2027-01 → 不应写台账
 check('2026 年不写台账（结转规则自 2027-01 起）',
-      led.get('tier1_used', 0) == 0.0, led)
+      led.get('tier1_remaining', 0) == 0.0, led)
 
 # ---------------------------------------------------------------------------
 print('\n%s' % ('-' * 56))

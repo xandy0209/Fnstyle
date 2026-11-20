@@ -2828,6 +2828,44 @@
       html += '</select></div>';
     }
 
+    /* 电压等级（v1.1.59）
+       官方表分三列：不满1千伏 / 1-10千伏 / 35-110千伏。
+       高峰平段价按电压等级不同；低谷价三档三等级完全相同。 */
+    var levels = prof.voltage_levels || [];
+    if (levels.length) {
+      var curV = cfg.voltage || prof.default_voltage || (levels[0] && levels[0].id) || '';
+      html += '<div class="tariff-field"><span class="tariff-lbl">电压等级</span>' +
+        '<select class="tariff-select" data-tariff-voltage>';
+      levels.forEach(function (lv) {
+        html += '<option value="' + esc(lv.id) + '"' +
+          (lv.id === curV ? ' selected' : '') + '>' + esc(lv.name) + '</option>';
+      });
+      html += '</select></div>';
+    }
+
+    /* 家庭人口数（v1.1.59）—— 「一户多人口」政策
+       依据 川发改价格〔2024〕668号：满 5 人每月 +100 度阶梯电量基数，
+       超出 5 人的部分按 30 度/人·月递增。需用户主动申请，故做成手填。 */
+    if (prof.supports_multi_person) {
+      html += '<div class="tariff-field"><span class="tariff-lbl">家庭人口</span>' +
+        '<input class="tariff-input" type="number" step="1" min="0" max="30" ' +
+        'data-tariff-people value="' +
+        (cfg.household_people ? esc(String(cfg.household_people)) : '') + '">' +
+        '<span class="tariff-unit">人（满5人起每月加100度阶梯电量）</span></div>';
+    }
+
+    /* 抄表周期（v1.1.59）
+       依据 川发改价格〔2012〕560号（五）：抄表周期为两个月的居民用户，
+       其分档电量按同档次月用电量的 2 倍确定。 */
+    if (prof.supports_meter_cycle) {
+      var mm = Number(cfg.meter_months || 1);
+      html += '<div class="tariff-field"><span class="tariff-lbl">抄表周期</span>' +
+        '<select class="tariff-select" data-tariff-meter>';
+      html += '<option value="1"' + (mm === 1 ? ' selected' : '') + '>每月一次</option>';
+      html += '<option value="2"' + (mm === 2 ? ' selected' : '') + '>两个月一次</option>';
+      html += '</select></div>';
+    }
+
     /* 手工单价（可留空 = 用地区标准价） */
     html += '<div class="tariff-field"><span class="tariff-lbl">自定义单价</span>' +
       '<input class="tariff-input" type="number" step="0.0001" min="0" ' +
@@ -2844,9 +2882,20 @@
     var flatRate = null;
     if (prof.id) {
       if (prof.has_tiers !== false) {
+        /* ⚠️ v1.1.59：把当前选中的电压等级带进表格，
+           峰价要按该等级取（不满1千伏 / 1-10千伏 / 35-110千伏 三档价不同）。
+           优先用面板上**用户当前选择**的值（未保存的编辑也即时可见），
+           没有则用后端返回的生效值。 */
+        var tbAct = {};
+        for (var k in d) {
+          if (Object.prototype.hasOwnProperty.call(d, k)) tbAct[k] = d[k];
+        }
+        var selV = document.querySelector(
+          '#monComputeBody [data-tariff-voltage]');
+        if (selV && selV.value) tbAct.voltage = selV.value;
         html += '<div class="tariff-table' +
           (prof.has_time_of_use !== false ? ' tariff-tb-tou' : '') + '">' +
-          tariffTableHtml(prof, d) + '</div>';
+          tariffTableHtml(prof, tbAct) + '</div>';
       } else {
         flatRate = (prof.peak_rates && prof.peak_rates[0] !== undefined)
           ? prof.peak_rates[0] : null;
@@ -2959,9 +3008,23 @@
     return html + '</div>';
   }
 
-  /* 当前地区生效的价目表（阶梯 × 峰谷） */
+  /* 当前地区生效的价目表（阶梯 × 峰谷）
+     ⚠️ v1.1.59：峰价按**当前电压等级**取（不满1千伏 / 1-10千伏 / 35-110千伏
+     三档价不同），否则用户在面板上切了电压等级、表格还是旧的峰价，
+     用户会照着错的价估电费。 */
   function tariffTableHtml(prof, active) {
     var peaks = prof.peak_rates || [];
+    /* ⚠️ v1.1.59：按当前选中的电压等级取峰价。
+       active.voltage 为空时回落到 prof.peak_rates（地区默认）。 */
+    if (active && active.voltage) {
+      var lvList = prof.voltage_levels || [];
+      for (var li = 0; li < lvList.length; li++) {
+        if (lvList[li].id === active.voltage && lvList[li].peak_rates) {
+          peaks = lvList[li].peak_rates;
+          break;
+        }
+      }
+    }
     var vw = prof.valley_rates_wet || [];
     var vd = prof.valley_rates_dry || [];
     var ts = prof.tiers_summer || [];
@@ -3033,12 +3096,18 @@
     var vs = box.querySelector('[data-tariff-vstart]');
     var ve = box.querySelector('[data-tariff-vend]');
     var rt = box.querySelector('[data-tariff-rate]');
+    var vt = box.querySelector('[data-tariff-voltage]');
+    var hp = box.querySelector('[data-tariff-people]');
+    var mm = box.querySelector('[data-tariff-meter]');
     var st = {
       prof: box.getAttribute('data-tariff-prof') || null,
       enabled: en ? !!en.checked : null,
       valley_start: vs ? vs.value : null,
       valley_end: ve ? ve.value : null,
       rate: (rt && rt.value !== '') ? rt.value : null,
+      voltage: vt ? vt.value : null,
+      people: hp ? hp.value : null,
+      meter_months: mm ? mm.value : null,
       months: null,
       prices: null,
       tiers: null
@@ -3097,6 +3166,40 @@
         rt.value = (ro === null || ro === undefined) ? '' : String(ro);
       }
     }
+    /* 电压等级 / 家庭人口 / 抄表周期（v1.1.59）
+       这三项都是**按地区**的配置 —— 换地区后必须回落到新地区的值，
+       否则会把成都的电压等级带到天津去算错电费。
+       ⚠️ 这段必须在「!sameProf 提前 return」**之前**执行：
+          提前 return 会让这三个框保留旧地区的值。 */
+    var cfgv = box.__tariffData && box.__tariffData.config;
+    var vt = box.querySelector('[data-tariff-voltage]');
+    if (vt) {
+      if (sameProf && st.voltage !== null && st.voltage !== undefined) {
+        vt.value = st.voltage;
+      } else {
+        vt.value = (cfgv && cfgv.voltage) ? cfgv.voltage : '';
+      }
+    }
+    var hp = box.querySelector('[data-tariff-people]');
+    if (hp) {
+      if (sameProf && st.people !== null && st.people !== undefined) {
+        hp.value = st.people;
+      } else {
+        /* ⚠️ 不能用真值判断：0 是合法的「不适用」值，
+           写成 (cfgv && cfgv.household_people) ? ... : '' 会把 0 变成空串。
+           显式判 undefined/null，其余（含 0）原样回填。 */
+        var pv = cfgv ? cfgv.household_people : undefined;
+        hp.value = (pv === undefined || pv === null) ? '' : String(pv);
+      }
+    }
+    var mm = box.querySelector('[data-tariff-meter]');
+    if (mm) {
+      if (sameProf && st.meter_months !== null && st.meter_months !== undefined) {
+        mm.value = st.meter_months;
+      } else {
+        mm.value = String((cfgv && cfgv.meter_months) || 1);
+      }
+    }
     if (!sameProf) return;
     var vs = box.querySelector('[data-tariff-vstart]');
     var ve = box.querySelector('[data-tariff-vend]');
@@ -3151,6 +3254,38 @@
     if (cb) {
       cb.addEventListener('change', function () { /* 立即保存 */ });
     }
+    /* 电压等级（v1.1.59）：切换后**即时**重画价目表。
+       ⚠️ 真实缺陷修复：之前电压下拉没有 change 监听，
+          用户切了「1-10 千伏」，表格里的峰价还是「不满 1 千伏」的
+          0.5224 —— 用户会照着错的价估电费。
+          这里用面板内已有的 voltage_levels 数据就地重算峰价，
+          不发请求、不改后端（保存仍然走原来的保存按钮）。 */
+    var vtSel = box.querySelector('[data-tariff-voltage]');
+    if (vtSel) {
+      vtSel.addEventListener('change', function () {
+        var tb = box.querySelector('.tariff-table');
+        if (!tb) return;
+        var d = box.__tariffData;
+        if (!d || !d.profile) return;
+        var lvList = d.profile.voltage_levels || [];
+        var peaks = null;
+        for (var i = 0; i < lvList.length; i++) {
+          if (lvList[i].id === vtSel.value && lvList[i].peak_rates) {
+            peaks = lvList[i].peak_rates;
+            break;
+          }
+        }
+        if (!peaks) return;
+        /* 就地更新三行的峰价单元格（表格结构：档位/电量/峰平/[低谷]） */
+        var rows = tb.querySelectorAll('.tariff-tb-row');
+        for (var r = 1; r < rows.length; r++) {
+          var cells = rows[r].querySelectorAll('span');
+          if (cells.length < 3) continue;
+          var pi = r - 1;
+          if (peaks[pi] !== undefined) cells[2].textContent = String(peaks[pi]);
+        }
+      });
+    }
     /* 季节参数：月份按钮点选（v1.1.57） */
     Array.prototype.forEach.call(
       box.querySelectorAll('[data-tariff-months]'), function (grp) {
@@ -3190,7 +3325,13 @@
             var wet = (hit.wet_months || []).indexOf(mo) > -1;
             j.is_summer_tier = summer;
             j.is_wet_season = wet;
-            j.active_tiers = summer ? hit.tiers_summer : hit.tiers_other;
+            /* ⚠️ v1.1.59：档位必须用后端算好的**生效档位**
+               （含抄表周期 ×2 / 一户多人口加成 / 跨月结转），
+               不能用档案里的原始档位 —— 否则表格显示的门槛
+               与真实计费口径对不上，用户按表估电费会算错。 */
+            j.active_tiers = hit.effective_tiers
+              ? hit.effective_tiers
+              : (summer ? hit.tiers_summer : hit.tiers_other);
             j.active_valley_rates = wet ? hit.valley_rates_wet : hit.valley_rates_dry;
           }
           /* ① 缓存同步更新，否则下一次 loadTariff 会用旧地区刷回来 */
@@ -3212,6 +3353,9 @@
       var vs = box.querySelector('[data-tariff-vstart]');
       var ve = box.querySelector('[data-tariff-vend]');
       var rt = box.querySelector('[data-tariff-rate]');
+      var vt = box.querySelector('[data-tariff-voltage]');
+      var hp = box.querySelector('[data-tariff-people]');
+      var mm = box.querySelector('[data-tariff-meter]');
       var regId = rg ? rg.value : 'sichuan';
       var payload = {
         enabled: !!(en && en.checked),
@@ -3220,6 +3364,18 @@
         valley_end: ve ? Number(ve.value) : 7,
         rate_override: (rt && rt.value !== '') ? Number(rt.value) : null
       };
+      /* 新增配置项（v1.1.59）：电压等级 / 家庭人口 / 抄表周期 */
+      if (vt) payload.voltage = vt.value;
+      if (hp) {
+        var ppl = Number(hp.value);
+        /* 空值 / 非法值一律按 0（不适用）提交，后端还会再校验一次 */
+        payload.household_people =
+          (isFinite(ppl) && ppl >= 0 && ppl <= 30) ? Math.floor(ppl) : 0;
+      }
+      if (mm) {
+        var mv = Number(mm.value);
+        payload.meter_months = (mv === 2) ? 2 : 1;
+      }
       /* 季节参数覆盖（v1.1.57）：把面板上的月份选择与电价输入收集起来。
          只提交**当前地区**的覆盖值，后端按地区分别存。 */
       var seasonBox = box.querySelector('[data-tariff-season]');

@@ -74,7 +74,7 @@ section('源码级：固定单价不显示档位表');
 check('monitor.js 判断 prof.has_tiers',
   /has_tiers\s*!==\s*false/.test(MON));
 check('has_tiers 为 false 时不渲染 .tariff-table',
-  /if\s*\(prof\.has_tiers\s*!==\s*false\)\s*\{[\s\S]{0,400}tariff-table/.test(MON));
+  /if\s*\(prof\.has_tiers\s*!==\s*false\)\s*\{[\s\S]{0,900}tariff-table/.test(MON));
 check('has_tiers 为 false 时把单价并入说明行（不重复渲染两行说明）',
   /flatRate\s*!==\s*null\s*\?\s*'（'\s*\+\s*flatRate/.test(MON) &&
   /flatRate\s*!==\s*null[\s\S]{0,80}元\/kWh/.test(MON));
