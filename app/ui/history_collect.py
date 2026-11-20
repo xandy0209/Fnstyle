@@ -183,106 +183,75 @@ def _day_key(ts):
 def daily_energy(rate_yuan_per_kwh=0.6, max_days=30, fill_days=0):
     """按天聚合用电量（1:1 对齐 fnmonitor 的 /api/daily 口径）。
 
-    fnmonitor 的每日用电柱状图是把 power 历史按自然日分桶、
-    每桶内做梯形积分（瓦 × 秒 / 3.6e6 = kWh），再按天倒序排列。
+    ⚠️ v1.1.53：数据来源改为「daily_summary 归档表 + 水位线后的实时尾段」
+       （HistoryStore.daily_rows），而不是直接扫 metrics 原始点。
+       原因：metrics 只保留 7 天，扫原始点最多只能拿到装应用之后的数据；
+       daily_summary 永久保留（400 天），才能在装上后立刻显示完整的历史天数。
+
+    积分口径（对齐 fnmonitor 的 _daily_aggregate）：
+      每个采样代表它之前的一个间隔 → e = 瞬时功率(W) × dt(s) / 3600000
+      dt 取相邻采样的实际间隔；断档（> 3 倍中位间隔）只按一个典型间隔计，
+      避免机器休眠后把那段时间算成巨大的耗电量。
 
     返回：{
       "days": [{"day": "2026-11-15", "kwh": 0.12, "cost": 0.07,
-                "power_h": 23.5, "has_data": True}, ...],
+                "power_h": 23.5, "avg_w": 28.1, "has_data": True}, ...],
       "rate_yuan_per_kwh": 0.6,
       "success": True,
     }
-    days 按日期升序；只包含有功率数据的天。
-    ⚠️ v1.1.52：传入 fill_days=n 时，会把序列补齐成最近 n 天
-       （无数据的天 kwh=0、has_data=False），使前端「近 n 天用电」
-       的标题与柱子数量保持一致。
+    days 按日期升序，**恒为 max_days 天**；无数据的天 kwh=None、has_data=False
+    （对齐 fnmonitor：缺失是 null 不是 0）。
     """
     rate = float(rate_yuan_per_kwh or 0.6)
-    pts = query_history("power", "all")
-    buckets = {}
-    if pts:
-        # 每段按其起点所在天归属；跨天段归到起点那天（与 fnmonitor 一致）
-        for i in range(1, len(pts)):
-            t0, v0 = pts[i - 1]
-            t1, v1 = pts[i]
-            dt = t1 - t0
-            if dt <= 0:
-                continue
-            w = (float(v0) + float(v1)) / 2.0
-            kwh = w * dt / 3.6e6
-            key = _day_key(t0)
-            b = buckets.setdefault(key, {"kwh": 0.0, "power_h": 0.0})
-            b["kwh"] += kwh
-            b["power_h"] += dt / 3600.0
+    store = _store()
+    if store is None:
+        return {"days": [], "rate_yuan_per_kwh": rate, "success": True}
 
-    days = []
-    for key in sorted(buckets.keys()):
-        b = buckets[key]
-        days.append({
-            "day": key,
-            "kwh": round(b["kwh"], 4),
-            "cost": round(b["kwh"] * rate, 2),
-            "power_h": round(b["power_h"], 2),
-            "has_data": True,
-        })
-    # 只保留最近 max_days 天
-    if max_days and len(days) > max_days:
-        days = days[-max_days:]
-    # ⚠️ v1.1.52：可选补齐「无数据的天」——
-    #   历史上只返回有功率数据的天，导致前端标题「近 N 天用电」的 N
-    #   实际等于「有数据的天数」（应用刚启用时是 2，标题就写「近 2 天」）。
-    #   补齐后标题与柱子数一致：没有数据的天 kwh=0、has_data=False，
-    #   前端画成空柱并淡化显示，随着历史积累自然填满。
-    if fill_days and fill_days > 0:
-        days = _fill_missing_days(days, fill_days, rate)
-    return {"days": days, "rate_yuan_per_kwh": rate, "success": True}
+    try:
+        # 至少取 max(days, 31) 天：今日/本月合计与柱状图共用一份数据
+        need = max(int(max_days or 30), 31)
+        data = store.daily_rows(need, default_dt=HISTORY_INTERVAL) or {}
+    except Exception:
+        data = {}
 
-
-def _fill_missing_days(days, n, rate):
-    """把每日用电序列补齐成最近 n 天（含无数据的空天）。
-
-    days: 已按日期升序排列的每日记录
-    n:    目标天数（向前补齐到今天为止）
-    返回: 长度恰好 n 的序列，按日期升序，末尾是今天
-    """
-    import datetime
-    today = datetime.date.today()
-    # 建立 date -> record 的映射
-    by_day = {}
-    for d in days:
-        try:
-            by_day[datetime.date.fromisoformat(d["day"])] = d
-        except Exception:
-            continue
+    # 生成完整 N 天序列（对齐 fnmonitor 的 api_daily）
+    now = time.time()
+    lt = time.localtime(now)
+    start = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1))
+    n = max(1, int(max_days or 30))
     out = []
     for i in range(n - 1, -1, -1):
-        dt = today - datetime.timedelta(days=i)
-        key = dt.isoformat()
-        if dt in by_day:
-            out.append(by_day[dt])
-        else:
-            out.append({
-                "day": key,
-                "kwh": 0.0,
-                "cost": 0.0,
-                "power_h": 0.0,
-                "has_data": False,
-            })
-    return out
+        day = time.strftime("%Y-%m-%d", time.localtime(start - i * 86400 + 3600))
+        d = data.get(day) or {}
+        has_power = "power_s" in d
+        kwh = d.get("kwh") if has_power else None
+        power_s = d.get("power_s") if has_power else None
+        out.append({
+            "day": day,
+            "has_data": bool(d),
+            "kwh": round(kwh, 4) if kwh is not None else None,
+            "cost": round(kwh * rate, 2) if kwh is not None else None,
+            "power_h": round(power_s / 3600.0, 2) if power_s is not None else None,
+            "avg_w": (round(kwh * 3600000.0 / power_s, 1)
+                      if kwh is not None and power_s else None),
+        })
+    return {"days": out, "rate_yuan_per_kwh": rate, "success": True,
+            "archived_until": (data.get("_meta") or {}).get("archived_until")}
 
 
 def avg_power():
     """平均功率（1:1 对齐 fnmonitor 的 avgW）。
 
     fnmonitor 的口径：
-      1. 优先用 /api/daily 里有数据的天的平均功率（按 kwh / power_h 反推）
+      1. 优先用每日汇总里有数据的天的平均功率（按 kwh / power_h 反推）
       2. 否则用功率历史的算术平均
       3. 都没有则返回 None
 
     返回 {"w": 瓦数, "basis": "口径说明", "n": 天数} 或 None
     """
     daily = daily_energy()
-    ds = [d for d in daily.get("days", []) if d.get("power_h", 0) > 0]
+    ds = [d for d in daily.get("days", [])
+          if d.get("kwh") is not None and (d.get("power_h") or 0) > 0]
     if ds:
         total_kwh = sum(d["kwh"] for d in ds)
         total_h = sum(d["power_h"] for d in ds)
@@ -333,19 +302,24 @@ def energy_stats(rate_yuan_per_kwh=0.6, uptime_seconds=None):
     month_start = time.mktime((lt.tm_year, lt.tm_mon, 1, 0, 0, 0, 0, 0, -1))
 
     # 取最长保留期的功率历史（7 天足够覆盖本月统计）
+    # ⚠️ v1.1.53：积分口径对齐 fnmonitor —— 每个采样代表它之前的一个间隔，
+    #   e = 瞬时功率 × dt / 3600000；断档（> 3 倍中位间隔）只按一个典型间隔计。
+    #   原先是梯形积分 ((v0+v1)/2 × dt / 3.6e6)，与 fnmonitor 口径不一致。
     pts = query_history("power", "7d")
     if pts:
         today_kwh = 0.0
         month_kwh = 0.0
-        for i in range(1, len(pts)):
-            t0, v0 = pts[i - 1]
-            t1, v1 = pts[i]
-            dt = t1 - t0
-            if dt <= 0:
-                continue
-            # 梯形积分：平均功率 × 时长
-            w = (float(v0) + float(v1)) / 2.0
-            kwh = w * dt / 3.6e6
+        ts_list = [p[0] for p in pts]
+        dts = sorted(ts_list[i + 1] - ts_list[i] for i in range(len(ts_list) - 1)
+                     if ts_list[i + 1] > ts_list[i])
+        med = dts[len(dts) // 2] if dts else float(HISTORY_INTERVAL)
+        cap = 3.0 * max(med, float(HISTORY_INTERVAL))
+        last = None
+        for t0, v0 in pts:
+            gap = (t0 - last) if last is not None else None
+            dt = gap if (gap is not None and 0 < gap <= cap) else med
+            last = t0
+            kwh = (float(v0) or 0.0) * dt / 3600000.0
             if t0 >= today_start:
                 today_kwh += kwh
             if t0 >= month_start:

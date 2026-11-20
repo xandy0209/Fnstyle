@@ -655,14 +655,13 @@ class Handler(BaseHTTPRequestHandler):
         return True
 
     def _handle_power_daily(self):
-        """每日用电量聚合：GET /api/power/daily?days=6
+        """每日用电量聚合：GET /api/power/daily?days=30
 
-        按自然日分桶，把功率历史梯形积分成每天的 kWh，
-        口径与 fnmonitor 的 /api/daily 一致。
+        数据来源 = daily_summary 归档表 + 水位线后的实时尾段
+        （对齐 fnmonitor 的 daily_rows），积分口径 = 瞬时功率 × 采样间隔。
 
-        ⚠️ v1.1.52：返回时补齐到 days 天（无数据的天 kwh=0、
-           has_data=False），让前端「近 N 天用电」的标题与柱子数一致
-           —— 否则应用刚启用时历史只有 2 天，标题会写成「近 2 天」。
+        ⚠️ v1.1.53：不再补齐「空天为 0」——对齐 fnmonitor，
+           无数据的天返回 kwh=null + has_data=false，前端不画柱。
         """
         try:
             import history_collect
@@ -683,14 +682,14 @@ class Handler(BaseHTTPRequestHandler):
             for kv in parts:
                 if kv.startswith("days="):
                     try:
-                        days = max(1, min(30, int(kv[5:])))
+                        days = max(1, min(400, int(kv[5:])))
                     except Exception:
                         pass
         except Exception:
             days = 30
 
         try:
-            result = history_collect.daily_energy(0.6, days, fill_days=days)
+            result = history_collect.daily_energy(0.6, days)
         except Exception as e:
             self._send_json(500, {"success": False, "error": str(e), "days": []})
             return True

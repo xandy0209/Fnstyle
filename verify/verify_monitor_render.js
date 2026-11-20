@@ -3561,7 +3561,8 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     ['power/stats 用相对路径 BASE + power/stats',
       /fetch\s*\(\s*BASE\s*\+\s*['"]power\/stats['"]/.test(src51)],
     ['power/daily 用相对路径 BASE + power/daily',
-      /fetch\s*\(\s*BASE\s*\+\s*['"]power\/daily\?days=6['"]/.test(src51)],
+      /fetch\s*\(\s*BASE\s*\+\s*['"]power\/daily\?days=['"] \+ PDaily_DAYS/.test(src51) ||
+      /fetch\s*\(\s*BASE\s*\+\s*['"]power\/daily\?days=30['"]/.test(src51)],
     ['index.cgi 有 /api/power/stats 路由（转发 9910）',
       /\/api\/power\/stats\)/.test(cgi51) &&
       /127\.0\.0\.1:9910\/api\/power\/stats/.test(cgi51)],
@@ -3590,62 +3591,115 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
 })();
 
 /* ===========================================================================
-   v1.1.52：每日用电卡片「近 2 天」→ 「近 6 天」
+   v1.1.53：能耗采集逻辑与界面呈现对齐 fnmonitor
    ---------------------------------------------------------------------------
-   用户要求把「近 2 天用电」卡片调整为「近 6 天用电」。
-   ⚠️ 坑：原标题是按 days.length 动态拼的 —— 历史库里只有 2 天数据时，
-        标题就显示「近 2 天用电」。光改文字会变成「标题写 6 天、只画 2 根柱」，
-        是假数据。
-   修法：① 后端 daily_energy 增加 fill_days 参数，把无数据的天补齐成空天
-            （kwh=0、has_data=False），返回长度恒等于请求天数；
-        ② 前端请求 days=6，标题固定写「近 6 天用电」；
-        ③ 无数据的天画成淡色基线（.ov-bar-col.nodata），与真实数据区分。
+   背景：用户对比 FnStyle 与 fnmonitor 的能耗截图，发现内容不一致 ——
+   fnmonitor 能显示最近 6 天能耗，FnStyle 只有 2 天。
+
+   实机核查结论（fnmonitor monitor.db vs FnStyle storage.db）：
+     · fnmonitor 采集起点 11-15 13:04，FnStyle 起点 11-19 15:21 → **差 4 天**；
+     · 同一天数值换算后一致（11-19: 0.6926/24h vs 0.2575/8.7h ≈ 0.255 ✓）；
+     · 采样间隔都是 60s、保留期都是 7 天；
+     · **核心缺口**：fnmonitor 有 daily_summary 归档表 + meta.daily_archived_until
+       水位线（原始点删了、每日汇总永久保留 400 天），FnStyle 完全没有。
+
+   本次改动：
+     ① 采集：新增 daily_summary 归档 + 水位线；cleanup 改为「先归档再删」；
+        积分口径由梯形积分改为 fnmonitor 的「瞬时值 × 中位间隔 med，
+        断档 > 3×med 按 med 计」。
+     ② 接口：无数据天返回 kwh=null + cost=null + power_h=null（不是 0），
+        补 avg_w 字段，days 恒为请求天数。
+     ③ 界面：回调 v1.1.52 的两处偏差 —— 标题改回动态「近 N 天用电」
+        （N = 实际有数据的天数），无数据天不画柱（从第一个有数据天起 slice）。
    =========================================================================== */
 (function () {
-  const src52 = fs.readFileSync(SRC, 'utf8');
-  const hist52 = fs.readFileSync(
+  const src53 = fs.readFileSync(SRC, 'utf8');
+  const hist53 = fs.readFileSync(
     path.join(__dirname, '..', 'app', 'ui', 'history_collect.py'), 'utf8');
-  const srv52 = fs.readFileSync(
+  const srv53 = fs.readFileSync(
     path.join(__dirname, '..', 'app', 'ui', 'fnstyle_server.py'), 'utf8');
-  const css52 = fs.readFileSync(
+  const st53 = fs.readFileSync(
+    path.join(__dirname, '..', 'app', 'ui', 'storage_collect.py'), 'utf8');
+  const css53 = fs.readFileSync(
     path.join(__dirname, '..', 'app', 'ui', 'static', 'css', 'app.css'), 'utf8');
-  let bad52 = 0;
+  let bad53 = 0;
 
-  const rules52 = [
-    ['前端声明了 PDaily_DAYS = 6（窗口天数常量）',
-      /var\s+PDaily_DAYS\s*=\s*6\b/.test(src52)],
-    ['请求用 days=6',
-      /power\/daily\?days=6/.test(src52)],
-    ['标题固定写「近 N 天用电」，不再按 days.length 动态拼',
-      /['"]近 ['"]\s*\+\s*PDaily_DAYS\s*\+\s*['"] 天用电/.test(src52) &&
-      !/days\.length\s*\?\s*['"]近 /.test(src52)],
-    ['空态标题也是「近 N 天用电」（不是近 30 天）',
-      !/近 30 天用电/.test(src52)],
-    ['后端 daily_energy 有 fill_days 参数',
-      /def daily_energy\([^)]*fill_days\s*=\s*0/.test(hist52)],
-    ['后端有补齐函数 _fill_missing_days',
-      /def _fill_missing_days/.test(hist52)],
-    ['补齐的天标记 has_data=False 且 kwh=0',
-      /"has_data":\s*False/.test(hist52) && /"kwh":\s*0\.0/.test(hist52)],
-    ['服务端调用时传了 fill_days',
-      /daily_energy\([^)]*fill_days\s*=\s*days/.test(srv52)],
-    ['前端对无数据的天加 nodata 标记',
-      /has_data\s*===\s*false/.test(src52) && /nodata/.test(src52)],
-    ['CSS 有 .ov-bar-col.nodata 样式（淡色基线）',
-      /\.ov-bar-col\.nodata/.test(css52)],
-    ['avg_power 未传 fill_days（不能被补齐的 0 天稀释平均值）',
-      /daily_energy\(\s*\)/.test(hist52)],
-    ['avg_power 仍用 power_h > 0 过滤空天',
-      /power_h["\']?\s*,\s*0\s*\)\s*>\s*0/.test(hist52)],
+  const rules53 = [
+    /* ---- 采集逻辑：归档机制 ---- */
+    ['storage_collect 建了 daily_summary 表',
+      /CREATE TABLE IF NOT EXISTS daily_summary/.test(st53)],
+    ['storage_collect 建了 meta 表（水位线存储）',
+      /CREATE TABLE IF NOT EXISTS meta/.test(st53)],
+    ['有 _daily_watermark（读 meta.daily_archived_until 水位线）',
+      /def _daily_watermark/.test(st53) && /daily_archived_until/.test(st53)],
+    ['有 _daily_aggregate（按天汇总 metrics）',
+      /def _daily_aggregate/.test(st53)],
+    ['有 archive_daily（归档并推进水位线）',
+      /def archive_daily/.test(st53)],
+    ['有 daily_rows（归档部分 + 水位线后的实时尾段）',
+      /def daily_rows/.test(st53)],
+    ['归档常量 DAILY_KEEP_DAYS=400 / DAILY_CHUNK=7天',
+      /DAILY_KEEP_DAYS\s*=\s*400/.test(st53) && /DAILY_CHUNK\s*=\s*7\s*\*\s*86400/.test(st53)],
+    ['cleanup 先归档再删（否则原始点删了就永久没了）',
+      /def cleanup[\s\S]{0,900}?archive_daily[\s\S]{0,900}?DELETE FROM metrics/.test(st53)],
+    ['daily_rows 里用了「已归档 + 实时尾段」两段式',
+      /FROM daily_summary WHERE day >= \?/.test(st53) &&
+      /_daily_aggregate\(conn, tail_start/.test(st53)],
+    /* ---- 采集逻辑：积分口径对齐 fnmonitor ---- */
+    ['聚合用「瞬时值 × dt / 3600000」（fnmonitor 口径）',
+      /3600000\.0/.test(st53) && /\/ 3600000/.test(st53)],
+    ['聚合用中位间隔 med + 断档 3 倍上限',
+      /med = dts\[len\(dts\) \/\/ 2\]/.test(st53) && /cap = 3\.0 \* max/.test(st53)],
+    ['history_collect 的 energy_stats 也改成中位间隔口径',
+      /med = dts\[len\(dts\) \/\/ 2\]/.test(hist53) && /3600000\.0/.test(hist53)],
+    ['已废弃梯形积分 ((v0+v1)/2 × dt / 3.6e6)',
+      !/\(float\(v0\) \+ float\(v1\)\) \/ 2\.0/.test(hist53)],
+    /* ---- 接口返回格式 ---- */
+    ['daily_energy 改用 store.daily_rows（不再是直接扫 metrics）',
+      /store\.daily_rows/.test(hist53)],
+    ['无数据天 kwh=None（不是 0）',
+      /"kwh":\s*round\(kwh, 4\) if kwh is not None else None/.test(hist53)],
+    ['无数据天 cost=None、power_h=None',
+      /"cost":\s*round\(kwh \* rate, 2\) if kwh is not None else None/.test(hist53) &&
+      /"power_h":\s*round\(power_s \/ 3600\.0, 2\) if power_s is not None else None/.test(hist53)],
+    ['返回 avg_w 字段（当天平均功率）',
+      /"avg_w":/.test(hist53)],
+    ['days 恒为请求天数（用 range 生成完整序列）',
+      /for i in range\(n - 1, -1, -1\)/.test(hist53)],
+    ['已删除 _fill_missing_days（补齐逻辑不再需要）',
+      !/def _fill_missing_days/.test(hist53)],
+    ['服务端不再传 fill_days',
+      !/daily_energy\([^)]*fill_days/.test(srv53)],
+    ['服务端 days 上限 400（对齐 DAILY_KEEP_DAYS）',
+      /min\(400, int\(kv\[5:\]\)\)/.test(srv53)],
+    /* ---- 界面呈现对齐 ---- */
+    ['PDaily_DAYS = 30（对齐 fnmonitor 的 DAY_BARS）',
+      /var\s+PDaily_DAYS\s*=\s*30\b/.test(src53)],
+    ['请求用 days=PDaily_DAYS 变量',
+      /power\/daily\?days=['"] \+ PDaily_DAYS/.test(src53)],
+    ['标题动态化：近 N 天用电（N = 实际有数据的天数）',
+      /近 ['"] \+ days\.length \+ ['"] 天用电/.test(src53)],
+    ['空态标题是「近 30 天用电」（对齐 fnmonitor）',
+      /近 30 天用电/.test(src53)],
+    ['无数据天不画柱：从第一个有数据的天起 slice',
+      /all\.slice\(first\)/.test(src53) &&
+      /all\[fi\]\.has_data && all\[fi\]\.kwh !== null/.test(src53)],
+    ['图例写「每日 kWh · 功率历史积分」（有 daily 源时）',
+      /每日 kWh · 功率历史积分/.test(src53)],
+    ['已删除 nodata 列与 CSS 规则（v1.1.52 的占位样式）',
+      !/\bnodata\b/.test(src53) &&
+      !/\.ov-bar-col\.nodata\s*\{/.test(css53)],
+    ['avg_power 仍用 kwh is not None + power_h>0 过滤空天',
+      /d\.get\("kwh"\) is not None and \(d\.get\("power_h"\) or 0\) > 0/.test(hist53)],
   ];
 
-  rules52.forEach(([label, ok]) => {
+  rules53.forEach(([label, ok]) => {
     console.log((ok ? '  ✓ ' : '  ✗ ') + label);
-    if (!ok) bad52++;
+    if (!ok) bad53++;
   });
 
-  if (bad52) {
-    console.error('❌ v1.1.52 断言失败 ' + bad52 + ' 项');
+  if (bad53) {
+    console.error('❌ v1.1.53 断言失败 ' + bad53 + ' 项');
     process.exitCode = 1;
   }
 })();

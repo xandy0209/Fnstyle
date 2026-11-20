@@ -2094,6 +2094,15 @@ class HistoryStore(object):
         conn.execute("""CREATE TABLE IF NOT EXISTS metrics (
                        ts REAL NOT NULL, metric TEXT NOT NULL, value REAL NOT NULL)""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_metric_ts ON metrics(metric, ts)")
+        # ⚠️ v1.1.53：每日汇总归档表（对齐 fnmonitor 的 daily_summary）。
+        #   metrics 是「原始采样点」，保留期只有 7 天，删了就永久没了；
+        #   daily_summary 存「按天汇总」，永久保留（DAILY_KEEP_DAYS=400 天）。
+        #   两者配合才能让「近 30 天用电」在应用刚装上时也拿得到历史。
+        conn.execute("""CREATE TABLE IF NOT EXISTS daily_summary (
+                       day TEXT NOT NULL, metric TEXT NOT NULL, value REAL NOT NULL,
+                       PRIMARY KEY(day, metric))""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS meta (
+                       key TEXT PRIMARY KEY, value TEXT)""")
         conn.commit()
         return conn
 
@@ -2143,6 +2152,145 @@ class HistoryStore(object):
         except Exception:
             return []
 
+    # ---------- 每日汇总归档（对齐 fnmonitor 的 daily_summary 机制）----------
+
+    DAILY_KEEP_DAYS = 400      # 每日汇总保留天数
+    DAILY_CHUNK = 7 * 86400    # 每次归档推进的秒数（7 天一段）
+    _DAILY_MAX_KEYS = ("cpu_max",)
+    _UPSERT_DAILY_ADD = ("INSERT INTO daily_summary(day, metric, value) VALUES(?,?,?) "
+                         "ON CONFLICT(day, metric) DO UPDATE SET value=value+excluded.value")
+    _UPSERT_DAILY_MAX = ("INSERT INTO daily_summary(day, metric, value) VALUES(?,?,?) "
+                         "ON CONFLICT(day, metric) DO UPDATE SET value=max(value, excluded.value)")
+
+    @staticmethod
+    def _day_start(ts):
+        """时间戳 → 当天 00:00 的时间戳（本地时区）。"""
+        lt = time.localtime(ts)
+        return time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1))
+
+    def _daily_watermark(self, conn):
+        """读归档水位线：已归档到哪个时间戳了。
+
+        返回 (水位线, 是否已初始化)。
+        首次（从未归档过）时从「保留期起点当天 0 点」开始，库里实际只有
+        保留期内的数据，从更早的地方开始归档也扫不出东西。
+        """
+        r = conn.execute("SELECT value FROM meta WHERE key='daily_archived_until'").fetchone()
+        if r:
+            try:
+                return float(r[0]), True
+            except Exception:
+                pass
+        return self._day_start(time.time() - self.DAILY_KEEP_DAYS * 86400), False
+
+    def _daily_aggregate(self, conn, start, end, default_dt=60):
+        """汇总 metrics 中 start <= ts < end 的行 → {(day, key): value}。只读。
+
+        功率 → kWh 的口径（对齐 fnmonitor）：每个采样代表它之前的一个间隔，
+        所以 e = 瞬时功率 × 该间隔秒数 / 3600000；间隔取实际相邻采样差，
+        断档（> 3 倍中位间隔）只按一个典型间隔计，避免机器休眠一天后
+        把那段时间算成巨大的耗电量。
+        """
+        acc = {}
+
+        def add(day, k, v):
+            acc[(day, k)] = acc.get((day, k), 0.0) + v
+
+        def dk(ts):
+            lt = time.localtime(ts)
+            return "%04d-%02d-%02d" % (lt.tm_year, lt.tm_mon, lt.tm_mday)
+
+        pr = conn.execute(
+            "SELECT ts, value FROM metrics WHERE metric=? AND ts<? ORDER BY ts DESC LIMIT 1",
+            ("power", start)).fetchone()
+        pts = conn.execute(
+            "SELECT ts, value FROM metrics WHERE metric=? AND ts>=? AND ts<? ORDER BY ts",
+            ("power", start, end)).fetchall()
+        if pts:
+            ts_list = ([pr[0]] if pr else []) + [t for t, _ in pts]
+            dts = sorted(ts_list[i + 1] - ts_list[i] for i in range(len(ts_list) - 1)
+                         if ts_list[i + 1] > ts_list[i])
+            med = dts[len(dts) // 2] if dts else float(default_dt)
+            cap = 3.0 * max(med, float(default_dt or 0))
+            last = pr[0] if pr else None
+            for t, v in pts:
+                gap = (t - last) if last is not None else None
+                dt = gap if (gap is not None and 0 < gap <= cap) else med
+                last = t
+                day = dk(t)
+                e = (v or 0.0) * dt / 3600000.0
+                add(day, "kwh", e)
+                add(day, "kwh@%02d" % time.localtime(t).tm_hour, e)
+                add(day, "power_s", dt)
+        return acc
+
+    def archive_daily(self, target, default_dt=60):
+        """把 [水位线, target) 的 metrics 汇总进 daily_summary（7 天一段独立事务）。"""
+        if not self.db_path:
+            return 0
+        n = 0
+        try:
+            conn = self._connect(write=True)
+            try:
+                wm, _ = self._daily_watermark(conn)
+                while wm < target:
+                    end = min(float(target), wm + self.DAILY_CHUNK)
+                    with conn:
+                        agg = self._daily_aggregate(conn, wm, end, default_dt)
+                        for (day, k), v in agg.items():
+                            conn.execute(self._UPSERT_DAILY_MAX if k in self._DAILY_MAX_KEYS
+                                         else self._UPSERT_DAILY_ADD, (day, k, v))
+                            n += 1
+                        conn.execute("INSERT INTO meta(key, value) VALUES('daily_archived_until', ?) "
+                                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                                     (repr(end),))
+                    wm = end
+                keep = time.strftime("%Y-%m-%d",
+                                     time.localtime(time.time() - self.DAILY_KEEP_DAYS * 86400))
+                with conn:
+                    conn.execute("DELETE FROM daily_summary WHERE day < ?", (keep,))
+            finally:
+                conn.close()
+        except Exception:
+            return 0
+        return n
+
+    def daily_rows(self, days, default_dt=60):
+        """最近 days 天（含今天）的每日汇总：已归档部分 + 水位线之后的实时尾段。
+
+        返回 {day: {key: value}}。
+        """
+        if not self.db_path:
+            return {}
+        now = time.time()
+        first = time.strftime("%Y-%m-%d",
+                               time.localtime(self._day_start(now) - (int(days) - 1) * 86400 + 3600))
+        out = {}
+        try:
+            conn = self._connect()
+            try:
+                for day, k, v in conn.execute(
+                        "SELECT day, metric, value FROM daily_summary WHERE day >= ?", (first,)):
+                    out.setdefault(day, {})[k] = v
+                wm, has = self._daily_watermark(conn)
+                # 从未归档过（刚装上）时只实时汇总今天，避免扫全库
+                tail_start = wm if has else max(wm, self._day_start(now))
+                for (day, k), v in self._daily_aggregate(conn, tail_start, now + 1,
+                                                          default_dt).items():
+                    if day < first:
+                        continue
+                    d = out.setdefault(day, {})
+                    if k in self._DAILY_MAX_KEYS:
+                        d[k] = max(d.get(k, v), v)
+                    else:
+                        d[k] = d.get(k, 0.0) + v
+            finally:
+                conn.close()
+        except Exception:
+            return {}
+        out["_meta"] = {"archived_until": wm if has else None}
+        return out
+
     # ---------- 清理 ----------
 
     def cleanup(self, retention_days=None):
@@ -2150,12 +2298,30 @@ class HistoryStore(object):
 
         ⚠️ retention_days=0 表示「立即清掉全部」，必须显式判 None ——
         用 `retention_days or DEFAULT` 会把 0 当成假值，误用默认 7 天。
+
+        ⚠️ v1.1.53：**先归档再删**（对齐 fnmonitor 的 cleanup 顺序）。
+           metrics 原始点只保留 7 天，删掉就永久没了；必须先把它们按天
+           汇总进 daily_summary（永久保留），否则「近 30 天用电」永远只有
+           装应用那几天的数据。
+
+        ⚠️ 归档目标是 **cutoff（保留期边界）**，不是 now-600。
+           删的是 ts < cutoff 的行，所以必须把 [水位线, cutoff) 全归档完；
+           若只归档到 now-600，保留期边界前的那批点会被直接删掉、永久丢失。
+           （fnmonitor 用 max(tgt, cutoff) 取较晚者，靠每小时滚动归档弥补，
+             但那要求归档频率 ≥ 删除频率；这里每小时清理一次，
+             归档到 cutoff 才真正不丢数据。）
         """
         if not self.db_path:
             return 0
         days = HISTORY_RETENTION_DAYS if retention_days is None else retention_days
         try:
             cutoff = time.time() - days * 86400
+            # ⚠️ 先归档再删：archive_daily 自己开连接，必须在删除事务之外调用，
+            #    否则同一个库上并发写会撞 SQLite 锁。
+            try:
+                self.archive_daily(cutoff)
+            except Exception:
+                pass
             conn = self._connect(write=True)
             try:
                 cur = conn.execute("DELETE FROM metrics WHERE ts < ?", (cutoff,))

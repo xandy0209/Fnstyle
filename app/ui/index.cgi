@@ -24,7 +24,7 @@ set -uo pipefail
 # ------------------------- 版本与更新检查 -------------------------
 # ⚠️ 必须与 manifest 的 version 保持一致（自动更新靠它判断「是否比线上新」）。
 # GitHub 发布新版本时，两处都要改：manifest 的 version + 本常量。
-APP_VERSION="1.1.52"
+APP_VERSION="1.1.53"
 
 # ----------------------------- 路径配置 -----------------------------
 # APP_ROOT 是 fnOS 安装后创建的标准软链：
@@ -2395,7 +2395,7 @@ PY
         case "$PD_DAYS" in
             ""|*[!0-9]*) PD_DAYS=30 ;;
         esac
-        [ "$PD_DAYS" -gt 365 ] && PD_DAYS=365
+        [ "$PD_DAYS" -gt 400 ] && PD_DAYS=400
         PDO_URL="http://127.0.0.1:9910/api/power/daily?days=${PD_DAYS}"
         PDO_FILE="${TMPDIR:-/tmp}/fnstyle_pdaily.$$"
         if curl -s --max-time 15 -o "$PDO_FILE" "$PDO_URL" 2>/dev/null && [ -s "$PDO_FILE" ]; then

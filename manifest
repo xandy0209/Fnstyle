@@ -1,5 +1,5 @@
 appname               = fnstyle
-version               = 1.1.52
+version               = 1.1.53
 display_name          = FnStyle
 desc                  = 集中管理飞牛个性化设置与丰富主题库：网站标题、登录框、LOGO、壁纸、毛玻璃、任务栏等独立配置，内置多源主题库，支持一键应用到 fnOS 系统，卸载后自动还原系统默认样式。
 platform              = all
@@ -15,5 +15,5 @@ desktop_applaunchname = fnstyle.main
 service_port          = 9910
 checkport             = false
 ctl_stop              = true
-changelog             = 1.1.52：每日用电卡片「近 2 天」调整为「近 6 天」。⚠️ 坑：原标题按 days.length 动态拼接 —— 历史库里只有 2 天数据时标题就写成「近 2 天用电」；光改文字会变成「标题写 6 天、只画 2 根柱」属于假数据。**修法**：① 后端 history_collect.daily_energy 新增 fill_days 参数，把无数据的天补齐成空天（kwh=0、power_h=0、has_data=False），返回长度恒等于请求天数；② 前端请求 days=6（新增常量 PDaily_DAYS），标题固定写「近 6 天用电」，不再随数据量变化；③ 无数据的天画成淡色基线（.ov-bar-col.nodata，app.css），与真实数据柱区分，悬停提示显示「无数据」；④ avg_power 仍不传 fill_days 且按 power_h>0 过滤，避免补齐的 0 天稀释平均功耗。verify 新增 v1.1.52 断言 12 项，前端 877 项全通过。
-checksum              = c30459e5b4e0f2be6633d6f96fa2dcf4
+changelog             = 1.1.53：能耗采集逻辑与界面呈现对齐 fnmonitor。**背景**：用户对比发现 fnmonitor 能显示最近 6 天能耗、FnStyle 只有 2 天。**实机核查结论**（直读 fnmonitor monitor.db 与 FnStyle storage.db）：① 根因是采集起点差 4 天（fnmonitor 11-15 13:04 / FnStyle 11-19 15:21）；② 同一天数值换算后一致（11-19：0.6926kWh÷24h vs 0.2575kWh÷8.7h ≈ 0.255 ✓）；③ 采样间隔都是 60s、保留期都是 7 天；④ **核心缺口** —— fnmonitor 有 daily_summary 归档表 + meta.daily_archived_until 水位线（原始点删了、每日汇总永久保留 400 天），FnStyle 完全没有。**改动**：① 采集：storage_collect 新增 daily_summary 归档表 + meta 水位线 + _daily_watermark/_daily_aggregate/archive_daily/daily_rows，cleanup 改为「先归档再删」（原始点 7 天到期前先落盘每日汇总）；积分口径由梯形积分改为 fnmonitor 的「瞬时值 × 中位间隔 med，断档 > 3×med 按 med 计」，避免休眠后把整天算成巨大耗电；② 接口：/api/power/daily 无数据天返回 kwh=null、cost=null、power_h=null（不是 0，对齐 fnmonitor），补 avg_w 字段，days 恒为请求天数，days 上限 400；③ 界面：回调 v1.1.52 的两处偏差 —— 标题改回动态「近 N 天用电」（N=实际有数据的天数），无数据天不画柱（从第一个有数据的天起 slice），图例改「每日 kWh · 功率历史积分」，请求天数回到 30（对齐 fnmonitor DAY_BARS）。verify 新增 v1.1.53 断言 30 项，前端 894 项全通过。
+checksum              = a6b511fcb24686c433ccde23ca1b6c0c
