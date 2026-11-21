@@ -31,6 +31,26 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'
 FAILED = []
 
 
+def _cur_version():
+    """当前版本号：直接从 manifest 读取。
+    ⚠️ v1.1.69：原来这里硬编码 '1.1.68'，每次升版断言就失效一次。
+    改成动态读取，避免以后再踩。
+    """
+    try:
+        mf = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          '..', 'manifest')
+        with open(mf, encoding='utf-8') as f:
+            for line in f:
+                if line.startswith('version'):
+                    return line.split('=', 1)[1].strip()
+    except Exception:
+        pass
+    return ''
+
+
+CUR_VER = _cur_version()
+
+
 def check(label, cond, extra=""):
     print(("  ✓ " if cond else "  ✗ ") + label + ("  → %s" % extra if extra else ""))
     if not cond:
@@ -286,7 +306,9 @@ def main():
     check("⚠️ v1.1.68：明细带上 ifindex",
           '"ifindex": _ifindex' in src)
     check("⚠️ v1.1.68：上报部署探针 collectVersion",
-          '"collectVersion": COLLECT_VERSION' in src and 'COLLECT_VERSION = "1.1.68"' in src)
+          '"collectVersion": COLLECT_VERSION' in src and
+          ('COLLECT_VERSION = "%s"' % CUR_VER) in src,
+          '期望 COLLECT_VERSION = "%s"' % CUR_VER)
     check("隧道口单独标记（tunnel）",
           '"tunnel"' in src and 'nd["tunnel"]' in src)
 

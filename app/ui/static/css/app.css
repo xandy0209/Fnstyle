@@ -5025,3 +5025,220 @@ html.mon-scroll-lock body {
     var(--border-strong) 0 1.5px,
     transparent 1.5px 3.5px);
 }
+
+/* =====================================================================
+   系统重要内容概览（六卡片）—— v1.1.69
+   对齐 fnmonitor 总览页的「核心指标」模块（.grid.metrics / .card.metric）。
+   每张卡：标题 + 状态词 / 点阵大数字 + 环形仪表 / 副标题 / 迷你趋势线。
+   ===================================================================== */
+.ov-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+}
+/* ⚠️ v1.1.69：卡片用 **grid**（对齐 fnmonitor 的 .metric）——
+   两列（数字区 | 仪表区），仪表在数字**右侧**同排。
+   之前用 flex 纵向 → 仪表掉到数字下方单独一行，
+   卡片被拉得很高、右侧大片留白，与参考实现差很多。 */
+.ov-metric {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.05rem 1.15rem .85rem;
+  min-width: 0;
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto 1fr auto;
+  column-gap: .9rem;
+  row-gap: .45rem;
+  transition: border-color .26s ease, transform .26s ease, box-shadow .26s ease;
+}
+.ov-metric:hover {
+  border-color: var(--border-strong);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, .18);
+}
+.ov-metric:active { transform: translateY(0) scale(.995); }
+.ov-metric:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* 告警态：状态词与描边一起变色 */
+.ov-metric.is-warn { border-color: color-mix(in srgb, var(--warning) 45%, var(--border)); }
+.ov-metric.is-crit { border-color: color-mix(in srgb, var(--danger) 50%, var(--border)); }
+.ov-metric.is-warn .ov-m-state { color: var(--warning); }
+.ov-metric.is-crit .ov-m-state { color: var(--danger); }
+
+.ov-m-top {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .5rem;
+  min-width: 0;
+}
+.ov-m-label {
+  font-size: .95rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+.ov-m-state {
+  font-size: .78rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 主体：点阵大数字 + 环形仪表 */
+.ov-m-main {
+  grid-column: 1;
+  grid-row: 2;
+  align-self: end;
+  display: flex;
+  align-items: baseline;
+  gap: .35rem;
+  min-width: 0;
+  min-height: 54px;
+}
+/* 点阵数字（SVG 圆点阵） */
+.ov-dm {
+  display: inline-flex;
+  align-items: flex-end;
+  min-width: 0;
+  min-height: 34px;
+}
+.ov-dm > svg {
+  height: 34px;
+  width: auto;
+  max-width: 100%;
+  display: block;
+}
+.ov-dm circle { fill: var(--bg-hover); }
+.ov-dm circle.on { fill: var(--accent); }
+.ov-unit {
+  font-size: .95rem;
+  color: var(--text-muted);
+  margin-left: .3rem;
+  white-space: nowrap;
+}
+
+/* 网络卡：上下行两行（无仪表 → 数字区横跨两列） */
+.ov-net-vals {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: .2rem;
+  min-width: 0;
+}
+.ov-net-vals .row {
+  display: flex;
+  align-items: flex-end;
+  gap: .35rem;
+  min-width: 0;
+}
+.ov-net-vals .row.sec { opacity: .78; }
+.ov-arrow {
+  font-size: 1rem;
+  line-height: 1;
+  color: var(--text-muted);
+  flex: none;
+  margin-bottom: .18rem;
+}
+.ov-net-vals .ov-dm { min-height: 22px; }
+.ov-net-vals .ov-dm > svg { height: 22px; }
+.ov-net-vals .ov-unit { font-size: .8rem; margin-left: .2rem; }
+
+/* 环形仪表（对齐 fnmonitor 的 .metric .m-gauge：92×92，在数字右侧）
+   中心图标：fnmonitor 用 24×24 的 sprite（#i-bolt 之类），
+   这里用 16×16 的 path 经 translate+scale 放大到 24×24 居中。 */
+.ov-m-gauge {
+  grid-column: 2;
+  grid-row: 2;
+  align-self: center;
+  width: 92px;
+  height: 92px;
+  display: grid;
+  place-items: center;
+}
+.ov-gauge { width: 100%; height: 100%; display: block; }
+.ov-gauge-track { stroke: var(--bg-hover); }
+.ov-gauge-val { stroke: var(--accent); transition: stroke-dashoffset .5s ease, stroke .3s ease; }
+.ov-gauge-ico { color: var(--text-muted); }
+
+.ov-m-sub {
+  grid-column: 1 / -1;
+  font-size: .8rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+  min-height: 1.2em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+}
+
+/* 迷你趋势线 */
+.ov-m-foot { grid-column: 1 / -1; min-height: 40px; }
+.ov-spark {
+  width: 100%;
+  height: 40px;
+  display: block;
+  overflow: visible;
+}
+.ov-spark-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+.ov-spark-line.l2 { stroke: var(--text-muted); }
+.ov-spark-area { fill: var(--accent-soft); stroke: none; }
+.ov-spark-dot { fill: var(--accent); }
+
+/* 盘位指示条（对齐 fnmonitor 的 .drive-pips） */
+.ov-pips {
+  display: flex;
+  gap: 6px;
+  align-items: flex-end;
+  height: 44px;
+}
+.ov-pips > div {
+  flex: 1;
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.ov-pips .ov-pip {
+  height: 22px;
+  border-radius: 6px;
+  background: var(--bg-hover);
+  position: relative;
+  overflow: hidden;
+}
+.ov-pips .ov-pip > i {
+  position: absolute;
+  inset: auto 0 0 0;
+  background: var(--accent);
+  /* 不设 border-radius —— 贴底填充由父级 .ov-pip 的 overflow:hidden 裁切，
+     与 fnmonitor 的 .drive-pips .pip>i 一致 */
+}
+.ov-pips span {
+  font: 500 10.5px/1 var(--font-mono, monospace);
+  color: var(--text-muted);
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 窄屏：两列 / 一列 */
+@media (max-width: 1100px) {
+  .ov-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 680px) {
+  .ov-metrics { grid-template-columns: 1fr; }
+}

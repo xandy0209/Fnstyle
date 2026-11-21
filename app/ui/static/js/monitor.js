@@ -1425,6 +1425,28 @@
      渲染委托给 compute.js —— 按 fnmonitor 1:1 还原的三张卡片
      （每核点阵瓦片 / DIMM 内存条 SVG / 显卡引擎明细条）。
      这里只做兜底：compute.js 没加载时给一个提示，不让板块空白。 */
+  /* ---------------- 2.5 系统重要内容概览（v1.1.69）----------------
+     对齐 fnmonitor 总览页的「核心指标」模块：六张卡片
+     （处理器 / 内存 / 存储 / 网络 / 温度 / 功耗），
+     每张卡 = 点阵大数字 + 环形仪表 + 副标题 + 迷你趋势线。
+     实现在 static/js/overview.js（独立文件，避免 monitor.js 继续膨胀）。 */
+  function renderOverview(d, stats) {
+    var box = $('#monOverview');
+    if (!box) return;
+    if (!window.FnStyleOverview || !window.FnStyleOverview.render) {
+      box.innerHTML = '<div class="loading"><span class="spin"></span> 概览模块未加载</div>';
+      return;
+    }
+    /* 把独立的功耗统计挂上去（可能为 null —— 还没拿到 / 接口失败） */
+    var payload = d;
+    if (stats) {
+      payload = {};
+      for (var k in d) payload[k] = d[k];
+      payload.powerStats = stats;
+    }
+    window.FnStyleOverview.render(box, payload);
+  }
+
   function renderCore(d) {
     var box = $('#monCore');
     if (!box) return;
@@ -2721,6 +2743,9 @@
         pstatsFailAt = 0;
         /* 拿到统计后重画总览四格（此时才有电费 / 预计值）*/
         if (lastData) renderPowerOverview(lastData);
+        /* ⚠️ v1.1.69：概览六卡片的功耗副标题也依赖这份统计
+           （「今日 0.60 kWh · ¥0.36」），拿到后要重画一次。 */
+        if (lastData) renderOverview(lastData, pstats);
       } else {
         pstatsFailAt = Date.now();
         renderPowerStatsEmpty('用电统计暂不可用');
@@ -3047,6 +3072,10 @@
     /* 温度和散热 / 能耗：总览卡片形态（对齐 fnmonitor 的 overview 模块）*/
     renderTempOverview(d);
     renderPowerOverview(d);
+    /* ⚠️ v1.1.69：系统重要内容概览（六卡片）——
+       放在存储卡片**上方**。它需要 powerStats（独立接口异步拿），
+       所以把已有的 pstats 一并传进去。 */
+    renderOverview(d, pstats);
     /* 用电统计与每日用电是独立接口，异步补齐后回调重画 */
     ensurePowerStats();
     ensurePowerDaily();

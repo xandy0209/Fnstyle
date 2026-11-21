@@ -64,7 +64,7 @@ except Exception:  # pragma: no cover
 #    （nicDetail 里有新字段、但缺 tunnel 键，正是新旧代码混合的指纹）。
 #    这个常量会随 power 数据一起上报，从 API 一眼就能确认
 #    「NAS 上跑的到底是哪一版代码」，省掉逐字段比对。
-COLLECT_VERSION = "1.1.68"
+COLLECT_VERSION = "1.1.69"
 
 
 # ----------------------------- 基础工具 -----------------------------
@@ -969,6 +969,174 @@ def _rapl_sample():
     return out
 
 
+def _net_dev_counters():
+    """读 /proc/net/dev，返回 {接口名: (rx_bytes, tx_bytes)}。
+
+    与 fnmonitor 的 read_net_dev() 同口径：
+      · 字段 0 = 收包字节，字段 8 = 发包字节；
+      · 解析失败的行直接跳过，不影响其它接口。
+    """
+    out = {}
+    try:
+        with open("/proc/net/dev", "r", encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+    except Exception:
+        return out
+    for line in lines:
+        if ":" not in line:
+            continue
+        name, _, rest = line.partition(":")
+        name = name.strip()
+        fields = rest.split()
+        if len(fields) < 16:
+            continue
+        try:
+            out[name] = (int(fields[0]), int(fields[8]))
+        except (ValueError, IndexError):
+            continue
+    return out
+
+
+# 虚拟网卡前缀 —— 这些接口的流量不计入「整机网络」统计。
+# ⚠️ 与 v1.1.68 的物理网口判定**刻意用不同的口径**：
+#    物理网口数只认有 PCI device 的接口（用户问「我有几个网口」）；
+#    而整机流量要把**所有真实对外通信**都算进来 —— 包括
+#    tailscale0（VPN 隧道，用户确实在用它传数据）。
+#    但 docker0 / br-* / veth* 是**容器内部的虚拟转发**，
+#    它们转发的是同一份流量，计入会重复统计 → 必须排除。
+VIRT_IFACE_PREFIXES = ("docker", "br-", "veth", "virbr", "tun", "bonding_masters")
+
+
+def _counted_ifaces(counters):
+    """从 {接口: (rx,tx)} 里挑出「整机流量」应计入的接口。
+
+    排除 lo（本地回环）与容器虚拟桥（会重复统计）。
+    """
+    out = {}
+    for name, v in counters.items():
+        if name == "lo":
+            continue
+        if name.startswith(VIRT_IFACE_PREFIXES):
+            continue
+        out[name] = v
+    return out
+
+
+_NET_STATE = {"prev": None, "prevTs": None}
+
+
+def _net_state_path():
+    """今日流量基准的持久化文件（跨进程重启保留当日基准）。"""
+    return os.path.join(_storage_data_dir(), "net_daily.json")
+
+
+def _load_net_state():
+    try:
+        with open(_net_state_path(), "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_net_state(st):
+    try:
+        p = _net_state_path()
+        d = os.path.dirname(p)
+        if d and not os.path.isdir(d):
+            os.makedirs(d, exist_ok=True)
+        tmp = p + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(st, f)
+        os.replace(tmp, p)
+        return True
+    except Exception:
+        return False
+
+
+def _today_key():
+    """今日的日期键（本地时区）。跨零点自然变化 → 今日流量自动归零重算。"""
+    return time.strftime("%Y-%m-%d")
+
+
+def collect_network():
+    """整机网络流量：实时上下行速率 + 今日累计。
+
+    口径（对齐 fnmonitor 的 net 模块）：
+      · **实时速率** = 两次采样之间各接口累计字节的差分；
+      · **今日累计** = 当前累计字节 − 当日 0 点时的基准字节，
+        基准持久化在 net_daily.json，跨进程重启不丢；
+      · **接口范围** = 排除 lo 与容器虚拟桥（docker*/br-*/veth* 等），
+        但**包含** tailscale0 等 VPN 隧道口（用户确实在用它传数据）。
+
+    ⚠️ 注意与 v1.1.68 的「物理网口数」口径**刻意不同**：
+       物理网口数回答「我有几个网口」（只认 PCI 设备），
+       流量统计回答「实际传了多少数据」（要含隧道口）。
+    """
+    counters = _net_dev_counters()
+    counted = _counted_ifaces(counters)
+    total_rx = sum(v[0] for v in counted.values())
+    total_tx = sum(v[1] for v in counted.values())
+
+    now = time.time()
+    prev = _NET_STATE.get("prev")
+    prev_ts = _NET_STATE.get("prevTs")
+    rx_rate = tx_rate = 0.0
+    if prev is not None and prev_ts:
+        dt = now - prev_ts
+        if dt > 0:
+            rx_rate = max(0, total_rx - prev.get("totalRx", 0)) / dt
+            tx_rate = max(0, total_tx - prev.get("totalTx", 0)) / dt
+    _NET_STATE["prev"] = {"totalRx": total_rx, "totalTx": total_tx,
+                          "ifaces": counted}
+    _NET_STATE["prevTs"] = now
+
+    # ---- 今日累计：基准 + 日期键 ----
+    day = _today_key()
+    st = _load_net_state()
+    if st.get("day") != day:
+        # 新的一天（或首次运行）→ 以当前累计为新基准，今日流量从 0 起算
+        st = {"day": day, "baseRx": total_rx, "baseTx": total_tx}
+        _save_net_state(st)
+    base_rx = int(st.get("baseRx") or 0)
+    base_tx = int(st.get("baseTx") or 0)
+    today_rx = max(0, total_rx - base_rx)
+    today_tx = max(0, total_tx - base_tx)
+
+    # ---- 开机累计（/proc/net/dev 计数器开机归零 → 当前值即开机以来）----
+    boot_rx = total_rx
+    boot_tx = total_tx
+
+    ifaces = []
+    for name, (rx, tx) in sorted(counted.items()):
+        prev_if = (prev or {}).get("ifaces", {}).get(name)
+        r_rate = t_rate = 0.0
+        if prev_if and prev_ts:
+            dt = now - prev_ts
+            if dt > 0:
+                r_rate = max(0, rx - prev_if[0]) / dt
+                t_rate = max(0, tx - prev_if[1]) / dt
+        ifaces.append({
+            "name": name, "rxBytes": rx, "txBytes": tx,
+            "rxRate": round(r_rate, 1), "txRate": round(t_rate, 1),
+        })
+    ifaces.sort(key=lambda x: -(x["rxRate"] + x["txRate"]))
+
+    return {
+        "available": bool(counted),
+        "day": day,
+        "rxRate": round(rx_rate, 1),
+        "txRate": round(tx_rate, 1),
+        "totalRx": total_rx,
+        "totalTx": total_tx,
+        "todayRx": today_rx,
+        "todayTx": today_tx,
+        "bootRx": boot_rx,
+        "bootTx": boot_tx,
+        "ifaceCount": len(counted),
+        "ifaces": ifaces,
+    }
+
+
 def collect_power(cpu_percent, disks_active):
     """整机功耗。
 
@@ -1276,6 +1444,13 @@ class MonitorCollector(object):
         disks_active = len(storage.get("disks") or [])
         power = collect_power(cpu.get("percent", 0), disks_active)
 
+        # 网络流量（上下行速率 + 今日累计）
+        # ⚠️ v1.1.69：单独 try —— 网络采集失败不能拖垮整帧快照。
+        try:
+            network = collect_network()
+        except Exception:
+            network = {"available": False}
+
         # 进程 TOP：按需采样（ProcSampler 内部缓存 15 秒），
         # 不必每 3 秒都全量扫 /proc —— 抽屉打开时才用得上。
         try:
@@ -1297,6 +1472,7 @@ class MonitorCollector(object):
         data = {
             "cpu": cpu, "mem": mem, "gpu": gpu,
             "temp": temp, "storage": storage, "power": power,
+            "network": network,
             "system": collect_system(),
             "procs": procs,
             "memory": mem_slots_data,
