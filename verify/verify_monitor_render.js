@@ -2210,6 +2210,9 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
   const monSrc = fs.readFileSync(SRC, 'utf8');
   const compSrc = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui',
     'static', 'js', 'compute.js'), 'utf8');
+  /* ⚠️ v1.1.65：左轴刻度宽度自适应的断言要读 chart.js 源码 */
+  const chartSrc = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui',
+    'static', 'js', 'chart.js'), 'utf8');
   const cssSrc = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui',
     'static', 'css', 'app.css'), 'utf8');
   const srvSrc = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui',
@@ -2307,7 +2310,7 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     ['能耗趋势图含整机功耗与累计用电两张',
       /title: '整机功耗'/.test(compSrc) &&
       /title: '累计用电（所选范围）'/.test(compSrc)],
-    ['累计用电用梯形积分变换 cumKwh',
+    ['累计用电用积分变换 cumKwh',
       /function cumKwh\(pts\)/.test(compSrc) && /tf: cumKwh/.test(compSrc)],
     ['chartGroups 登记 temp 与 power',
       /temp:\s*\{\s*defs: TEMP_CHARTS/.test(compSrc) &&
@@ -2323,6 +2326,129 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     console.log((ok ? '  ✓ ' : '  ✗ ') + label);
     if (!ok) bad++;
   });
+
+  /* ---------- v1.1.65：累计用电图必须真的走积分（3 个 bug 同时修） ----------
+     老板反馈：「整机功耗和累计用电是一回事吗？」
+     根因是三个独立 bug 叠加，曲线形状完全一样：
+       ① POWER_CHARTS 两张图 key 都是 'power' → data-pdefs 还原时
+          filter(d => d.key === k)[0] 两次都取第一项 → 第二张的 tf 丢失
+       ② 抽屉版 drawCharts 根本没应用 d.tf（只有 drawPanelCharts 有）
+       ③ 前端 cumKwh 是梯形积分，与后端 fnmonitor 左端点口径不一致
+     以下断言分别锁住三条修复。 */
+  const v1165Rules = [
+    ['POWER_CHARTS 两张图的 key 唯一（power / power_cum）',
+      /key: 'power'/.test(compSrc) && /key: 'power_cum'/.test(compSrc)],
+    ['累计用电图的 key 不再是裸 power',
+      !/key: 'power',\s*\n\s*title: '累计用电/.test(compSrc)],
+    ['抽屉版 drawCharts 应用了 d.tf（累计用电不再是瓦数原值）',
+      /function drawCharts\(\)/.test(compSrc) &&
+      /return d\.tf \? d\.tf\(p\) : p;/.test(compSrc)],
+    ['板块版 drawPanelCharts 同样应用 d.tf',
+      /function drawPanelCharts\(st\)/.test(compSrc) &&
+      /return d\.tf \? d\.tf\(p\) : p;/.test(compSrc)],
+    ['cumKwh 用左端点口径（取 pts[j][1] 而非 pts[j-1][1]）',
+      /cum \+= \(pts\[j\]\[1\] \|\| 0\) \* (?:useDt|dt) \/ 3600000/.test(compSrc)],
+    ['cumKwh 已不再使用旧的 3.6e6 梯形口径',
+      !/cum \+= pts\[j - 1\]\[1\] \* dt \/ 3\.6e6/.test(compSrc)],
+    ['累计用电刻度标签带 kWh 单位',
+      /kWh'/.test(compSrc) && /yTick: function \(v\) \{/.test(compSrc)],
+    /* ⚠️ v1.1.65：累计用电图必须用 fmtCumKwh（6 位小数）而非 fmtKwh（4 位）——
+       每 3 秒轮询一次的增量只有 30W×3s/3600000 ≈ 0.000025 kWh，
+       4 位小数的分辨率是 0.0001 → 增量被四舍五入抹掉 → 看起来「不实时更新」。 */
+    ['累计用电图用 fmtCumKwh（高精度，否则小增量被抹平）',
+      /fmt: function \(v\) \{ return \[fmtCumKwh\(v\), 'kWh'\]; \}/.test(compSrc)],
+    ['定义了 fmtCumKwh 且小数位 >= 6',
+      /function fmtCumKwh\(v\) \{/.test(compSrc) &&
+      /v\.toFixed\(6\)/.test(compSrc)],
+    ['live 点缓冲存在（feedLivePower / mergeLive）',
+      /function feedLivePower\(d\)/.test(compSrc) &&
+      /function mergeLive\(pts, metric\)/.test(compSrc)],
+    ['drawCharts 合并 live 点（曲线随轮询实时延伸）',
+      /p = mergeLive\(p, s\.m\);/.test(compSrc)],
+    ['updateLive 里调用了 feedLivePower + drawCharts',
+      /feedLivePower\(d\);\s*\n\s*drawCharts\(\);/.test(compSrc)],
+    ['live feed 覆盖全部指标（cpu/load1/mem/power/temp/temp_mb）',
+      /var metrics = \['cpu', 'load1', 'mem', 'power', 'temp', 'temp_mb'\];/.test(compSrc)],
+    /* ⚠️ v1.1.65：左轴刻度标签宽度必须自适应 ——
+       写死 40px 会把 "0.0400 kWh" 裁成 "4000 kWh"（数值完全看错）。 */
+    ['chart.js 左轴边距按刻度标签宽度自适应（measureTextWidth）',
+      /function measureTextWidth\(texts, font\)/.test(chartSrc) &&
+      /measureTextWidth\(tickTexts, AXIS_FONT\)/.test(chartSrc)],
+    ['左轴边距有下限 40px（保证同屏各图绘图区左边界对齐）',
+      /L = Math\.max\(L, 40\);/.test(chartSrc)],
+    /* ⚠️ v1.1.65：自适应左边距会让同屏两图的绘图区左边界错位
+       （实测「整机功耗」L=40、「累计用电」L=81 → 曲线起点不在一条垂直线上）。
+       必须用 marginGroup 共享组，取组内最大边距。 */
+    ['chart.js 定义了 marginResolve（marginGroup 共享器）',
+      /function marginResolve\(group, self, want\)/.test(chartSrc)],
+    ['marginResolve 取组内最大边距',
+      /Math\.max\(group\.L \|\| 0, want\)/.test(chartSrc)],
+    ['组边距变大时触发同组其他图重绘（marginSync）',
+      /function marginSync\(group, exclude\)/.test(chartSrc) &&
+      /marginSync\(group, self\);/.test(chartSrc)],
+    ['render 应用了 marginResolve',
+      /L = marginResolve\(o\.marginGroup, this, L\);/.test(chartSrc)],
+    ['compute.js 两处创建点都传了 marginGroup',
+      (compSrc.match(/marginGroup: marginGroup/g) || []).length === 2],
+    ['compute.js 创建了共享组对象',
+      /var marginGroup = \{ L: 0, members: \[\] \};/.test(compSrc)],
+  ];
+  v1165Rules.forEach(([label, ok]) => {
+    console.log((ok ? '  ✓ ' : '  ✗ ') + label);
+    if (!ok) bad++;
+  });
+
+  /* ---------- v1.1.65：cumKwh 数值行为验证（与后端口径逐点对齐） ----------
+     直接把 compute.js 里的 cumKwh 抽出来跑，验证：
+       · 输出是单调不减的累计序列
+       · 末值 ≈ 30W × 1h / 3600000 ≈ 0.03 kWh（而不是 30.0）
+       · 与后端 energy_stats 的左端点积分结果一致 */
+  {
+    const cumSrc = compSrc.match(/function cumKwh\(pts\) \{[\s\S]*?\n  \}/);
+    if (!cumSrc) {
+      console.log('  ✗ 能从 compute.js 抽出 cumKwh 函数体');
+      bad++;
+    } else {
+      const cumKwh = new Function(
+        'return (' + cumSrc[0].replace(/^function cumKwh/, 'function') + ')')();
+      // 造 60 个 60 秒间隔、恒定 30W 的点
+      const pts = [];
+      for (let i = 0; i < 60; i++) pts.push([1000000 + i * 60, 30]);
+      const out = cumKwh(pts);
+      const expect = 60 * 30 * 60 / 3600000;   // 60 个间隔 × 60s × 30W
+      const mono = out.every((p, i) => i === 0 || p[1] >= out[i - 1][1] - 1e-12);
+      const last = out.length ? out[out.length - 1][1] : -1;
+
+      console.log((out.length === 60 ? '  ✓ ' : '  ✗ ') +
+        'cumKwh 输出点数与输入一致（' + out.length + '/60）');
+      if (out.length !== 60) bad++;
+
+      console.log((mono ? '  ✓ ' : '  ✗ ') + 'cumKwh 累计序列单调不减');
+      if (!mono) bad++;
+
+      console.log((Math.abs(last - expect) < 1e-6 ? '  ✓ ' : '  ✗ ') +
+        'cumKwh 末值 = 期望值（' + last.toFixed(6) + ' ≈ ' + expect.toFixed(6) +
+        ' kWh）');
+      if (Math.abs(last - expect) >= 1e-6) bad++;
+
+      console.log((last < 1 ? '  ✓ ' : '  ✗ ') +
+        'cumKwh 末值量级正确（< 1 kWh，不是把瓦数当 kWh）');
+      if (!(last < 1)) bad++;
+
+      // 断档处理：pts = [[0,30],[60,30],[660,30],[720,30]]
+      //   gaps = [60, 600, 60] → med = gaps[1] = 60 → cap = 180
+      //   j=0 首点按 med 计；j=1 gap=60 正常；j=2 gap=600 > cap → 按 med 计；
+      //   j=3 gap=60 正常 → 共 4 段 × (30W × 60s) = 0.002 kWh
+      const gapped = [[0, 30], [60, 30], [660, 30], [720, 30]];
+      const gOut = cumKwh(gapped);
+      const gMed = 60;
+      const gExpect = (4 * 30 * gMed) / 3600000;
+      console.log((Math.abs(gOut[gOut.length - 1][1] - gExpect) < 1e-9 ? '  ✓ ' : '  ✗ ') +
+        'cumKwh 断档按中位间隔计（' +
+        gOut[gOut.length - 1][1].toFixed(9) + ' ≈ ' + gExpect.toFixed(9) + ' kWh）');
+      if (Math.abs(gOut[gOut.length - 1][1] - gExpect) >= 1e-9) bad++;
+    }
+  }
 
   /* ---------- 源码级：趋势图宿主与轮询不冲突 ---------- */
   const hostRules = [
@@ -3117,8 +3243,8 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
   const compSrc46 = fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'js', 'compute.js'), 'utf8');
 
   const rules46 = [
-    ['drawCharts 按 series[].m 逐系列取数据',
-      /var data = \(d\.series \|\| \[\]\)\.map\(function \(s\) \{\s*return \(res\.series && res\.series\[s\.m\]\) \|\| \[\];/.test(compSrc46)],
+    ['drawCharts 按 series[].m 逐系列取数据（含 tf 变换）',
+      /var data = \(d\.series \|\| \[\]\)\.map\(function \(s\) \{\s*var p = \(res\.series && res\.series\[s\.m\]\) \|\| \[\];/.test(compSrc46)],
     ['drawPanelCharts 按 series[].m 逐系列取数据（含 tf 变换）',
       /var data = \(d\.series \|\| \[\]\)\.map\(function \(s\) \{\s*var p = \(res\.series && res\.series\[s\.m\]\) \|\| \[\];/.test(compSrc46)],
     ['不再存在按 d.key 单列装载的旧写法（setData([pts])）',

@@ -122,7 +122,10 @@ def connect(host="192.168.5.8", port=9222):
 
 def open_drawer(c, settle=5.0):
     """打开能耗抽屉（切到系统监控 → 调 FnStyleCompute.open）。"""
-    c.js("var b=document.querySelector('[data-tab=monitor]');if(b)b.click();'ok'")
+    # ⚠️ 必须用 IIFE 包裹：裸 `var b=...` 会在页面全局作用域重复声明，
+    #    同一页跑多个探针时报 "Identifier 'b' has already been declared"。
+    c.js("(function(){var b=document.querySelector('[data-tab=monitor]');"
+         "if(b)b.click();return 'ok';})()")
     c.pump(4)
     c.js("window.FnStyleCompute.open('power', "
          "window.FnStyleMonitor.lastData());'ok'")

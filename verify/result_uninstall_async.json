@@ -39,7 +39,7 @@
     "group": "A",
     "item": "卸载回调立即返回（不等待后台还原）",
     "status": "PASS",
-    "detail": "rc=0 耗时=1.05s 1s，日志 /tmp/fnstyle_uninstall_async/guard/restore_now.log）\n[uninstall_callback] 卸载回调完成（未触碰 /usr/trim/www/，应用中心卸载请求可正常返回）\n"
+    "detail": "rc=0 耗时=1.10s 1s，日志 /tmp/fnstyle_uninstall_async/guard/restore_now.log）\n[uninstall_callback] 卸载回调完成（未触碰 /usr/trim/www/，应用中心卸载请求可正常返回）\n"
   },
   {
     "group": "A",
@@ -99,7 +99,7 @@
     "group": "B",
     "item": "后台任务在延迟后完成（pending 清除）",
     "status": "PASS",
-    "detail": "guard/restore_now.log 尾部: deferred 2026-11-21 00:26:10] 还原脚本退出码 0\n2026-11-21 00:26:10 VERIFY: PASS\n[restore_deferred 2026-11-21 00:26:10] ===== 后台还原结束（浏览器需 Cmd/Ctrl + Shift + R 强刷）=====\n"
+    "detail": "guard/restore_now.log 尾部: deferred 2026-11-21 18:51:02] 还原脚本退出码 0\n2026-11-21 18:51:02 VERIFY: PASS\n[restore_deferred 2026-11-21 18:51:02] ===== 后台还原结束（浏览器需 Cmd/Ctrl + Shift + R 强刷）=====\n"
   },
   {
     "group": "B",

@@ -2998,6 +2998,26 @@ html.mon-scroll-lock body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* ⚠️ v1.1.65：抽屉标题栏前的图标
+   老板需求：「所有抽屉窗口顶部标题栏前增加对应的图标显示」。
+   做成 26×26 的圆角方块 + emoji，比主页的裸 emoji 更有层次，
+   且随主题色走（底色用 accent 的淡色混合）。 */
+.mon-drawer-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-right: .5rem;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
+  font-size: .95rem;
+  line-height: 1;
+  vertical-align: -5px;
+  flex: none;
+}
+.mon-drawer-ico:empty { display: none; }
 .mon-drawer-sub {
   margin: .28rem 0 0;
   font-size: .8rem;

@@ -54,6 +54,20 @@
     return v >= 10 ? v.toFixed(2) : v >= 0.1 ? v.toFixed(3) : v.toFixed(4);
   }
 
+  /* ⚠️ v1.1.65：累计用电图的**专用**格式化（不动全局 fmtKwh）
+     根因：fmtKwh 对 < 0.1 的值只给 4 位小数（分辨率 0.0001 kWh），
+     而「累计用电」图每 3 秒轮询一次的增量只有
+     30W × 3s / 3600000 ≈ 0.000025 kWh —— 比分辨率还小 4 倍 →
+     图例数值纹丝不动，看起来就是「没实时更新」。
+     这里给累计图单独用 6 位小数（分辨率 0.000001 kWh），
+     增量 0.000025 能被清楚看到。
+     · >= 10 两位 / >= 0.1 四位 / >= 0.01 五位 / 更小六位 */
+  function fmtCumKwh(v) {
+    if (!isNum(v)) return '—';
+    return v >= 10 ? v.toFixed(2) : v >= 0.1 ? v.toFixed(4)
+         : v >= 0.01 ? v.toFixed(5) : v.toFixed(6);
+  }
+
   var GiB = 1024 * 1024 * 1024;
 
   /* GB（十进制取整，fnmonitor 口径：>=10 取整，否则一位小数） */
@@ -631,7 +645,15 @@
   /* 能耗板块的趋势图（1:1 对齐 fnmonitor 的 SHEETS.power）
      fnmonitor 的能耗抽屉有两张图：
        ① 整机功耗（TREND_DEFS[4]，指标 power，单位 W）
-       ② 累计用电（所选范围）（指标同样是 power，前端梯形积分换算成 kWh） */
+       ② 累计用电（所选范围）（指标同样是 power，但走 tf 做积分换算成 kWh）
+
+     ⚠️ v1.1.65：两张图的 key 必须**唯一**。
+        之前两张都写 key:'power'，而 initPanelCharts 还原 defs 时用
+        `grp.defs.filter(d => d.key === k)[0]` 取**第一个**匹配项 →
+        两张图都被还原成「整机功耗」，第二张图的 tf(cumKwh) 直接丢失 →
+        累计用电图画的是**瓦数原值**却标着 kWh 单位（实机 1h 显示 31.00 kWh，
+        实际 30W×1h 只有 0.03 kWh），两条曲线形状完全一样。
+        现在用 'power' / 'power_cum' 区分。 */
   var POWER_CHARTS = [
     {
       key: 'power',
@@ -645,16 +667,21 @@
       }]
     },
     {
-      key: 'power',
+      key: 'power_cum',
       title: '累计用电（所选范围）',
       yMin: 0,
+      /* ⚠️ v1.1.65：累计值量级很小（1h 只有 0.03 kWh），刻度标签要带单位
+         并按量级自适应小数位，否则会满屏 "0.000 / 0.010 / 0.020"。 */
       yTick: function (v) {
-        return v >= 10 ? fmtKwh(v) : v >= 0.1 ? v.toFixed(2) : v.toFixed(3);
+        if (!isNum(v)) return '';
+        return fmtCumKwh(v) + ' kWh';
       },
       tf: cumKwh,
       series: [{
         m: 'power', label: '累计', color: 'var(--spark-2)',
-        fmt: function (v) { return [fmtKwh(v), 'kWh']; }
+        /* ⚠️ v1.1.65：用 fmtCumKwh（6 位小数）而非 fmtKwh（4 位）——
+           否则每 3 秒的增量 0.000025 kWh 会被四舍五入抹掉，看起来像「不更新」。 */
+        fmt: function (v) { return [fmtCumKwh(v), 'kWh']; }
       }]
     }
   ];
@@ -772,6 +799,11 @@
     if (!defs.length) return;
 
     var segHost = wrap.querySelector('[data-pseg]');
+    /* ⚠️ v1.1.65：同组图表共享左边界（marginGroup）
+       自适应左边距后，同屏不同图的绘图区左边界会错位
+       （实测「整机功耗」L=40、「累计用电」L=81）→ 曲线起点不在一条垂直线上。
+       共享组取组内最大边距，所有图严格对齐。 */
+    var marginGroup = { L: 0, members: [] };
     var charts = defs.map(function (d, i) {
       var host = wrap.querySelector('[data-pch="' + i + '"]');
       var legend = wrap.querySelector('[data-pleg="' + i + '"]');
@@ -780,6 +812,7 @@
         series: d.series, yMin: d.yMin, yMax: d.yMax, yTick: d.yTick,
         peak: d.peak, thresholds: d.thresholds,
         height: 180, legend: legend,
+        marginGroup: marginGroup,
         empty: function () {
           return '暂无数据 · 后台每 60 秒记录一条历史，稍后自动出现';
         }
@@ -819,10 +852,17 @@
     loadPanelCharts(st, st.range);
   }
 
-  /* 累计用电：把瓦数序列按时间梯形积分成 kWh（对齐 fnmonitor 的 cumKwh） */
+  /* 累计用电：把瓦数序列按时间积分成 kWh（对齐 fnmonitor / 后端 energy_stats）
+     ⚠️ v1.1.65：口径对齐 fnmonitor 的「左端点」积分 ——
+        每个采样代表它**之前**的一个间隔：e = v[i] × (t[i] - t[i-1]) / 3600000。
+        原先是 (v0+v1)/2 的梯形积分 + v[j-1]×dt，与后端 energy_stats 的
+        瞬时值口径不一致 → 同一段数据前后端算出两个数。
+     断档处理：间隔 > 3 倍中位间隔时，只按一个典型间隔（中位间隔）计。
+     首点处理：与后端一致 —— 第一个采样没有「前一点」，按中位间隔计。
+        （后端 energy_stats 里 last=None 时 dt=med，前端同步） */
   function cumKwh(pts) {
     var out = [];
-    if (!pts || pts.length < 2) return out;
+    if (!pts || !pts.length) return out;
     /* 用相邻点的中位间隔做上限，剔除跨度过大的断档 */
     var gaps = [];
     for (var i = 1; i < pts.length; i++) {
@@ -830,11 +870,20 @@
       if (g > 0) gaps.push(g);
     }
     gaps.sort(function (a, b) { return a - b; });
-    var cap = (gaps.length ? gaps[Math.floor(gaps.length / 2)] : 60) * 3;
+    var med = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 60;
+    var cap = med * 3;
     var cum = 0;
-    for (var j = 1; j < pts.length; j++) {
-      var dt = pts[j][0] - pts[j - 1][0];
-      if (dt > 0 && dt <= cap) cum += pts[j - 1][1] * dt / 3.6e6;
+    for (var j = 0; j < pts.length; j++) {
+      var dt;
+      if (j === 0) {
+        dt = med;                       /* 首点按典型间隔计（对齐后端） */
+      } else {
+        var gap = pts[j][0] - pts[j - 1][0];
+        /* 断档（0 < gap <= cap 之外）→ 按典型间隔 med 计，而不是直接丢弃 */
+        dt = (gap > 0 && gap <= cap) ? gap : med;
+      }
+      /* ⚠️ 左端点口径：第 j 个采样代表它之前那段时间 → 用 pts[j][1] */
+      cum += (pts[j][1] || 0) * dt / 3600000;
       out.push([pts[j][0], cum]);
     }
     return out;
@@ -870,6 +919,110 @@
       chartState.charts.forEach(function (c) { try { c.destroy(); } catch (e) {} });
       chartState = null;
     }
+    liveBuf = null;
+  }
+
+  /* ⚠️ v1.1.65：抽屉趋势图的 live 点缓冲（对齐 fnmonitor 的 feed()）
+     老板反馈：「整体功耗和累计用电趋势图没有实时更新」
+                  「CPU 使用率和系统负载趋势图也没有实时更新」
+
+     根因：抽屉里的趋势图只在**打开时**拉一次历史，之后 updateLive 只把旧图表
+     节点搬回 DOM（保持 range 选择与实例），**从不重绘** → 曲线冻结。
+     而后端每 60 秒才记一条历史，前端每 3 秒轮询一次 → 即便重拉历史，
+     也要等 60 秒才有新点。
+     正解（fnmonitor feed() 同款）：每次轮询把**当前实时值**推进缓冲区，
+     曲线随轮询实时延伸。
+     · 去重：按后端快照 ts 去重，同一份快照不重复采纳（对齐 feedDiskBuf）
+     · 容量：最多保留 BUF_N 个点，超出丢最旧的
+     · 泛化：按**指标名**存（cpu / load1 / mem / power / temp / temp_mb），
+       各抽屉的图共用同一套机制 */
+  var BUF_N = 600;            // live 点缓冲容量（600 × 3s ≈ 30 分钟）
+  var liveBuf = null;         // { pts: { metric: [[ts, v]] }, ts: 后端快照 ts }
+
+  function liveInit() {
+    if (!liveBuf) liveBuf = { pts: {}, ts: 0 };
+    return liveBuf;
+  }
+
+  /* 从实时快照里取各指标的值（null = 该指标本次没有可用值） */
+  function liveMetric(metric, d) {
+    if (!d) return null;
+    switch (metric) {
+      case 'cpu':
+        return (d.cpu && isNum(Number(d.cpu.percent))) ? Number(d.cpu.percent) : null;
+      case 'load1': {
+        var la = d.cpu && d.cpu.loadavg;
+        if (la && la.length && isNum(Number(la[0]))) return Number(la[0]);
+        return null;
+      }
+      case 'mem':
+        return (d.mem && isNum(Number(d.mem.percent))) ? Number(d.mem.percent) : null;
+      case 'power': {
+        var p = d.power || {};
+        return isNum(Number(p.total)) ? Number(p.total) : null;
+      }
+      case 'temp':
+      case 'temp_mb': {
+        var ts = d.temp && d.temp.temps;
+        if (!ts || !ts.length) return null;
+        var want = metric === 'temp' ? 'cpu' : 'mainboard';
+        var hit = null;
+        for (var i = 0; i < ts.length; i++) {
+          var t = ts[i] || {};
+          if (t.type === want && isNum(Number(t.value))) { hit = Number(t.value); break; }
+        }
+        /* temp_mb 找不到主板温度就退化成 CPU 温度（口径与后端一致） */
+        if (hit === null && metric === 'temp_mb') {
+          for (var j = 0; j < ts.length; j++) {
+            var t2 = ts[j] || {};
+            if (t2.type === 'cpu' && isNum(Number(t2.value))) { hit = Number(t2.value); break; }
+          }
+        }
+        return hit;
+      }
+      default:
+        return null;
+    }
+  }
+
+  /* 把本次实时快照的各指标推进 live 缓冲 */
+  function feedLivePower(d) {
+    if (!d) return null;
+    var b = liveInit();
+    /* 后端快照 ts 优先用它（唯一性最强），顶层 ts 兜底 */
+    var ts = Number((d.storage && d.storage.ts) || d.ts || 0);
+    if (ts && b.ts && ts === b.ts) return b;   // 同一份快照，不重复采纳
+    if (ts) b.ts = ts;
+    var metrics = ['cpu', 'load1', 'mem', 'power', 'temp', 'temp_mb'];
+    for (var i = 0; i < metrics.length; i++) {
+      var m = metrics[i];
+      var v = liveMetric(m, d);
+      if (v === null) continue;
+      var arr = b.pts[m] || (b.pts[m] = []);
+      /* 时间戳用采集时刻；拿不到就用当前时间 */
+      var t = ts || (Date.now() / 1000);
+      var last = arr.length ? arr[arr.length - 1] : null;
+      if (last && t <= last[0]) t = last[0] + 0.001;   // 保证严格递增
+      arr.push([t, v]);
+      while (arr.length > BUF_N) arr.shift();
+    }
+    return b;
+  }
+
+  /* 把某指标的 live 点合并到历史序列尾部（历史点在前，live 点在后，按 ts 排序去重） */
+  function mergeLive(pts, metric) {
+    if (!liveBuf || !liveBuf.pts) return pts;
+    var arr = liveBuf.pts[metric];
+    if (!arr || !arr.length) return pts;
+    var out = (pts || []).slice();
+    var seen = {};
+    for (var i = 0; i < out.length; i++) seen[out[i][0]] = true;
+    for (var j = 0; j < arr.length; j++) {
+      var lp = arr[j];
+      if (!seen[lp[0]]) { out.push(lp); seen[lp[0]] = true; }
+    }
+    out.sort(function (a, b) { return a[0] - b[0]; });
+    return out;
   }
 
   function initCharts(body) {
@@ -882,6 +1035,11 @@
     var defs = grp.defs;
 
     var segHost = wrap.querySelector('[data-cseg]');
+    /* ⚠️ v1.1.65：同组图表共享左边界（marginGroup）
+       自适应左边距后，同屏不同图的绘图区左边界会错位
+       （实测「整机功耗」L=40、「累计用电」L=81）→ 曲线起点不在一条垂直线上。
+       共享组取组内最大边距，所有图严格对齐。 */
+    var marginGroup = { L: 0, members: [] };
     var charts = defs.map(function (d, i) {
       var host = body.querySelector('[data-cch="' + i + '"]');
       var legend = body.querySelector('[data-cleg="' + i + '"]');
@@ -895,6 +1053,7 @@
         thresholds: d.thresholds,
         height: 180,
         legend: legend,
+        marginGroup: marginGroup,
         empty: function () {
           return '暂无数据 · 后台每 60 秒记录一条历史，稍后自动出现';
         }
@@ -936,9 +1095,18 @@
       var c = chartState.charts[i];
       if (!c) return;
       /* ⚠️ v1.1.46：按 series[].m 逐系列取数据（与 drawPanelCharts 同修）。
-         温度图是单图双线（temp + temp_mb），按 d.key 只取一条会让主板线消失。 */
+         温度图是单图双线（temp + temp_mb），按 d.key 只取一条会让主板线消失。
+         ⚠️ v1.1.65：补上 d.tf 处理 —— 抽屉里的「累计用电」图同样要走
+            cumKwh 积分变换，之前这里只取原始瓦数 → 画的是瓦数却标 kWh。
+         ⚠️ v1.1.65：合并 live 点（feedLivePower 推进的实时功耗），
+            让曲线随 3 秒轮询实时延伸，不必等后端 60 秒才记一条历史。 */
       var data = (d.series || []).map(function (s) {
-        return (res.series && res.series[s.m]) || [];
+        var p = (res.series && res.series[s.m]) || [];
+        /* ⚠️ v1.1.65：合并 live 点（feedLivePower 推进的实时值），
+           让曲线随 3 秒轮询实时延伸，不必等后端 60 秒才记一条历史。 */
+        p = mergeLive(p, s.m);
+        /* tf 存在则先对数据做变换（如累计用电：瓦 → kWh） */
+        return d.tf ? d.tf(p) : p;
       });
       if (!data.length) data = [[]];
       c.setData(data, span);
@@ -1008,6 +1176,24 @@
 
   function computeOverlay() { return $('#monComputeOverlay'); }
 
+  /* ⚠️ v1.1.65：抽屉标题栏图标（老板需求：所有抽屉顶部标题栏前增加对应图标）
+     四个计算抽屉各一个图标；其它抽屉（巡检历史 / 存储等）用各自的名字表。
+     处理器与内存共用主页「处理器 / 内存 / 显卡」板块的 🧠，
+     温度与能耗与主页对应板块的 🌡 / ⚡ 保持一致。 */
+  var COMPUTE_ICONS = { cpu: '🧠', mem: '🧠', temp: '🌡', power: '⚡' };
+  var COMPUTE_TITLES = {
+    cpu: '处理器', mem: '内存', temp: '温度与散热', power: '能耗'
+  };
+
+  /* 设置抽屉标题 + 图标（标题文字放在 #monComputeTitleText 里，
+     避免 icon 元素被 textContent 冲掉） */
+  function setComputeHead(kind) {
+    var t = $('#monComputeTitleText');
+    if (t) t.textContent = COMPUTE_TITLES[kind] || '处理器';
+    var ic = $('#monComputeIcon');
+    if (ic) ic.textContent = COMPUTE_ICONS[kind] || '';
+  }
+
   function openCompute(kind, d) {
     var ov = computeOverlay();
     if (!ov) return;
@@ -1023,23 +1209,21 @@
        处理器与内存在本文件里直接拼。 */
     if (kind === 'mem') {
       body.innerHTML = memSheetHtml(d);
-      title.textContent = '内存';
       sub.textContent = memSubText(d);
     } else if (kind === 'temp') {
       body.innerHTML = window.FnStyleMonitor && window.FnStyleMonitor.tempSheetHtml
         ? window.FnStyleMonitor.tempSheetHtml(d) : '<div class="mon-cmp-note">温度模块未加载</div>';
-      title.textContent = '温度与散热';
       sub.textContent = tempSubText(d);
     } else if (kind === 'power') {
       body.innerHTML = window.FnStyleMonitor && window.FnStyleMonitor.powerSheetHtml
         ? window.FnStyleMonitor.powerSheetHtml(d) : '<div class="mon-cmp-note">能耗模块未加载</div>';
-      title.textContent = '能耗';
       sub.textContent = powerSubText(d);
     } else {
       body.innerHTML = cpuSheetHtml(d);
-      title.textContent = '处理器';
       sub.textContent = cpuSubText(d);
     }
+    /* ⚠️ v1.1.65：标题与图标统一由 setComputeHead 设置 */
+    setComputeHead(kind);
 
     ov.hidden = false;
     if (!computeOpen) {
@@ -1157,6 +1341,18 @@
     if (chartNode) {
       var slot = body.querySelector('[data-charts]');
       if (slot && slot.parentNode) slot.parentNode.replaceChild(chartNode, slot);
+    }
+    /* ④-a ⚠️ v1.1.65：把当前实时值推进 live 缓冲并重绘趋势图 ——
+       老板反馈「整体功耗和累计用电趋势图没有实时更新」
+                 「CPU 使用率和系统负载趋势图也没有实时更新」。
+       之前 updateLive 只把旧图表节点搬回 DOM，从不重绘 → 曲线冻结在打开那一刻。
+       后端每 60 秒才记一条历史，前端每 3 秒轮询一次 → 靠重拉历史也等不到新点，
+       必须把实时值直接喂进曲线（fnmonitor feed() 同款做法）。
+       · 所有抽屉的图都实时更新（cpu / load1 / mem / power / temp / temp_mb）
+       · 累计用电图与功耗图共用同一份 power live 点 → 两者都实时延伸，且积分连续 */
+    if (chartState) {
+      feedLivePower(d);
+      drawCharts();
     }
     /* ④-b 旧电价面板放回同位置（v1.1.58）：保住用户未保存的输入 */
     if (tariffNode) {

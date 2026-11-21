@@ -97,6 +97,67 @@
     return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * p;
   }
 
+  /* ⚠️ v1.1.65：量一组文本的最大像素宽度（离屏 canvas）
+     用途：左轴刻度标签宽度自适应 —— 写死 40px 会把 "0.0400 kWh" 这类
+     带单位 + 多位小数的标签裁掉（实测显示成 "4000 kWh"，数值完全看错）。
+     字体与 .mon-chart .axis-t 对齐：10px sans-serif。 */
+  var AXIS_FONT = '10px -apple-system, "PingFang SC", "Helvetica Neue", Arial, sans-serif';
+  var _measureCtx = null;
+  function measureTextWidth(texts, font) {
+    try {
+      if (!_measureCtx) {
+        var cv = document.createElement('canvas');
+        _measureCtx = cv.getContext('2d');
+      }
+      if (!_measureCtx) return 0;
+      _measureCtx.font = font || AXIS_FONT;
+      var mx = 0;
+      for (var i = 0; i < texts.length; i++) {
+        var w = _measureCtx.measureText(texts[i]).width;
+        if (w > mx) mx = w;
+      }
+      return mx;
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  /* ⚠️ v1.1.65：同组图表的左边界共享器
+     —— 自适应左边距会让同屏不同图的绘图区左边界错位（实测 40 vs 81），
+        视觉上两条曲线起点不在一条垂直线上。
+     用法：创建图表时传同一个 marginGroup 对象：
+         var mg = { L: 0, members: [] };
+         new LineChart(host, { marginGroup: mg, ... });
+     机制：
+       · 每张图渲染时上报自己**需要**的边距 → 组内取最大
+       · 若某张图把组边距撑大 → 同组其他图重绘（marginSync）
+         —— 否则会出现「先渲染的图按旧边距画、后渲染的按新边距画」的错位。 */
+  function marginResolve(group, self, want) {
+    if (!group) return want;
+    group.members = group.members || [];
+    if (group.members.indexOf(self) === -1) group.members.push(self);
+    var max = Math.max(group.L || 0, want);
+    if (max !== (group.L || 0)) {
+      group.L = max;
+      /* 组边距变大 → 同组其他图按新边距重绘 */
+      marginSync(group, self);
+    }
+    return group.L;
+  }
+
+  function marginSync(group, exclude) {
+    var members = (group && group.members) || [];
+    for (var i = 0; i < members.length; i++) {
+      var m = members[i];
+      if (m === exclude || m._syncing) continue;
+      m._syncing = true;
+      try {
+        m.render();
+      } catch (e) { /* 重绘失败不影响主流程 */ }
+      m._syncing = false;
+    }
+  }
+
   /* 二分查找最接近 ts 的点下标 */
   function bsearch(a, ts) {
     var lo = 0, hi = a.length - 1;
@@ -258,8 +319,6 @@
     }
     if (!w || !h) return;
 
-    var L = this.L = o.yTick ? 40 : 8, R = 4, T = 10, B = 22;
-    var PW = this.PW = w - L - R, PH = this.PH = h - T - B;
     var vals = all.map(function (p) { return p[1]; });
 
     var lo = o.yMin != null ? o.yMin : Math.min.apply(null, vals);
@@ -272,6 +331,33 @@
     if (o.yMin == null) lo = Math.floor(lo / step) * step;
     if (hi <= lo) hi = lo + step;
     this.lo = lo; this.hi = hi;
+
+    /* ⚠️ v1.1.65：左边距按刻度标签**实际宽度**自适应。
+       原来写死 40px，但「累计用电」图的标签是 "0.0400 kWh"（带单位 + 6 位小数），
+       宽度超过 40px → 标签被左边缘裁掉，实测显示成 "4000 kWh" / "2000 kWh"
+       （前面的 "0.0" 没了，数值完全看错）。
+       → 先算出所有刻度标签，用离屏 canvas 量最宽的那个，再定 L。
+
+       ⚠️ v1.1.65（同屏对齐）：自适应会让同屏不同图的绘图区左边界错位
+       （实测「整机功耗」L=40、「累计用电」L=81 → 两条曲线起点不对齐，
+         视觉上像两张图不在同一个坐标系里）。
+       → 用 opt.marginGroup（共享对象）登记同组图表，边距取**组内最大**；
+         任何一张图把组边距撑大时，同组其他图自动重绘，左边界严格对齐。 */
+    var L = this.L = 8, R = 4, T = 10, B = 22;
+    if (o.yTick) {
+      var tickTexts = [];
+      for (var tv = lo; tv <= hi + step * 0.01; tv += step) {
+        tickTexts.push(String(o.yTick(+tv.toFixed(6))));
+      }
+      L = Math.ceil(measureTextWidth(tickTexts, AXIS_FONT)) + 12;
+      /* 下限 40：原来所有图固定 40px，若某张图标签窄就变小，
+         同屏两张图的绘图区左边界会错位 → 保持下限一致 */
+      L = Math.max(L, 40);
+      L = Math.min(L, Math.max(48, Math.floor(w * 0.32)));   // 别把绘图区挤没了
+      /* 同组共享：取组内最大边距（marginSync 会在必要时触发同组重绘） */
+      L = marginResolve(o.marginGroup, this, L);
+    }
+    var PW = this.PW = w - L - R, PH = this.PH = h - T - B;
 
     var tsAll = all.map(function (p) { return p[0]; });
     var t0 = Math.min.apply(null, tsAll), t1 = Math.max.apply(null, tsAll);

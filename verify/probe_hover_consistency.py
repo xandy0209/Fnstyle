@@ -44,32 +44,60 @@ REF_LIFT = -1.0
 REF_SHADOW = "0px 6px 22px"
 
 
-def _hover(c, sel):
-    """强制触发 :hover 并读回计算样式。"""
-    doc = c.send("DOM.getDocument", {"depth": -1})["root"]["nodeId"]
-    nid = c.send("DOM.querySelector", {"nodeId": doc, "selector": sel})["nodeId"]
-    if not nid:
+def _hover(c, sel, doc=None):
+    """用**真实鼠标事件**触发 :hover 并读回计算样式。
+
+    ⚠️ v1.1.65：改用 Input.dispatchMouseEvent（真实鼠标）替代 CSS.forcePseudoState。
+       实测两个坑：
+       ① CDP 的 CSS.forcePseudoState 对 nodeId 极敏感 ——
+          一旦中间重取 DOM.getDocument，后续 nodeId 全部失效，
+          forcePseudoState 静默打空 → 读到 transform=none / shadow 透明，
+          表现为「第一个元素对、后面全错」的假红。
+       ② **更关键**：页面里的 hover 效果带 CSS transition，
+          在 CDP 无头/后台环境下 transition 不推进，
+          getComputedStyle 永远读到**动画第一帧**
+          （transform=matrix(1,0,0,1,0,0)、box-shadow=rgba(0,0,0,0) 0px 0px 0px），
+          表现为「悬停效果全丢」的假红 —— 但 CSS 规则其实完好。
+       → 解法：真实鼠标移到元素中心 + 注入禁用 transition 的样式。
+          实测这样读到的就是终值：matrix(1,0,0,1,0,-1) + 0px 6px 22px。
+    """
+    pos = c.js("""(function(){
+      var e = document.querySelector(%s);
+      if (!e) return null;
+      e.scrollIntoView({block:'center'});
+      var b = e.getBoundingClientRect();
+      return {x: b.x + b.width/2, y: b.y + b.height/2};
+    })()""" % json.dumps(sel))
+    if not pos:
         return None
-    c.send("CSS.forcePseudoState",
-            {"nodeId": nid, "forcedPseudoClasses": ["hover"]})
-    c.pump(0.7)
+    try:
+        c.send("Input.dispatchMouseEvent",
+               {"type": "mouseMoved", "x": pos["x"], "y": pos["y"],
+                "button": "none", "clickCount": 0})
+    except Exception as e:
+        print("    （dispatchMouseEvent 失败：%s）" % e)
+        return None
+    c.pump(0.8)
     v = c.js("""(function(){
       var e = document.querySelector(%s);
       if (!e) return null;
       var cs = getComputedStyle(e);
       return {transform: cs.transform, shadow: cs.boxShadow,
-              cursor: cs.cursor, border: cs.borderColor};
+              cursor: cs.cursor, border: cs.borderColor,
+              hovered: e.matches(':hover')};
     })()""" % json.dumps(sel))
+    return v
+
+
+def _unhover(c, sel):
+    """把鼠标移开，清除 hover 态。"""
     try:
-        doc2 = c.send("DOM.getDocument", {"depth": -1})["root"]["nodeId"]
-        nid2 = c.send("DOM.querySelector", {"nodeId": doc2, "selector": sel})["nodeId"]
-        if nid2:
-            c.send("CSS.forcePseudoState",
-                   {"nodeId": nid2, "forcedPseudoClasses": []})
+        c.send("Input.dispatchMouseEvent",
+               {"type": "mouseMoved", "x": 2, "y": 2,
+                "button": "none", "clickCount": 0})
+        c.pump(0.3)
     except Exception:
         pass
-    c.pump(0.3)
-    return v
 
 
 def _lift(transform):
@@ -100,15 +128,43 @@ def main():
         c.pump(5)
     except Exception:
         pass
-    c.js("var b=document.querySelector('[data-tab=monitor]');if(b)b.click();'ok'")
+    # ⚠️ 必须用 IIFE 包裹：裸 `var b=...` 会在页面全局作用域重复声明，
+    #    同页跑多个探针时报 "Identifier 'b' has already been declared"，
+    #    而且异常会中断后面的 DOM.enable / CSS.enable → forcePseudoState 失效。
+    c.js("(function(){var b=document.querySelector('[data-tab=monitor]');"
+         "if(b)b.click();return 'ok';})()")
     c.pump(5)
+    # ⚠️ v1.1.65：必须把标签页提到**前台**。
+    #    Chrome 对后台标签页的 CSS transition / animation 会节流，
+    #    forcePseudoState 虽然生效，但 getComputedStyle 读到的是
+    #    **动画第一帧**（transform = matrix(1,0,0,1,0,0) = 位移 0，
+    #    box-shadow = rgba(0,0,0,0) 0px 0px 0px），
+    #    表现为「悬停效果全丢」的假红 —— 但代码里的 :hover 规则其实完好。
+    #    实测：bringToFront 后 transform = matrix(1,0,0,1,0,-1)、
+    #    box-shadow = rgba(0,0,0,.18) 0px 6px 22px → 断言全过。
+    try:
+        c.send("Page.bringToFront")
+        c.pump(0.6)
+    except Exception:
+        pass
     c.send("DOM.enable")
     c.send("CSS.enable")
 
     results = {}
+    # ⚠️ v1.1.65：注入禁用 transition / animation 的样式。
+    #    hover 效果带 CSS transition，而 CDP 环境下动画不推进，
+    #    getComputedStyle 只能读到动画第一帧 → 全红假象。
+    #    禁用 transition 后读到的就是终值。
+    c.js("(function(){"
+         "var st=document.createElement('style');st.id='__probe_notrans';"
+         "st.textContent='*,*::before,*::after{transition:none !important;"
+         "animation:none !important}';"
+         "document.head.appendChild(st);return 'ok';})()")
+    c.pump(0.5)
     for sel, name, should_hover in TARGETS:
         v = _hover(c, sel)
         results[name] = v
+        _unhover(c, sel)
         print("\n【%s】%s" % (name, sel))
         if v is None:
             print("    （页面上没找到该元素，跳过）")
