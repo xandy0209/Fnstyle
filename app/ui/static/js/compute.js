@@ -101,38 +101,52 @@
   }
 
   /* ---------------------------------------------------------------------
-     核心点阵：5×5 = 25 点，填满的点数 = round(占用率 / 100 × 25)
-     （fnmonitor 的 CORE_DOTS：viewBox 0 0 5 5，25 个 r=.36 的圆）
+     每核点阵瓦片（主页面「每核使用率」）
+     ⚠️ v1.1.64：**直接复用抽屉版那套 SVG 点阵**（dotGaugeSvg(3, rows)）。
+        之前主页面用的是 5×5 正方形点阵（viewBox "0 0 5 5"），
+        而 4 核实机的瓦片是**竖长形**（内容区 52×152px）：
+          · SVG 带 viewBox 固有宽高比，5:5 的正方形点阵按 meet 缩放后
+            只占 49px，上下各空 ~70px → 达不到「高度调高充满」；
+          · 就算改成 CSS 网格，5 列均分每列仅 6.8px、5 行均分每行 26.9px
+            → 格子被拉成细长竖条（实测截图），既不像点阵，
+              浅灰的未点亮格还几乎看不见。
+        抽屉版的 **3 列 × 14 行**（viewBox "0 0 3 14"）比例 3:14 ≈ 0.214，
+        与竖长瓦片的 52:152 ≈ 0.342 接近 → 缩放后能撑满高度，
+        且每个点仍是**正圆**，与抽屉视觉完全一致。
+        做法：SVG 只设 height:100%（宽度由固有宽高比推导），
+              绝不能 width:100% + height:100% 同时设，否则 meet 缩到最小边。
      --------------------------------------------------------------------- */
-  var CORE_DOTS = (function () {
-    var h = '';
-    for (var y = 0; y < 5; y++) {
-      for (var x = 0; x < 5; x++) {
-        h += '<circle cx="' + (x + 0.5) + '" cy="' + (y + 0.5) + '" r=".36"/>';
-      }
-    }
-    return h;
-  })();
-
-  /* 点阵填充顺序：从上往下逐行填（与 fnmonitor 的 order 一致） */
-  function coreOrder(svg) {
-    var cs = svg.querySelectorAll('circle');
-    var order = [];
-    for (var y = 4; y >= 0; y--) {
-      for (var c = 0; c < 5; c++) order.push(cs[y * 5 + c]);
-    }
-    return order;
-  }
-
   function coreTilesHtml(n) {
+    var rows = detailCoreRows(n);
     var h = '';
     for (var i = 0; i < n; i++) {
       h += '<div class="mon-hw-core" data-core="' + i + '">' +
-        '<svg viewBox="0 0 5 5" aria-hidden="true">' + CORE_DOTS + '</svg>' +
+        '<div class="mon-hw-core-dots">' +
+        dotGaugeSvg(3, rows).replace('<svg ', '<svg data-rows="' + rows + '" ') +
+        '</div>' +
         '<div class="mon-hw-core-f"><span>C' + i + '</span><b data-cv="' + i + '">--</b></div>' +
         '</div>';
     }
     return h;
+  }
+
+  /* 点阵上色：**从底部往上**逐行填（dotGaugeSvg 的 circle DOM 顺序
+     本来就是底行在前，与抽屉版 setDetailCores 完全一致）。
+     主页面与抽屉共用此函数，避免两处口径漂移。 */
+  function paintCoreSvg(svg, v) {
+    if (!svg) return;
+    var cols = 3;
+    var rows = parseInt(svg.getAttribute('data-rows'), 10) || 14;
+    var cs = svg.querySelectorAll('circle');
+    var total = cols * rows;
+    var k = Math.round(Math.max(0, Math.min(100, v)) / 100 * total);
+    for (var j = 0; j < cs.length; j++) {
+      var on = j < k;
+      var col = on ? rampAt((Math.floor(j / cols) + 1) / rows * 100, 'cpu') : '';
+      var c = cs[j];
+      if (c._on !== on) { c._on = on; c.setAttribute('class', on ? 'on' : ''); }
+      if (c._col !== col) { c._col = col; c.style.fill = col; }
+    }
   }
 
   function setCores(host, pc) {
@@ -141,16 +155,7 @@
       var v = pc[i];
       if (!isNum(v)) continue;
       var t = tiles[i];
-      var svg = t.querySelector('svg');
-      var order = coreOrder(svg);
-      var k = Math.round(Math.max(0, Math.min(100, v)) / 100 * 25);
-      for (var j = 0; j < order.length; j++) {
-        var on = j < k;
-        var col = on ? rampAt((Math.floor(j / 5) + 1) * 20, 'cpu') : '';
-        var c = order[j];
-        if (c._on !== on) { c._on = on; c.setAttribute('class', on ? 'on' : ''); }
-        if (c._col !== col) { c._col = col; c.style.fill = col; }
-      }
+      paintCoreSvg(t.querySelector('svg'), v);
       var b = t.querySelector('[data-cv="' + i + '"]');
       if (b) {
         b.textContent = fmtInt(v);
@@ -341,6 +346,9 @@
         '<div><span class="mon-cmp-eyebrow">负载 1 / 5 / 15 分钟</span><b>' + esc(la) + '</b></div>' +
         '</div>';
       if (pc.length) {
+        /* 列数策略沿用原样（不改）：≤4 核 → 核数列（1 行），
+           ≤8 → 4 列，≤18 → 6 列，更多 → 8 列。
+           v1.1.64 只做「把每核点阵的高度调高、充满卡片」，不动列数。 */
         cpuHtml += '<div class="mon-hw-cores" data-cores style="--cols:' +
           (pc.length <= 4 ? pc.length : pc.length <= 8 ? 4 : pc.length <= 18 ? 6 : 8) + '">' +
           coreTilesHtml(pc.length) + '</div>';
@@ -1436,22 +1444,8 @@
       var v = pc[i];
       if (!isNum(v)) continue;
       var t = tiles[i];
-      var svg = t.querySelector('svg');
-      if (!svg) continue;
-      var cols = 3;
-      var rows = parseInt(svg.getAttribute('data-rows'), 10) || detailCoreRows(pc.length);
-      var cs = svg.querySelectorAll('circle');
-      var total = cols * rows;
-      var k = Math.round(Math.max(0, Math.min(100, v)) / 100 * total);
-      for (var j = 0; j < cs.length; j++) {
-        var on = j < k;
-        var col = on
-          ? rampAt((Math.floor(j / cols) + 1) / rows * 100, 'cpu')
-          : '';
-        var c = cs[j];
-        if (c._on !== on) { c._on = on; c.setAttribute('class', on ? 'on' : ''); }
-        if (c._col !== col) { c._col = col; c.style.fill = col; }
-      }
+      /* ⚠️ v1.1.64：与主页面共用 paintCoreSvg，避免两处上色口径漂移 */
+      paintCoreSvg(t.querySelector('svg'), v);
       var b = t.querySelector('[data-dcv="' + i + '"]');
       if (b) {
         b.textContent = fmtInt(v);

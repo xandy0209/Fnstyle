@@ -1846,14 +1846,13 @@
       });
     }
 
-    /* ---- ⚠️ v1.1.56：右栏四格 + 「本月预计电费」格新增电价说明 ----
+    /* ---- ⚠️ v1.1.56：右栏四格 ----
        ⚠️ v1.1.50：#monPowerStats 容器已去掉 .ov-card 外壳，
        .stat-cells 直接作为 .energy 网格项 → 不再有「多了一层卡片」。
        ⚠️ v1.1.55：数字改回普通文本（与其它板块的 .dnum > .dm 同款）；
        数值口径仍是 fnmonitor 的（金额带 ¥、kWh 精度规则）。
-       ⚠️ v1.1.56：标题栏两个徽标（来源 / 本月预估电费）与摘要行
-          （#monPowerDek）已按用户要求删除 —— 电价与口径说明
-          下沉到「本月预计电费」格里，避免同一屏出现 3 处电费数字。 */
+       ⚠️ v1.1.64：电价口径行**从右栏格子移到板块标题栏**（#monPowerRate），
+          避免同一屏出现 3 处电费数字。 */
     /* ⚠️ v1.1.63：电价模型简化为**单一单价**。
        电费 = 用电量 × 单价，不分阶梯、不分时段、不分地区。
        所以这里不再有「谷/平构成胶囊」与「判档依据行」——
@@ -1867,17 +1866,44 @@
        结果**同屏两个胶囊显示不同精度的同一个单价**（实机截图确认）。
        现在两处都用 4 位，且与电价面板输入框的 step（0.0001）一致。 */
     var rateTxt = String(Math.round(effRate * 10000) / 10000);
-    var rateBlock =
-      '<div class="sub sub-rate" title="电费单价：' + esc(rateTxt) +
-        ' 元/kWh（按用电量 × 单价估算，不分阶梯档位、不分峰谷时段、不分地区）">' +
-        '<span class="rate-lbl">电价</span>' + esc(rateTxt) +
-        ' 元/kWh</div>';
-
-    /* ⚠️ v1.1.63：「本月预计电费」用**同一个单价**（与已计电费一致）。 */
-    var projRate = Number((pstats && pstats.proj_rate_yuan_per_kwh) || 0);
-    var projRateTxt = projRate > 0
-      ? (Math.round(projRate * 10000) / 10000) + ' 元/kWh'
-      : '—';
+    /* ⚠️ v1.1.64：单价胶囊从右栏格子里**移到标题栏**。
+       原来「本月预计电费」格里并排放了两枚胶囊
+       （「按 0.5224 元/kWh 估算」+「电价 0.5224 元/kWh」），
+       数值完全相同、语义重复，把那一格撑得很挤。
+       现在标题栏放一枚，右栏两枚一并删除（老板确认）。
+       ⚠️ 无统计数据时**清空**标题栏胶囊，别显示「电价 0 元/kWh」。
+       ⚠️ v1.1.64：老板要求标签里**说明电价本身**（这个电价是什么、
+          默认取哪档、能不能改），而不是讲电费的计算规则。
+          后端因此把说明拆成两段分别下发：
+            rate_desc → 这个电价是什么（标题栏标签用）
+            rate_note → 电费怎么算出来（电价设置面板用） */
+    var headRate = document.querySelector('#monPowerRate');
+    if (headRate) {
+      if (!pstats) {
+        headRate.innerHTML = '';
+        headRate.removeAttribute('title');
+      } else {
+        /* ⚠️ v1.1.64：老板要求标签里说明**电价本身**是什么，
+           不是讲电费的计算规则（那是电价面板 RATE_NOTE 的事）。
+           后端把文案分开下发：
+             rate_desc_short = 标签里直接显示的短句
+             rate_desc       = 完整说明（悬停/聚焦可见）
+             rate_note       = 电费怎么算（电价面板用）
+           ⚠️ 短句由后端给，不能在前端截断 RATE_DESC ——
+              它的第一句就有 46 字（实测铺开后胶囊 708px、占满标题栏 63%）。 */
+        var descFull = String((pstats && pstats.rate_desc) || '');
+        var descShort = String((pstats && pstats.rate_desc_short) || '');
+        headRate.innerHTML =
+          '<span class="rate-lbl">电价</span>' + esc(rateTxt) + ' 元/kWh' +
+          (descShort ? '<span class="rate-note">' + esc(descShort) + '</span>' : '') +
+          (descFull ? '<span class="rate-info" tabindex="0" role="img" ' +
+            'aria-label="' + esc(descFull) + '">ⓘ</span>' : '');
+        headRate.setAttribute('title',
+          descFull || ('电费单价：' + rateTxt + ' 元/kWh'));
+        var info = headRate.querySelector('.rate-info');
+        if (info) info.setAttribute('title', descFull);
+      }
+    }
 
     statsBox.innerHTML = '<div class="stat-cells">' +
       '<div class="stat-cell"><div class="eyebrow">今日用电</div>' +
@@ -1901,10 +1927,7 @@
           fnKwh(pstats && pstats.month_proj_kwh) + ' kWh · 剩余天数按' +
           esc(pstats && pstats.avg_basis || '平均') + ' ' +
           fnD1(pstats && pstats.avg_w) + ' W</div>' +
-        '<div class="sub sub-proj-rate" title="预计电费 = 预计电量 × 电费单价。' +
-          '单价默认取成都最低档（0.5224 元/kWh），可在电价面板里手动调整">' +
-          '按 ' + esc(projRateTxt) + ' 估算</div>' +
-        rateBlock + '</div>' +
+        '</div>' +
       '<div class="stat-cell"><div class="eyebrow">全年估算<span class="pill est-pill">估算</span></div>' +
         '<div class="dnum"><span class="dm">' + esc(fnYuan(pstats && pstats.year_proj_yuan)) + '</span></div>' +
         '<div class="sub" title="平均功耗 × 8760 小时">约 ' +

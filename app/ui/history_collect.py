@@ -483,6 +483,14 @@ def energy_stats(rate_yuan_per_kwh=0.6, uptime_seconds=None):
         if tariff.get("rate") is not None:
             rate = float(tariff["rate"])
             result["rate_yuan_per_kwh"] = rate
+        # ⚠️ v1.1.64：把后端权威说明一并带出去。
+        #   rate_note = 电费怎么算出来（电量 × 单价）→ 电价设置面板用；
+        #   rate_desc = 这个电价本身是什么、为什么是这个数 → 标题栏标签用。
+        #   两者分别对应 power_tariff 的两个常量，避免口径描述漂移，
+        #   也避免把「电费计算规则」误当成「电价说明」展示（老板明确要求区分）。
+        result["rate_note"] = pt.RATE_NOTE
+        result["rate_desc"] = pt.RATE_DESC
+        result["rate_desc_short"] = pt.RATE_DESC_SHORT
     except Exception:
         tariff = None
         split = None

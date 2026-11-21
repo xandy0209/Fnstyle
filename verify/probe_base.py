@@ -104,6 +104,16 @@ def connect(host="192.168.5.8", port=9222):
     c = CDP(ws)
     c.send("Page.enable")
     c.send("Runtime.enable")
+    # ⚠️ 必须关掉缓存 —— 否则改了 CSS/JS 后页面仍用旧版，
+    #    实测表现为「代码明明改了但尺寸一点没变」，极难判断。
+    #    preview.py 的静态资源带 `Cache-Control: max-age=600`，
+    #    所以除了 setCacheDisabled 还要主动 clearBrowserCache。
+    try:
+        c.send("Network.enable")
+        c.send("Network.setCacheDisabled", {"cacheDisabled": True})
+        c.send("Network.clearBrowserCache")
+    except Exception:
+        pass
     c.send("Emulation.setDeviceMetricsOverride",
            {"width": 1440, "height": 1400, "deviceScaleFactor": 2,
             "mobile": False})
@@ -120,9 +130,15 @@ def open_drawer(c, settle=5.0):
 
 
 def reload_and_open(c, settle=5.0):
-    """重载页面 → 切监控 → 开抽屉。"""
+    """重载页面（**硬刷新**，绕过 HTTP 缓存）→ 切监控 → 开抽屉。"""
     c.send("Page.navigate", {"url": URL})
     c.pump(7)
+    try:
+        # ignoreCache=True → 强制重新拉取 CSS/JS，改了样式才能立刻看到效果
+        c.send("Page.reload", {"ignoreCache": True})
+        c.pump(5)
+    except Exception:
+        pass
     c.send("Emulation.setDeviceMetricsOverride",
            {"width": 1440, "height": 1400, "deviceScaleFactor": 2,
             "mobile": False})

@@ -20,15 +20,24 @@ const CUR_VER = currentVersion();
 /* ---------- 最小 DOM stub ---------- */
 const els = {};
 function mkEl(id) {
+  /* ⚠️ v1.1.64：属性要真存真取。
+     原来 getAttribute 恒返回 null、setAttribute 是空函数 →
+     任何关于 title 的断言都会假绿（永远拿不到值）。
+     改成用 this._attrs 实际保存。 */
   return {
     id: id,
     innerHTML: '',
     textContent: '',
     checked: true,
     className: '',
+    _attrs: {},
     addEventListener: function () {},
-    getAttribute: function () { return null; },
-    setAttribute: function () {},
+    getAttribute: function (k) {
+      return Object.prototype.hasOwnProperty.call(this._attrs, k)
+        ? this._attrs[k] : null;
+    },
+    setAttribute: function (k, v) { this._attrs[k] = String(v); },
+    removeAttribute: function (k) { delete this._attrs[k]; },
     /* v1.1.41：板块内容区与趋势图宿主分离，
        renderTemp/renderPower 会 querySelector 宿主里的图表组 */
     querySelector: function () { return null; },
@@ -42,6 +51,9 @@ function mkEl(id) {
      旧的 monTemp / monPower 容器已移除（内容移到抽屉） */
   'monTempOverview', 'monTempSide', 'monTempDek',
   'monPowerOverview', 'monPowerStats', 'monPowerDaily',
+  /* ⚠️ v1.1.64：电费单价胶囊移到**板块标题栏**（#monPowerRate）。
+     原来它在右栏「本月预计电费」格里出现两次（数值完全相同、语义重复）。 */
+  'monPowerRate',
   /* v1.1.49：#monTempCount 统计标签已按用户要求移除，不再是页面元素 */
   'btnMonRefresh', 'monAuto',
   /* ⚠️ v1.1.56：能耗板块的三个元素按用户要求删除 ——
@@ -110,6 +122,8 @@ global.document = {
     if (sel.charAt(0) === '#') return els[sel.slice(1)] || null;
     return null;
   },
+  /* ⚠️ v1.1.64：补 getElementById（标题栏单价胶囊用） */
+  getElementById: function (id) { return els[id] || null; },
   querySelectorAll: function () { return []; },
   addEventListener: function () {},
 };
@@ -1595,10 +1609,16 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
 
   /* --- 源码级：fnmonitor 1:1 的关键实现要素 --- */
   const srcRules = [
-    /* ① 每核 5×5 点阵瓦片 */
-    ['CORE_DOTS 生成 25 个圆点', /for \(var y = 0; y < 5; y\+\+\)[\s\S]{0,200}for \(var x = 0; x < 5; x\+\+\)/],
-    ['点阵 viewBox 为 0 0 5 5', /viewBox="0 0 5 5"/],
-    /* ② 详情抽屉用 dotGauge（3 列 × N 行），不是 5×5 瓦片 */
+    /* ① 每核点阵瓦片 —— ⚠️ v1.1.64：主页面改为**复用抽屉版 dotGauge(3 列 × N 行)**。
+       原因：5×5 正方点阵（viewBox "0 0 5 5"）的固有宽高比是 1:1，
+       与竖长瓦片内容区（52×152px）差太远，SVG 的 meet 缩放只吃最小边
+       → 点阵只占 49px，上下各空 ~70px，撑不满卡片。
+       改成 3 列 × 14 行后比例 ≈3:14，与竖长瓦片接近 → 能铺满高度，
+       且每个点仍是正圆，与详情抽屉视觉完全一致。 */
+    ['主页面每核瓦片复用 dotGauge', /coreTilesHtml[\s\S]{0,400}dotGaugeSvg\(3, rows\)/],
+    ['主页面与抽屉共用上色函数 paintCoreSvg', /function paintCoreSvg\(svg, v\)/],
+    ['抽屉版也走 paintCoreSvg（口径统一）', /setDetailCores[\s\S]{0,400}paintCoreSvg\(t\.querySelector\('svg'\), v\)/],
+    /* ② 详情抽屉用 dotGauge（3 列 × N 行） */
     ['详情抽屉用 dotGauge 点阵柱', /function dotGaugeSvg\(cols, rows\)/],
     ['dotGauge 行数规则 n>8 → 8 否则 14', /n > 8 \? 8 : 14/],
     ['dotGauge 每点半径 0.34', /r="0\.34"/],
@@ -1634,7 +1654,17 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
   /* --- CSS：fnmonitor 1:1 的关键样式 --- */
   const cssRules = [
     ['每核瓦片网格按 --cols 排布', /\.mon-hw-cores \{[^}]*repeat\(var\(--cols/],
-    ['瓦片圆点用主题底色', /\.mon-hw-core circle \{ fill: var\(--bg-hover\)/],
+    /* ⚠️ v1.1.64：点阵从 5×5 SVG 换成**抽屉同款**（3 列 × 14 行），
+       选择器也随之从 .mon-hw-core circle 变为 .mon-hw-core-dots circle。 */
+    ['瓦片圆点用主题底色', /\.mon-hw-core-dots circle \{ fill: var\(--bg-hover\)/],
+    /* 点阵 SVG 只设 height:100%，宽度由 viewBox 宽高比推导。
+       若同时设 width:100%，meet 会缩到最小边 → 点阵缩成中间一小块。 */
+    ['点阵 SVG 只设 height:100%（宽度自适应）',
+      /\.mon-hw-core-dots svg \{[^}]*height: 100%[^}]*width: auto/],
+    /* 脚注行：绝对定位 + left/right 时不能再写 width:100%，
+       否则 right 被忽略 → 右侧数字跑出瓦片（实测 bug）。 */
+    ['脚注行宽度用 auto（避免溢出瓦片）',
+      /\.mon-hw-core-f \{[^}]*width: auto/],
     ['详情仪表限宽 30px（对齐 fnmonitor）', /\.mon-dcore svg \{[^}]*max-width: 30px/],
     ['详情仪表网格按 --cols 排布', /\.mon-dcores \{[^}]*repeat\(var\(--cols, 8\)/],
     ['DIMM 斜纹段用图案填充', /\.mon-hw-dimm \.seg-cache \{ fill: url\(#monDimmHatch\)/],
@@ -4076,11 +4106,13 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
         /dm-dot/.test(st55) === false],
       ['右栏「本月预计电费」渲染为 ¥4.87',
         /本月预计电费<\/div><div class="dnum"><span class="dm">¥4\.87/.test(st55)],
-      ['「本月预计电费」格内新增电价说明（sub-rate）',
-        /class="sub sub-rate"/.test(st55) &&
-        /<span class="rate-lbl">电价<\/span>/.test(st55)],
-      ['电价说明显示「0.6 元/kWh」',
-        /0\.6 元\/kWh/.test(st55)],
+      /* ⚠️ v1.1.64：电价说明已从「本月预计电费」格**移到标题栏**
+         （#monPowerRate）。右栏格子里不再有 .sub-rate 胶囊。 */
+      ['右栏「本月预计电费」格内不再有电价胶囊（v1.1.64 已移到标题栏）',
+        /class="sub sub-rate"/.test(st55) === false &&
+        /class="sub sub-proj-rate"/.test(st55) === false],
+      ['电价说明不再出现在右栏（不再有 rate-lbl）',
+        /<span class="rate-lbl">电价<\/span>/.test(st55) === false],
       ['「本月用电」格标为「已计电费」（与预计区分）',
         /已计电费 ¥0\.32/.test(st55)],
       ['全页不再出现「本月预估电费」徽标文案（v1.1.56 已删）',
@@ -4088,6 +4120,13 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
         /本月预估电费/.test(ov55) === false],
       ['不再出现「此刻 X W」摘要行文案（v1.1.56 已删）',
         /此刻 <b>/.test(st55) === false && /此刻 <b>/.test(ov55) === false],
+      /* ⚠️ v1.1.64：标题栏胶囊（#monPowerRate）内容正确 */
+      ['标题栏 #monPowerRate 渲染出「电价 0.6 元/kWh」',
+        /<span class="rate-lbl">电价<\/span>0\.6 元\/kWh/.test(
+          els.monPowerRate ? els.monPowerRate.innerHTML : '')],
+      ['标题栏胶囊带口径 title',
+        /电费单价：0\.6 元\/kWh/.test(
+          els.monPowerRate ? els.monPowerRate.getAttribute('title') : '')],
     ];
     renderRules55.forEach(([label, ok]) => {
       console.log((ok ? '  ✓ ' : '  ✗ ') + label);
@@ -4125,6 +4164,11 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     path.join(__dirname, '..', 'app', 'ui', 'index.html'), 'utf8');
   const css56 = fs.readFileSync(
     path.join(__dirname, '..', 'app', 'ui', 'static', 'css', 'app.css'), 'utf8');
+  /* ⚠️ v1.1.64：补两个后端源文件（电价说明常量的下发链路） */
+  const tar56 = fs.readFileSync(
+    path.join(__dirname, '..', 'app', 'ui', 'power_tariff.py'), 'utf8');
+  const hist56 = fs.readFileSync(
+    path.join(__dirname, '..', 'app', 'ui', 'history_collect.py'), 'utf8');
   let bad56 = 0;
 
   console.log('\n--- v1.1.56 能耗标题栏去徽标/摘要行 + 电价说明下沉 ---');
@@ -4147,19 +4191,61 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       /dek\.innerHTML = txt;/.test(src56) === false],
     ['monitor.js 已无「此刻 <b>… W</b>」摘要文案',
       /此刻 <b>/.test(src56) === false],
-    /* ---- ③ 「本月预计电费」格新增电价说明 ---- */
-    ['「本月预计电费」格内新增 .sub-rate 电价行',
-      /class="sub sub-rate"/.test(src56)],
-    ['电价行带「电价」标签',
+    /* ---- ③ 电价说明：**v1.1.64 已从右栏格子移到标题栏** ---- */
+    ['右栏格子的 .sub.sub-rate 已删除',
+      /class="sub sub-rate"/.test(src56) === false],
+    ['右栏格子的 .sub.sub-proj-rate 已删除（两枚胶囊数值重复）',
+      /class="sub sub-proj-rate"/.test(src56) === false],
+    ['index.html 标题栏有 #monPowerRate 容器',
+      /id="monPowerRate"/.test(html56)],
+    ['monitor.js 往 #monPowerRate 写单价胶囊',
+      /querySelector\('#monPowerRate'\)/.test(src56)],
+    ['标题栏胶囊带「电价」标签',
       /<span class="rate-lbl">电价<\/span>/.test(src56)],
     ['电价行显示「元/kWh」',
       /元\/kWh/.test(src56)],
     ['电价口径优先取后端 eff_rate_yuan_per_kwh（本月实际均价）',
       /eff_rate_yuan_per_kwh/.test(src56)],
-    ['CSS 有 .stat-cell .sub-rate 样式',
-      /\.stat-cell \.sub-rate \{/.test(css56)],
-    ['CSS 有 .sub-rate .rate-lbl 标签样式',
-      /\.stat-cell \.sub-rate \.rate-lbl \{/.test(css56)],
+    ['CSS 有 .mon-head-rate 标题栏胶囊样式',
+      /\.mon-head-rate \{/.test(css56)],
+    ['CSS 有 .mon-head-rate .rate-lbl 标签样式',
+      /\.mon-head-rate \.rate-lbl \{/.test(css56)],
+    /* ⚠️ v1.1.64：标签里的**电价说明** ——
+       短句（rate_desc_short）直接显示 + ⓘ 图标悬停看完整版（rate_desc）。
+       关键：说明的是「电价本身」，不是「电费怎么算」——
+       后端因此把两段文案分成 RATE_DESC 与 RATE_NOTE 两个常量。 */
+    ['CSS 有 .mon-head-rate .rate-note 短句样式',
+      /\.mon-head-rate \.rate-note \{/.test(css56)],
+    ['CSS 有 .mon-head-rate .rate-info ⓘ 图标样式',
+      /\.mon-head-rate \.rate-info \{/.test(css56)],
+    ['前端渲染短句 .rate-note',
+      /class="rate-note"/.test(src56)],
+    ['前端渲染 ⓘ 图标 .rate-info',
+      /class="rate-info"/.test(src56)],
+    ['后端 power_tariff 有 RATE_DESC（电价本身的说明）',
+      /RATE_DESC\s*=\s*\(/.test(tar56)],
+    ['后端 power_tariff 有 RATE_DESC_SHORT（标签内短句）',
+      /RATE_DESC_SHORT\s*=\s*"/.test(tar56)],
+    ['后端 history_collect 下发 rate_desc / rate_desc_short',
+      /"rate_desc"\]\s*=\s*pt\.RATE_DESC/.test(hist56) &&
+      /"rate_desc_short"\]\s*=\s*pt\.RATE_DESC_SHORT/.test(hist56)],
+    ['CSS 已移除 .stat-cell .sub-rate（旧位置样式）',
+      /\.stat-cell \.sub-rate \{/.test(css56) === false],
+    /* ⚠️ v1.1.64：可点击卡片的**悬停效果统一**（保留效果大的那套：
+       上浮 1px + 22px 投影）。原来 .ov-tap 与 .mon-cmp-card 是两套，
+       .mon-bay[data-clickable] 是第三套 → 同屏观感不一致。 */
+    ['.mon-cmp-card 悬停上浮 1px',
+      /\.mon-cmp-card:hover \{[^}]*translateY\(-1px\)/.test(css56)],
+    ['.mon-cmp-card 悬停有 22px 投影',
+      /\.mon-cmp-card:hover \{[^}]*0 6px 22px/.test(css56)],
+    ['.mon-cmp-card 过渡含 transform / box-shadow',
+      /\.mon-cmp-card \{[^}]*transition:[^}]*transform[^}]*box-shadow/.test(css56)],
+    ['.mon-cmp-card-static 悬停复位 transform / box-shadow（静态卡不误导）',
+      /\.mon-cmp-card-static:hover \{[^}]*transform: none[^}]*box-shadow: none/.test(css56)],
+    ['盘位格悬停也上浮 1px（统一）',
+      /\.mon-bay\[data-clickable="1"\]:hover \{[^}]*translateY\(-1px\)/.test(css56)],
+    ['盘位格过渡含 transform / box-shadow',
+      /\.mon-bay \{[^}]*transition:[^}]*transform[^}]*box-shadow/.test(css56)],
     /* ---- ④ 版本号（版本无关：格式合法，不写死具体号）---- */
     ['manifest 版本号格式合法',
       /version\s+= \d+\.\d+\.\d+/.test(

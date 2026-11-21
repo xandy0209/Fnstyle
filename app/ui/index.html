@@ -35,7 +35,7 @@
     </div>
     <!-- 顶栏右侧：当前版本号 + 检查更新入口 + 新页面打开 -->
     <div class="topbar-right" id="topbarUpdate">
-      <span class="ver-pill" id="verPill" title="当前版本">v1.1.63</span>
+      <span class="ver-pill" id="verPill" title="当前版本">v1.1.64</span>
       <span class="ub-status" id="tbUpdateStatus"></span>
       <button class="btn sm icon-btn" id="tbCheckUpdate" type="button" title="检查更新" aria-label="检查更新">
         <svg class="upd-ico" viewBox="0 0 24 24" aria-hidden="true">
@@ -202,11 +202,18 @@
       <header>
         <h2><span>⚡</span> 能耗</h2>
         <div class="spacer"></div>
+        <!-- ⚠️ v1.1.64：电费单价提到标题栏显示。
+             原来单价在右栏「本月预计电费」格里出现**两次**：
+             「按 0.5224 元/kWh 估算」+「电价 0.5224 元/kWh」，
+             数值完全相同、语义重复，且把那一格撑得很挤。
+             现在统一收敛到标题栏一枚胶囊，右栏两枚一并删除。 -->
+        <span class="mon-head-rate" id="monPowerRate" title="电费单价"></span>
         <button type="button" class="mon-link-btn" data-sheet="power">详情 ›</button>
         <!-- ⚠️ v1.1.56：按用户要求去掉标题栏的两个徽标
              （原「硬件 RAPL」来源徽标 + 原「本月预估电费」徽标），
              以及标题下的摘要行（原 #monPowerDek「此刻 X W，按电价 …」）。
-             电价信息改为在右栏「本月预计电费」格里单独说明。 -->
+             ⚠️ v1.1.64：电费单价改由标题栏的 #monPowerRate 胶囊承载
+             （原在右栏「本月预计电费」格里出现两次，数值重复）。 -->
       </header>
       <div class="body">
         <!-- 总览形态（对齐 fnmonitor energy 模块：1.1fr 1fr + 下方柱状图） -->

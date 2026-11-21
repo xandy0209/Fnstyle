@@ -174,8 +174,14 @@ check('前端默认单价 0.5224', "'0.5224'" in js)
 
 check('CSS 有 .tariff-field 样式', '.tariff-field' in css)
 check('CSS 有 .tariff-note 样式', '.tariff-note' in css)
-check('CSS 有 .sub-rate 样式（能耗卡片显示单价）', '.sub-rate' in css)
-check('CSS 有 .sub-proj-rate 样式（预计电费）', '.sub-proj-rate' in css)
+# ⚠️ v1.1.64：单价胶囊已从右栏格子**移到板块标题栏**（.mon-head-rate）。
+#    原来右栏有两枚数值完全相同的胶囊（.sub-rate / .sub-proj-rate），
+#    删掉后右栏变矮、与左栏不等高。现在统一收敛到标题栏一枚。
+check('CSS 有 .mon-head-rate 样式（标题栏单价胶囊）', '.mon-head-rate' in css)
+check('CSS 已无 .sub-rate（旧位置样式）', '.stat-cell .sub-rate' not in css)
+check('CSS 已无 .sub-proj-rate（旧位置样式）', '.sub-proj-rate' not in css)
+check('能耗两栏用 stretch 等高（v1.1.64）', 'align-items: stretch' in css)
+check('四格统计两行均分高度（v1.1.64）', 'grid-template-rows: repeat(2, minmax(0, 1fr))' in css)
 
 print('\n' + '=' * 70)
 print('通过 %d 项，失败 %d 项' % (PASS, FAIL))

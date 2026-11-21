@@ -2704,7 +2704,8 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
   min-height: 168px;
   min-width: 0;
   box-shadow: var(--tray-shadow);
-  transition: background-color .2s ease;
+  /* ⚠️ v1.1.64：加 transform / box-shadow 过渡，配合统一的悬停上浮效果 */
+  transition: background-color .2s ease, transform .26s ease, box-shadow .26s ease;
 }
 .mon-bay:hover { background: var(--tray-hi); }
 .mon-bay-top {
@@ -3461,10 +3462,17 @@ html.mon-scroll-lock body {
 
 /* ---- 盘位卡片变为可点击 ---- */
 .mon-bay[data-clickable="1"] { cursor: pointer; }
+/* ⚠️ v1.1.64：与其它可点卡片**统一**悬停效果（保留效果大的那套）：
+   .ov-tap / .mon-cmp-card 都是「边框加粗 + 上浮 1px + 22px 投影」，
+   盘位格原来只有底色变化 + 1px 描边，没有上浮/投影 → 同一屏观感不一致。
+   这里补上 transform + box-shadow（保留盘位格原有的底色与描边变化）。 */
 .mon-bay[data-clickable="1"]:hover {
   background: var(--tray-hi);
-  box-shadow: var(--tray-shadow), 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent);
+  box-shadow: var(--tray-shadow), 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent),
+              0 6px 22px rgba(0, 0, 0, .18);
+  transform: translateY(-1px);
 }
+.mon-bay[data-clickable="1"]:active { transform: translateY(0) scale(.995); }
 .mon-bay[data-clickable="1"]:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -3507,16 +3515,38 @@ html.mon-scroll-lock body {
   padding: 1rem 1.1rem;
   min-width: 0;
   cursor: pointer;
-  transition: border-color .2s ease, background .2s ease;
+  transition: border-color .2s ease, background .2s ease,
+              transform .26s ease, box-shadow .26s ease;
+  /* ⚠️ v1.1.64：三张卡片在 .mon-grid-3 里默认等高（grid stretch），
+     处理器卡片内容最少 → 底部留白一大片（实测 116.9px）。
+     改成纵向 flex，让「每核点阵网格」能用 flex:1 吃掉剩余高度。 */
+  display: flex;
+  flex-direction: column;
 }
-.mon-cmp-card:hover { border-color: var(--border-strong); background: var(--bg-card); }
+/* ⚠️ v1.1.64：hover 效果与 .ov-tap **完全一致**。
+   原来这里是两套：
+     .ov-tap:hover        → 边框加粗 + translateY(-1px) 上浮 + 22px 投影
+     .mon-cmp-card:hover  → 只改边框色 + 背景色（无上浮、无投影）
+   同一屏里「实时功耗」和「处理器 / 内存」两张可点卡片悬停表现不一致，
+   老板要求统一，**保留效果大一点的**（.ov-tap 那套：上浮 + 投影）。 */
+.mon-cmp-card:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-card);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, .18);
+}
+.mon-cmp-card:active { transform: translateY(0) scale(.995); }
 .mon-cmp-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-/* 显卡卡片与 fnmonitor 一致：不可点击（GPU 详情在处理器抽屉底部） */
+/* 显卡卡片与 fnmonitor 一致：不可点击（GPU 详情在处理器抽屉底部）
+   ⚠️ v1.1.64：静态卡**不能**有上浮/投影，否则会被误认为可点。
+   所以这里显式把 transform / box-shadow 复位。 */
 .mon-cmp-card-static { cursor: default; }
 .mon-cmp-card-static:hover {
   border-color: var(--border);
   background: var(--bg-elevated);
+  transform: none;
+  box-shadow: none;
 }
 
 .mon-cmp-label {
@@ -3602,8 +3632,14 @@ html.mon-scroll-lock body {
 .mon-hw-cores {
   display: grid;
   grid-template-columns: repeat(var(--cols, 4), minmax(0, 1fr));
+  /* ⚠️ v1.1.64：行高用 1fr → 瓦片随卡片一起拉高，
+     消除「点阵只占顶部一小块、下方大片留白」的观感。 */
+  grid-auto-rows: minmax(0, 1fr);
   gap: .55rem;
   margin-top: .95rem;
+  /* 吃掉卡片剩余高度 */
+  flex: 1 1 auto;
+  min-height: 0;
 }
 .mon-hw-core {
   border-radius: 12px;
@@ -3612,16 +3648,61 @@ html.mon-scroll-lock body {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: flex-end;
   gap: .45rem;
   border: 1px solid var(--border);
+  /* 瓦片撑满网格行高 */
+  min-height: 0;
+  /* ⚠️ v1.1.64：点阵容器用**绝对定位**铺满瓦片，
+     脚注行（核号+百分比）也绝对定位贴底，两者互不重叠。 */
+  position: relative;
+  /* 底部留出脚注行的空间 */
+  padding-bottom: 1.6rem;
 }
-.mon-hw-core svg { width: 100%; max-width: 54px; height: auto; }
-.mon-hw-core circle { fill: var(--bg-hover); transition: fill .35s ease; }
-.mon-hw-core circle.on { fill: var(--accent); }
+/* 脚注行：绝对定位贴底（脱离常规流，避免与点阵互相挤压） */
+.mon-hw-core-f {
+  position: absolute;
+  left: .6rem;
+  right: .6rem;
+  bottom: .5rem;
+  z-index: 2;
+}
+/* ⚠️ v1.1.64：点阵的定位参照层。
+   里面放的是**与抽屉版同款的 SVG 点阵**（dotGaugeSvg(3, rows)，
+   viewBox "0 0 3 14"）。之前这里用的是 5×5 正方形点阵，
+   因为比例 1:1 与竖长瓦片（52×152px）差太远，
+   SVG 的 meet 缩放只能吃最小边 → 只占 49px，上下各空 ~70px。 */
+.mon-hw-core-dots {
+  position: absolute;
+  left: .6rem;
+  right: .6rem;
+  top: .65rem;
+  bottom: 1.6rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+/* ⚠️ v1.1.64：只设 height:100% —— 宽度由 viewBox 固有宽高比自动推导。
+   绝不能 width:100% + height:100% 同时设：那会让 meet 缩到最小边，
+   点阵反而缩成中间一小块（这正是之前 5×5 点阵撑不开的根因）。 */
+.mon-hw-core-dots svg {
+  height: 100%;
+  width: auto;
+  max-width: none;
+  display: block;
+}
+.mon-hw-core-dots circle { fill: var(--bg-hover); transition: fill .35s ease; }
+.mon-hw-core-dots circle.on { fill: var(--accent); }
 .mon-hw-core-f {
   display: flex;
   justify-content: space-between;
-  width: 100%;
+  /* ⚠️ v1.1.64：这里**不能**写 width:100%。
+     该元素同时有 position:absolute + left:.6rem + right:.6rem，
+     CSS 规定「绝对定位元素的 width 优先于 right」→
+     width:100% 会让 right 被忽略，右边缘比瓦片内沿多出 .6rem(9.6px)，
+     实测表现：每核卡片右下角的百分比数字跑到了卡片外。
+     改成 width:auto → left/right 同时生效，正好贴住瓦片内沿。 */
+  width: auto;
   font-size: .68rem;
   line-height: 1;
   color: var(--text-muted);
@@ -4239,7 +4320,13 @@ html.mon-scroll-lock body {
   display: grid;
   grid-template-columns: 1.1fr 1fr;
   gap: 1rem;
-  align-items: start;
+  /* ⚠️ v1.1.64：必须是 **stretch**（等高），不能用 start。
+     原来写的是 align-items: start —— grid 项按自身内容高度排列，
+     不拉伸对齐。删掉「本月预计电费」格里的两枚单价胶囊后，
+     右栏四格变矮 → 左栏（实时功耗）比右栏高出 100+px，
+     实测截图确认左右两栏底边不齐。
+     stretch 后两栏自动等高（跟 .mon-grid-3 三卡等高同一原理）。 */
+  align-items: stretch;
 }
 /* ⚠️ v1.1.50：能耗右侧的用电统计容器不再套 .ov-card 外壳
    （原来 stat-cells 套在 ov-card 里 → 视觉上「多了一层卡片」）。
@@ -4251,6 +4338,14 @@ html.mon-scroll-lock body {
    这里不能整体覆盖它 —— 只补 width/box-sizing，
    边框与底色交给 .mon-info 自己，避免两套样式打架。 */
 .energy > #monPowerStats { min-width: 0; }
+.energy > #monPowerStats > .stat-cells {
+  /* ⚠️ v1.1.64：让 .stat-cells 撑满网格项高度。
+     .energy 改用 align-items:stretch 后，#monPowerStats 会被拉到与左栏等高；
+     但 grid 项的默认 height 是 auto（内容高），
+     子元素 height:100% 会失效 → 这里显式让它 stretch。 */
+  height: 100%;
+  box-sizing: border-box;
+}
 .energy > #monPowerStats > .loading {
   display: block;
   width: 100%;
@@ -4532,11 +4627,18 @@ html.mon-scroll-lock body {
 .stat-cells {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
+  /* ⚠️ v1.1.64：两行**均分**高度（1fr 1fr），不再按内容各自撑开。
+     原来行高由内容决定 → 上排「今日/本月用电」123.5px、
+     下排「本月预计电费/全年估算」142.7px，两排肉眼可见不一样高。
+     改成 1fr 1fr 后四格完全等高。 */
+  grid-template-rows: repeat(2, minmax(0, 1fr));
   gap: 1px;
   background: var(--border);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: hidden;
+  /* 撑满 #monPowerStats（.energy 用 align-items:stretch 拉到与左栏等高） */
+  height: 100%;
 }
 .stat-cell {
   background: var(--bg-elevated);
@@ -4558,41 +4660,66 @@ html.mon-scroll-lock body {
   margin-top: 6px;
   font-size: .75rem;
 }
-/* ⚠️ v1.1.56：能耗「本月预计电费」格新增的电价说明行。
-   与上一行「约 X kWh · 剩余天数按…」同属 .sub，但用一枚淡色标签
-   单独成行，让「电价」这一口径一眼可辨（原来只在标题栏摘要行里出现，
-   摘要行按用户要求已删除，电价下沉到这里）。 */
-.stat-cell .sub-rate {
-  margin-top: 8px;
+/* ⚠️ v1.1.64：电费单价胶囊 —— 放在**能耗板块标题栏**。
+   原来它在右栏「本月预计电费」格里出现过两次
+   （「按 0.5224 元/kWh 估算」+「电价 0.5224 元/kWh」），数值完全相同、
+   语义重复，把那一格挤得很满。现在统一收敛到标题栏一枚。 */
+.mon-head-rate {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 1px 7px;
+  gap: 6px;
+  padding: 3px 10px;
   border-radius: 999px;
   background: var(--bg-hover);
   border: 1px solid var(--border);
   color: var(--text-secondary);
+  font-size: .72rem;
+  line-height: 1.35;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
-.stat-cell .sub-rate .rate-lbl {
+.mon-head-rate:empty { display: none; }
+.mon-head-rate .rate-lbl {
   color: var(--text-primary);
   font-weight: 600;
 }
+/* ⚠️ v1.1.64：标签内的**短句**说明（老板要求「在电价的标签中说明」）。
+   短句由后端 rate_desc_short 下发（18 字），完整说明走 ⓘ 悬停。
+   用左侧竖线与单价数值分隔，视觉上区分「数值」与「口径」。 */
+.mon-head-rate .rate-note {
+  color: var(--text-muted);
+  font-size: .68rem;
+  padding-left: 6px;
+  border-left: 1px solid var(--border-strong);
+}
 
-/* ⚠️ v1.1.62：预计电费单价说明行（「本月预计电费」格内）
-   标明这个数字是「预计电量 × 该单价」估出来的，不是精确账单。 */
-.stat-cell .sub-proj-rate {
-  margin-top: 6px;
+/* ⚠️ v1.1.64：电价说明入口（ⓘ 图标）。
+   完整说明不直接铺在标签里 —— 「默认取成都…不区分阶梯档位与峰谷时段」
+   这一句就有 46 字，铺开后胶囊涨到 708px、占满标题栏 63%，
+   把「详情 ›」按钮挤到边上（实测截图确认很难看）。
+   改成一枚 ⓘ 图标：标签保持紧凑，悬停/聚焦显示完整说明。 */
+.mon-head-rate .rate-info {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 1px 7px;
-  border-radius: 999px;
-  background: var(--bg-hover);
-  border: 1px solid var(--border);
-  color: var(--text-secondary);
-  white-space: nowrap;
-  font-size: .69rem;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  margin-left: 1px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  color: var(--text-muted);
+  font-size: .62rem;
+  line-height: 1;
+  cursor: help;
+  user-select: none;
+  flex: none;
+}
+.mon-head-rate .rate-info:hover,
+.mon-head-rate .rate-info:focus-visible {
+  color: var(--text-primary);
+  border-color: var(--accent);
+  background: var(--bg-card);
+  outline: none;
 }
 
 /* ⚠️ v1.1.57：电价设置面板（能耗详情抽屉） */

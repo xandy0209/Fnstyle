@@ -38,6 +38,21 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 UI_DIR = ROOT / "app" / "ui"
+
+
+def _rate_note(attr="RATE_NOTE"):
+    """取后端的单价说明常量（power_tariff.RATE_NOTE / RATE_DESC）。
+
+    ⚠️ v1.1.64：本地预览必须与实机**文案完全一致** ——
+    标题栏的电价胶囊会显示这段说明。
+    自己抄一份必然随两边改动而漂移，所以直接 import 后端常量。
+    """
+    try:
+        sys.path.insert(0, str(UI_DIR))
+        import power_tariff as pt
+        return getattr(pt, attr, "")
+    except Exception:
+        return ""
 SEED_DIR = ROOT / "app" / "seed"
 PIC_DIR = ROOT / "pic"
 DATA_DIR = ROOT / ".preview-data"
@@ -215,11 +230,11 @@ def mock_monitor():
         "cpu": {
             "available": True,
             "percent": cpu_pct,
-            "model": "Intel(R) Core(TM) i5-12400F 6-Core 12-Thread Processor",
-            "cores": 12,
-            "freqText": "4.40 GHz",
-            "loadavg": ["1.24", "0.98", "0.87"],
-            "coresPercent": [rnd.randint(0, 95) for _ in range(12)],
+            "model": "Intel(R) Celeron(R) CPU J3455 @ 1.50GHz",
+            "cores": 4,
+            "freqText": "1.50 GHz",
+            "loadavg": ["1.17", "0.95", "0.99"],
+            "coresPercent": [rnd.randint(0, 95) for _ in range(4)],
         },
         "mem": {
             "available": True,
@@ -449,6 +464,13 @@ def mock_power_stats():
         "avg_w": avg_w,
         "avg_basis": "近 3 天平均",
         "eff_rate_yuan_per_kwh": eff,
+        # ⚠️ v1.1.64：单价说明（标题栏胶囊要显示）。
+        #   rate_note = 电费怎么算；rate_desc = 电价本身是什么。
+        #   直接复用后端常量，保证本地预览与实机文案完全一致
+        #   （自己另写一份必然随两边改动而漂移）。
+        "rate_note": _rate_note("RATE_NOTE"),
+        "rate_desc": _rate_note("RATE_DESC"),
+        "rate_desc_short": _rate_note("RATE_DESC_SHORT"),
         "ts": int(now),
     }
 
