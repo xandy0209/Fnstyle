@@ -7,7 +7,7 @@
 
   1. API 层：/api/monitor 的 network 字段是否到位（速率 / 今日累计 / 接口数）
   2. DOM 层：六张卡片是否渲染、顺序、标签、状态词
-  3. 数值层：点阵数字的 aria-label 是否与 API 真实值一致
+  3. 数值层：大数字的显示值是否与 API 真实值一致（v1.1.70 起为普通字体，非点阵）
   4. 交互层：点「处理器」卡能打开对应抽屉（data-sheet 白名单生效）
   5. 布局层：概览区块是否真的在存储卡片上方（比较 getBoundingClientRect）
   6. 趋势层：趋势线是否有路径（跑满两个采样点后）
@@ -31,7 +31,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from probe_base import CDP, Checker, api, connect  # noqa: E402
 
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                   'shot_overview_v1169.png')
+                   'shot_overview_v1171.png')
 
 
 def snap_overview(c):
@@ -42,7 +42,7 @@ def snap_overview(c):
       var cards = [].slice.call(host.querySelectorAll('.ov-metric'));
       function t(s){ var e = host.querySelector(s); return e ? e.textContent : null; }
       function a(s){ var e = host.querySelector(s);
-                     return e ? e.getAttribute('aria-label') : null; }
+                     return e ? e.textContent : null; }
       var ovCard = document.getElementById('monOverview');
       var wrap = ovCard ? ovCard.closest('.card') : null;
       /* 存储卡片：概览之后的下一个 .card */
@@ -84,8 +84,12 @@ def snap_overview(c):
         sparkPaths: host.querySelectorAll('.ov-spark-line').length,
         sparkDots: host.querySelectorAll('.ov-spark-dot').length,
         pipN: host.querySelectorAll('.ov-pip').length,
-        dotCircles: (function(){ var e = host.querySelector('[data-ov-val="cpuV"] svg');
-          return e ? e.querySelectorAll('circle').length : -1; })(),
+        /* v1.1.70：弃用点阵 → 数值元素内部不应有 svg/circle */
+        numSvg: (function(){
+          return [...host.querySelectorAll('[data-ov-val]')]
+                 .filter(function(e){ return e.querySelector('svg'); }).length;
+        })(),
+        numCircles: host.querySelectorAll('[data-ov-val] circle').length,
         /* 布局：概览卡片必须在上方 */
         ovTop: wrap ? Math.round(wrap.getBoundingClientRect().top) : null,
         nextTop: nextCard ? Math.round(nextCard.getBoundingClientRect().top) : null,
@@ -94,6 +98,26 @@ def snap_overview(c):
         ovWidth: wrap ? Math.round(wrap.getBoundingClientRect().width) : null,
         gridCols: (function(){ var g = host.querySelector('.ov-metrics');
           return g ? getComputedStyle(g).gridTemplateColumns : null; })(),
+        /* ⚠️ v1.1.71：六卡等高 + 数字/仪表水平对齐 */
+        cardHeights: (function(){
+          return [...host.querySelectorAll('.ov-metric')]
+                 .map(function(c){ return Math.round(c.getBoundingClientRect().height); });
+        })(),
+        alignDiffs: (function(){
+          var pairs = [['cpu','cpuV'],['mem','memV'],['disk','diskV'],
+                       ['temp','tempV'],['pwr','pwrV']];
+          return pairs.map(function(p){
+            var g = host.querySelector('[data-ov-gauge-el="'+p[0]+'"]');
+            var n = host.querySelector('[data-ov-val="'+p[1]+'"]');
+            if (!g || !n) return -999;
+            var gr = g.getBoundingClientRect(), nr = n.getBoundingClientRect();
+            return Math.round(Math.abs((nr.top+nr.height/2)-(gr.top+gr.height/2)));
+          });
+        })(),
+        gaugeW: (function(){
+          var e = host.querySelector('[data-ov-gauge-el="cpu"]');
+          return e ? Math.round(e.getBoundingClientRect().width) : -1;
+        })(),
       });
     })()""")
     try:
@@ -181,25 +205,32 @@ def main():
              str(ov.get('labels')))
     ck.check('仪表数量 = 5', ov.get('gauges') == 5, str(ov.get('gauges')))
     ck.check('趋势线宿主 = 5', ov.get('sparks') == 5, str(ov.get('sparks')))
-    ck.check('点阵数字已渲染（circle > 0）', (ov.get('dotCircles') or 0) > 0,
-             str(ov.get('dotCircles')))
+    # ⚠️ v1.1.70 回归：概览**不再使用点阵数字**（老板明确指示
+    #    「不使用点阵数字，保持与其他的数字字体一致」）——
+    #    数值元素内部残留 svg/circle 就是点阵漏网。
+    # ⚠️ 别写 `ov.get('x') or -1` —— 值为 0 时会被 or 短路成 -1，断言永远失败。
+    #    这里显式取默认值 None 再比较。
+    _ns = ov.get('numSvg')
+    _nc = ov.get('numCircles')
+    ck.check('数值元素内部无 SVG（已弃用点阵）', _ns == 0, str(_ns))
+    ck.check('数值元素内部无 circle 点阵', _nc == 0, str(_nc))
 
     # ----------------------------------------------------------
-    ck.section('3. 数值层：点阵值 vs 页面内同一帧数据')
+    ck.section('3. 数值层：大数字值 vs 页面内同一帧数据')
     # ----------------------------------------------------------
     # ⚠️ v1.1.69：这里**不能**拿 DOM 快照去比「先前抓的 API」。
     #    CPU / 功耗是实时值 —— 抓 DOM 和抓 API 之间隔了几秒，
     #    值本来就会变（实测 CPU 28% vs 21.8%、功耗 29.0 vs 31.0），
     #    那是**采样时差**，不是 bug。
     #    正解：在**页面内同一帧**里同时取「概览渲染用的数据源」
-    #    （window.FnStyleMonitor.lastData()）与「DOM 上显示的点阵值」，
+    #    （window.FnStyleMonitor.lastData()）与「DOM 上显示的大数字值」，
     #    两者必然同源 → 逐项核对。
     same = c.js("""(function(){
       var d = window.FnStyleMonitor.lastData();
       if (!d) return JSON.stringify({err:'NO_DATA'});
       var host = document.getElementById('monOverview');
       function a(s){ var e = host.querySelector(s);
-                     return e ? e.getAttribute('aria-label') : null; }
+                     return e ? e.textContent : null; }
       var st = d.storage || {}, sum = st.summary || {};
       var pw = d.power || {};
       var tp = (d.temp || {});
@@ -234,27 +265,27 @@ def main():
                 return False
 
         if raw.get('cpu') is not None:
-            ck.check('处理器点阵值 = 同一帧 API 值',
+            ck.check('处理器大数字值 = 同一帧 API 值',
                      near(ui['cpu'], raw['cpu'], 1),
                      'UI=%s 同帧=%s' % (ui['cpu'], raw['cpu']))
         if raw.get('mem') is not None:
-            ck.check('内存点阵值 = 同一帧 API 值',
+            ck.check('内存大数字值 = 同一帧 API 值',
                      near(ui['mem'], raw['mem'], 1),
                      'UI=%s 同帧=%s' % (ui['mem'], raw['mem']))
         if raw.get('disk') is not None:
-            ck.check('存储点阵值 = 同一帧 API 值',
+            ck.check('存储大数字值 = 同一帧 API 值',
                      near(ui['disk'], raw['disk'], 1),
                      'UI=%s 同帧=%s' % (ui['disk'], raw['disk']))
         if raw.get('pwr') is not None:
-            ck.check('功耗点阵值 = 同一帧 API 值',
+            ck.check('功耗大数字值 = 同一帧 API 值',
                      near(ui['pwr'], raw['pwr'], 0.05),
                      'UI=%s 同帧=%s' % (ui['pwr'], raw['pwr']))
         if raw.get('temp') is not None:
-            ck.check('温度点阵值 = 同一帧 API 值',
+            ck.check('温度大数字值 = 同一帧 API 值',
                      near(ui['temp'], raw['temp'], 1),
                      'UI=%s 同帧=%s' % (ui['temp'], raw['temp']))
 
-    ck.check('网络点阵值非空（不是 --）',
+    ck.check('网络大数字值非空（不是 --）',
              ov['vals']['rx'] not in (None, '--') and
              ov['vals']['tx'] not in (None, '--'),
              'rx=%s tx=%s' % (ov['vals']['rx'], ov['vals']['tx']))
@@ -286,6 +317,20 @@ def main():
     ck.check('栅格为 3 列',
              ov.get('gridCols') and len(ov['gridCols'].split()) == 3,
              str(ov.get('gridCols')))
+
+    # ----------------------------------------------------------
+    ck.section('5b. 布局（v1.1.71）：六卡等高 + 数字/仪表水平对齐')
+    # ----------------------------------------------------------
+    hs = ov.get('cardHeights') or []
+    ck.check('六卡完全等高（max-min ≤ 1px）',
+             len(hs) == 6 and (max(hs) - min(hs)) <= 1, str(hs))
+    ck.check('卡片高度 ≤ 220px（已压缩）',
+             bool(hs) and max(hs) <= 220, str(hs))
+    ad = ov.get('alignDiffs') or []
+    ck.check('数字与仪表中心对齐（5 张仪表 diff ≤ 2px）',
+             len(ad) == 5 and all(d <= 2 for d in ad), str(ad))
+    ck.check('仪表尺寸 76×76（已压缩）',
+             abs((ov.get('gaugeW') or 0) - 76) < 2, str(ov.get('gaugeW')))
 
     # ----------------------------------------------------------
     ck.section('6. 趋势层')
@@ -335,11 +380,17 @@ def main():
     ck.section('8. 截图留证')
     # ----------------------------------------------------------
     try:
+        # ⚠️ clip 用的是**文档绝对坐标**，不是视口相对坐标。
+        #    getBoundingClientRect() 返回视口相对值 → 必须加上
+        #    window.scrollX / scrollY 换算成文档坐标，
+        #    否则配合 captureBeyondViewport=True 会截到错误区域。
         clip = c.js("""(function(){
           var el = document.getElementById('monOverview');
           if (!el) return null;
           var r = el.getBoundingClientRect();
-          return {x: Math.max(0, r.left - 12), y: Math.max(0, r.top - 12),
+          var sx = window.scrollX || 0, sy = window.scrollY || 0;
+          return {x: Math.max(0, r.left + sx - 12),
+                  y: Math.max(0, r.top + sy - 12),
                   width: Math.min(r.width + 24, 1400),
                   height: Math.min(r.height + 24, 900),
                   scale: 1};

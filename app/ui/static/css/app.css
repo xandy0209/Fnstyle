@@ -29,6 +29,12 @@
   --danger-soft: rgba(239, 68, 68, .12);
   --warning:     #f59e0b;
   --warning-soft: rgba(245, 158, 11, .12);
+  /* ---- 概览色阶用的**实心**中间色（v1.1.71）----
+     ⚠️ 不要复用 --warning-soft：它是 12% 透明度的**背景色**，
+     当文字色/填充色用会与底色相混 → 发灰发淡（实测存储 69% 渲染成米色）。
+     这里给色阶单独准备实心中间档。 */
+  --ramp-mid:    #5b8fd6;   /* 蓝 → 橙 的过渡实色（品牌蓝偏冷）*/
+  --ramp-mid-2:  #d18b16;   /* 接近告警的实心橙（更深）*/
 
   --radius:    10px;
   --radius-sm: 6px;
@@ -130,6 +136,10 @@
     --r-y:  oklch(0.82 0.16 115);
     --rt-g: oklch(0.52 0.12 158);
     --rt-l: oklch(0.55 0.13 122);
+
+    /* 浅底上的概览色阶中间档要**压深**才够对比（白卡上浅色会看不清） */
+    --ramp-mid:   #2f6fd0;
+    --ramp-mid-2: #a86a08;
   }
 }
 
@@ -5027,31 +5037,51 @@ html.mon-scroll-lock body {
 }
 
 /* =====================================================================
-   系统重要内容概览（六卡片）—— v1.1.69
+   系统重要内容概览（六卡片）—— v1.1.70
    对齐 fnmonitor 总览页的「核心指标」模块（.grid.metrics / .card.metric）。
-   每张卡：标题 + 状态词 / 点阵大数字 + 环形仪表 / 副标题 / 迷你趋势线。
+   每张卡：m-top(标题+状态词) / m-main(大数字+环形仪表) / m-sub(副标题) / m-foot(趋势线|盘位条)
+
+   ⚠️ v1.1.70 老板指示：**大数字不用点阵**，改用普通字体 ——
+      与项目其它板块（能耗 / 温度 / 存储 / 对比）的 .dnum > .dm 完全同款
+      （--font-display，700，tabular-nums）。
+   ⚠️ 卡片视觉：沿用 fnmonitor 的「大圆角 + 白底 + 无边框」，
+      但保留 FnStyle 的深/浅主题变量与品牌蓝。
    ===================================================================== */
 .ov-metrics {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1rem;
 }
-/* ⚠️ v1.1.69：卡片用 **grid**（对齐 fnmonitor 的 .metric）——
+/* ⚠️ v1.1.70：卡片用 **grid**（对齐 fnmonitor 的 .metric）——
    两列（数字区 | 仪表区），仪表在数字**右侧**同排。
    之前用 flex 纵向 → 仪表掉到数字下方单独一行，
    卡片被拉得很高、右侧大片留白，与参考实现差很多。 */
+/* ⚠️ v1.1.70 二次调整（老板反馈）：
+   ① 卡片**太高太占空间** → 从 265px 压到 ~200px：
+      - 去掉 min-height:236px（fnmonitor 的 236 是给「有 m-sub + 44px 趋势线」的
+        大屏版准备的，我们的副标题只有一行，236 纯属浪费）
+      - padding 20/20/16 → 16/18/14
+      - row-gap .5rem → .35rem
+      - 仪表 92px → 76px
+      - 趋势线高度 44 → 36px
+   ② **左侧文字与右侧图标水平对齐** →
+      原来数字区 align-self:end（沉底）、仪表 align-self:center（居中），
+      实测两者中心差 14px，看着"图标偏高、文字偏低"。
+      正解：两列都 align-self:center，且数字区内部用 align-items:baseline
+      让「数字 + 单位」共享基线 —— 图标中心与数字视觉中心在同一水平线上。 */
 .ov-metric {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.05rem 1.15rem .85rem;
+  border-radius: 18px;
+  padding: 1rem 1.15rem .875rem;
   min-width: 0;
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto auto auto auto;
   column-gap: .9rem;
-  row-gap: .45rem;
+  row-gap: .35rem;
+  align-items: center;
   transition: border-color .26s ease, transform .26s ease, box-shadow .26s ease;
 }
 .ov-metric:hover {
@@ -5064,7 +5094,8 @@ html.mon-scroll-lock body {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
-/* 告警态：状态词与描边一起变色 */
+/* 告警态：状态词与描边一起变色（对齐 fnmonitor 的
+   .metric.is-warn .m-state{color:var(--warn)} / .is-crit{color:var(--crit)}） */
 .ov-metric.is-warn { border-color: color-mix(in srgb, var(--warning) 45%, var(--border)); }
 .ov-metric.is-crit { border-color: color-mix(in srgb, var(--danger) 50%, var(--border)); }
 .ov-metric.is-warn .ov-m-state { color: var(--warning); }
@@ -5073,10 +5104,14 @@ html.mon-scroll-lock body {
 .ov-m-top {
   grid-column: 1 / -1;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: .5rem;
   min-width: 0;
+  /* ⚠️ v1.1.70：固定行高 26px —— 状态词文案长短不一
+     （「正常」/「实测 + 估算」/「1 块需留意」），
+     不固定会让第 1 行高度漂移 → 六张卡不等高。 */
+  height: 26px;
 }
 .ov-m-label {
   font-size: .95rem;
@@ -5086,86 +5121,126 @@ html.mon-scroll-lock body {
 }
 .ov-m-state {
   font-size: .78rem;
+  font-weight: 550;
   color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* 主体：点阵大数字 + 环形仪表 */
+/* 主体：大数字 + 环形仪表
+   ⚠️ v1.1.70：align-self 改成 center（原来 end）——
+      数字与仪表**垂直居中对齐**，两者的视觉中心落在同一水平线上。 */
 .ov-m-main {
   grid-column: 1;
   grid-row: 2;
-  align-self: end;
+  align-self: center;
   display: flex;
-  align-items: baseline;
+  /* ⚠️ v1.1.70：align-items 必须是 center（不是 baseline）——
+     baseline 会把数字按文字基线对齐，而 .ov-dm 的 line-height:.8
+     让字形比行盒高 → 数字整体下沉，与仪表中心差 19px。
+     改成 center 后，数字的**视觉中心**与仪表圆心严格同一水平线。 */
+  align-items: center;
   gap: .35rem;
   min-width: 0;
-  min-height: 54px;
+  /* 固定 76px（= 仪表高度）—— 让六张卡第 2 行完全等高 */
+  height: 76px;
 }
-/* 点阵数字（SVG 圆点阵） */
-.ov-dm {
+/* ⚠️ v1.1.70：普通字体大数字（不是点阵）。
+   复用项目通用 .dnum > .dm 体系（同能耗 / 温度 / 存储板块），
+   这里只补概览专属的 --dm-h 与单位色。
+   字号由 JS 按 rampInk() 写入的 color 决定分级。 */
+.ov-dnum {
+  --dm-h: 38px;
   display: inline-flex;
+  /* ⚠️ v1.1.70：数字与单位共享**基线**（flex-end + line-height:.8），
+     但整个 .ov-dnum 盒子在 .ov-m-main 里由 align-items:center 垂直居中。 */
   align-items: flex-end;
-  min-width: 0;
-  min-height: 34px;
-}
-.ov-dm > svg {
-  height: 34px;
-  width: auto;
-  max-width: 100%;
-  display: block;
-}
-.ov-dm circle { fill: var(--bg-hover); }
-.ov-dm circle.on { fill: var(--accent); }
-.ov-unit {
-  font-size: .95rem;
-  color: var(--text-muted);
-  margin-left: .3rem;
+  gap: calc(var(--dm-h) * .16);
   white-space: nowrap;
+  line-height: 1;
+  min-width: 0;
 }
+.ov-dnum > .ov-dm {
+  /* ⚠️ v1.1.70：line-height 从 .8 改成 1。
+     .8 会让行盒比字形矮 → 字形相对行盒**下沉**，
+     数字视觉中心比仪表圆心低 19px（实测）。
+     改成 1 后行盒高度=字号，字形在盒内居中，
+     与右侧仪表圆心严格同一水平线。 */
+  font: 700 calc(var(--dm-h) * 1.08) / 1 var(--font-display);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.04em;
+  height: var(--dm-h);
+  align-items: center;
+  white-space: nowrap;
+  line-height: 1;
+  color: var(--text-primary);
+  transition: color .3s ease;
+}
+.ov-dnum > .ov-unit {
+  font: 600 max(11px, calc(var(--dm-h) * .32)) / 1 var(--font-sans);
+  color: var(--text-secondary);
+  margin: 0 0 -1px;
+  letter-spacing: 0;
+}
+.ov-dnum > .ov-unit:empty { display: none; }
 
-/* 网络卡：上下行两行（无仪表 → 数字区横跨两列） */
+/* 网络卡：上下行两行（无仪表 → 数字区横跨两列）
+   ⚠️ v1.1.70：字号分级对齐 fnmonitor 的
+   .net-vals .dnum{--dm-h:30px} / .row.sec .dnum{--dm-h:20px;color:var(--ink-2)}
+   —— 下行大字、上行小字且用次要文字色（原来两行一样大、只靠 opacity 区分）。 */
 .ov-net-vals {
   grid-column: 1 / -1;
-  display: flex;
-  flex-direction: column;
-  gap: .2rem;
+  align-self: center;
+  display: grid;
+  gap: .3rem;
   min-width: 0;
+  /* ⚠️ v1.1.70：网络卡无仪表，数字区横跨两列，
+     高度锁到 76px 与其他卡的仪表区一致 → 六卡等高。 */
+  height: 76px;
+  align-content: center;
 }
 .ov-net-vals .row {
   display: flex;
-  align-items: flex-end;
-  gap: .35rem;
+  align-items: baseline;
+  gap: .55rem;
   min-width: 0;
 }
-.ov-net-vals .row.sec { opacity: .78; }
+.ov-net-vals .row .ov-dnum { --dm-h: 26px; }
+.ov-net-vals .row.sec .ov-dnum { --dm-h: 17px; }
+.ov-net-vals .row.sec .ov-dm { color: var(--text-secondary); }
+/* 箭头（fnmonitor 的 #i-down / #i-up，18×18 内联 SVG） */
 .ov-arrow {
-  font-size: 1rem;
-  line-height: 1;
-  color: var(--text-muted);
   flex: none;
-  margin-bottom: .18rem;
+  width: 18px;
+  height: 18px;
+  align-self: flex-end;
+  margin-bottom: 2px;
+  color: var(--text-muted);
 }
-.ov-net-vals .ov-dm { min-height: 22px; }
-.ov-net-vals .ov-dm > svg { height: 22px; }
-.ov-net-vals .ov-unit { font-size: .8rem; margin-left: .2rem; }
+.ov-arrow-svg { width: 100%; height: 100%; display: block; }
+.ov-arrow-ico { color: inherit; }
 
-/* 环形仪表（对齐 fnmonitor 的 .metric .m-gauge：92×92，在数字右侧）
+/* 环形仪表（对齐 fnmonitor 的 .metric .m-gauge，在数字右侧）
+   ⚠️ v1.1.70：92px → 76px（卡片整体压缩），align-self:center
+      保证仪表中心与数字视觉中心在同一水平线上。
    中心图标：fnmonitor 用 24×24 的 sprite（#i-bolt 之类），
-   这里用 16×16 的 path 经 translate+scale 放大到 24×24 居中。 */
+   这里把同样的图形内联成 SVG（translate(38 38) → 24×24 居中）。 */
 .ov-m-gauge {
   grid-column: 2;
   grid-row: 2;
   align-self: center;
-  width: 92px;
-  height: 92px;
+  width: 76px;
+  height: 76px;
   display: grid;
   place-items: center;
 }
 .ov-gauge { width: 100%; height: 100%; display: block; }
 .ov-gauge-track { stroke: var(--bg-hover); }
-.ov-gauge-val { stroke: var(--accent); transition: stroke-dashoffset .5s ease, stroke .3s ease; }
+.ov-gauge-val {
+  stroke: var(--accent);
+  transition: stroke-dashoffset .9s cubic-bezier(.22, .8, .24, 1), stroke .26s ease;
+}
 .ov-gauge-ico { color: var(--text-muted); }
 
 .ov-m-sub {
@@ -5173,38 +5248,45 @@ html.mon-scroll-lock body {
   font-size: .8rem;
   color: var(--text-muted);
   line-height: 1.45;
-  min-height: 1.2em;
+  /* ⚠️ v1.1.70：固定高度 20px —— 副标题只有一行，
+     用固定高度锁死，避免内容长短影响卡片总高。 */
+  height: 20px;
   overflow: hidden;
   text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 1;
-  -webkit-box-orient: vertical;
+  white-space: nowrap;
 }
 
-/* 迷你趋势线 */
-.ov-m-foot { grid-column: 1 / -1; min-height: 40px; }
+/* 迷你趋势线（对齐 fnmonitor 的 .spark：
+   主线深色 + 面积浅灰 + 末端实心点）
+   ⚠️ v1.1.70：高度 44 → 36px（配合卡片整体压缩） */
+.ov-m-foot {
+  grid-column: 1 / -1;
+  margin-top: .5rem;
+  /* ⚠️ v1.1.70：固定 36px —— 与 .ov-spark / .ov-pips 高度一致 */
+  height: 36px;
+}
 .ov-spark {
   width: 100%;
-  height: 40px;
+  height: 36px;
   display: block;
   overflow: visible;
 }
 .ov-spark-line {
   fill: none;
-  stroke: var(--accent);
+  stroke: var(--text-primary);
   stroke-width: 1.5;
   vector-effect: non-scaling-stroke;
 }
-.ov-spark-line.l2 { stroke: var(--text-muted); }
-.ov-spark-area { fill: var(--accent-soft); stroke: none; }
-.ov-spark-dot { fill: var(--accent); }
+.ov-spark-line.l2 { stroke: var(--text-muted); stroke-width: 1.3; }
+.ov-spark-area { fill: var(--bg-hover); stroke: none; }
+.ov-spark-dot { fill: var(--text-primary); }
 
 /* 盘位指示条（对齐 fnmonitor 的 .drive-pips） */
 .ov-pips {
   display: flex;
   gap: 6px;
   align-items: flex-end;
-  height: 44px;
+  height: 36px;
 }
 .ov-pips > div {
   flex: 1;
@@ -5213,7 +5295,7 @@ html.mon-scroll-lock body {
   min-width: 0;
 }
 .ov-pips .ov-pip {
-  height: 22px;
+  height: 20px;
   border-radius: 6px;
   background: var(--bg-hover);
   position: relative;
@@ -5222,6 +5304,8 @@ html.mon-scroll-lock body {
 .ov-pips .ov-pip > i {
   position: absolute;
   inset: auto 0 0 0;
+  /* 背景色由 JS 按占用率分级写入 inline style
+     （对齐 fnmonitor 的 rampAt(+d.percent, 'cap')） */
   background: var(--accent);
   /* 不设 border-radius —— 贴底填充由父级 .ov-pip 的 overflow:hidden 裁切，
      与 fnmonitor 的 .drive-pips .pip>i 一致 */

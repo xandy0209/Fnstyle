@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""verify_overview.py —— 「系统重要内容概览」前端渲染测试（v1.1.69）
+"""verify_overview.py —— 「系统重要内容概览」前端渲染测试（v1.1.71）
 
 在**真实 Chromium** 里跑（Playwright），加载真实的 app/ui/static/js/overview.js，
 喂真实的监控快照 JSON，然后逐项断言 DOM 结果。
@@ -8,7 +8,20 @@
 为什么用真浏览器而不是 jsdom / mini-DOM：
   · 概览用了 createElementNS / replaceChildren / WeakMap / SVG 几何属性，
     mini-DOM 很难忠实还原（内联 SVG 的 innerHTML 不解析 → 选择器失效）；
-  · 阈值告警色、点阵点亮、仪表弧长都要落到**真实渲染**上才算数。
+  · 阈值告警色、大数字字号、仪表弧长都要落到**真实渲染**上才算数。
+
+⚠️ v1.1.70 变更：概览大数字**弃用 5×7 LED 点阵**，改用普通字体
+   （--font-display）。原先「点阵字模 / 点亮点数」整组断言作废，
+   改为断言：文本内容、字体族、字号分级、颜色分级。
+
+⚠️ v1.1.71 变更：卡片高度压缩（265 → 215px）+ 左右水平对齐。
+   · 删除 .ov-metric 的 min-height:236px，改为**逐行锁高**
+     （m-top 26 / m-main 76 / m-sub 20 / m-foot 36）；
+   · 仪表 92 → 76px，中心图标 24 → 20px（保持 26% 官方比例）；
+   · .ov-m-main 的 align-items 从 baseline 改 center、
+     .ov-dm 的 line-height 从 .8 改 1 —— baseline + .8 会让行盒比字形矮，
+     字形整体下沉 19px，与仪表中心错位。
+   新增断言：六卡完全等高、数字与仪表中心 diff ≤ 2px。
 
 运行：python3 verify/verify_overview.py
 """
@@ -57,7 +70,10 @@ HOST_HTML = """<!DOCTYPE html>
     --bg: #14161a; --bg-elevated: #1b1e24; --bg-hover: #262a32;
     --border: #2a2f38; --border-strong: #3a4150;
     --accent: #4aa8ff; --accent-soft: rgba(74,168,255,.16);
-    --success: #35c48a; --warning: #f0a92c; --danger: #e5554f;
+    --success: #35c48a; --warning: #f0a92c; --warning-soft: rgba(240,169,44,.5);
+    --danger: #e5554f;
+    /* ⚠️ v1.1.71：概览色阶用的实心中间档（不能复用半透明的 --warning-soft） */
+    --ramp-mid: #5b8fd6; --ramp-mid-2: #d18b16;
     --text-primary: #e8eaed; --text-secondary: #a9b0bb; --text-muted: #6f7784;
     --radius: 14px; --font-mono: ui-monospace, Menlo, monospace;
   }
@@ -94,7 +110,10 @@ SNAP = {
     "network": {"available": True, "rxRate": 2048, "txRate": 512,
                 "todayRx": 1048576, "todayTx": 524288, "ifaceCount": 2},
     "temp": {"temps": [{"type": "cpu", "value": 45}], "mbTemp": 38, "disks": []},
-    "power": {"ok": True, "source": "rapl", "total": 29.0},
+    "power": {"ok": True, "source": "rapl", "total": 29.0,
+              "estimation_params": {"tdp_w": 65.0, "base_w": 20.0,
+                                     "disk_typical_w": 8.0, "nic_fixed_w": 3.0,
+                                     "disks": 2, "nics": 2}},
     "powerStats": {"today_kwh": 0.6, "today_yuan": 0.36},
 }
 
@@ -111,48 +130,196 @@ def run_tests(page):
            page.evaluate('typeof window.FnStyleOverview.reset'), 'function')
 
     # ----------------------------------------------------------
-    section('A 点阵数字 Dot')
+    section('A 大数字（普通字体，非点阵）')
+    # ----------------------------------------------------------
+    # ⚠️ v1.1.70：老板指示「不使用点阵数字，保持与其他的数字字体一致」——
+    #    概览大数字改用 .dnum > .dm 普通文本（--font-display，700，tabular-nums）。
+    #    下面断言：文本内容正确 + **不含 SVG 点阵** + 字体族/字重正确。
+    page.evaluate("""() => {
+      const host = document.getElementById('monOverview');
+      window.FnStyleOverview.render(host, %s);
+    }""" % json.dumps(SNAP, ensure_ascii=False))
+
+    res = page.evaluate("""() => {
+      const host = document.getElementById('monOverview');
+      const e = host.querySelector('[data-ov-val="cpuV"]');
+      const cs = getComputedStyle(e);
+      return {
+        text: e.textContent,
+        tag: e.tagName,
+        hasSvg: !!e.querySelector('svg'),
+        svgCount: e.querySelectorAll('svg').length,
+        font: cs.fontFamily,
+        weight: cs.fontWeight,
+        tabular: cs.fontVariantNumeric,
+        size: parseFloat(cs.fontSize),
+        lineHeight: cs.lineHeight,
+        letter: cs.letterSpacing,
+      };
+    }""")
+    eq('数字', '处理器大数字文本 = 32', res['text'], '32')
+    eq('数字', '是普通 span（不是 SVG）', res['tag'], 'SPAN')
+    eq('数字', '不含点阵 SVG（v1.1.70 要求）', res['hasSvg'], False)
+    eq('数字', '子元素里没有 svg', res['svgCount'], 0)
+    truthy('数字', '字体族用 --font-display（SF Pro Display）',
+           'SF Pro Display' in res['font'], res['font'])
+    eq('数字', '字重 700', res['weight'], '700')
+    truthy('数字', '等宽数字（tabular-nums）',
+           'tabular-nums' in res['tabular'], res['tabular'])
+    truthy('数字', '字号约 47px（--dm-h 44 × 1.08）',
+           40 <= res['size'] <= 52, res['size'])
+    truthy('数字', '负字距（-.04em，紧凑排版）',
+           res['letter'] and float(res['letter'].replace('px', '')) < 0,
+           res['letter'])
+
+    # ----------------------------------------------------------
+    section('A2 分级着色（rampInk / rampAt）')
     # ----------------------------------------------------------
     res = page.evaluate("""() => {
       const I = window.FnStyleOverview._internal;
+      const r = {};
+      // rampInk：4 档硬色
+      r.cpuOk = I.rampInk(10, 'cpu');
+      r.cpuMid = I.rampInk(70, 'cpu');
+      r.cpuWarn = I.rampInk(85, 'cpu');
+      r.cpuCrit = I.rampInk(95, 'cpu');
+      r.memOk = I.rampInk(10, 'mem');
+      r.capWarn = I.rampInk(85, 'cap');
+      r.capCrit = I.rampInk(95, 'cap');
+      r.tempOk = I.rampInk(40, 'temp');
+      r.tempWarn = I.rampInk(80, 'temp');
+      r.tempCrit = I.rampInk(90, 'temp');
+      // rampAt：连续取色
+      r.atLow = I.rampAt(5, 'cpu');
+      r.atHigh = I.rampAt(95, 'cpu');
+      r.atWarn = I.rampAt(85, 'cpu');
+      r.atCrit = I.rampAt(99, 'cpu');
+      // 阈值表
+      r.th = I.TH;
+      // inkTo 脏检查
       const el = document.createElement('span');
-      const d = I.dot(el);
-      d.set('0');
-      const svg = el.childNodes[0];
-      const circles = [...svg.childNodes];
-      const r = { viewBox: svg.getAttribute('viewBox'),
-                 n: circles.length,
-                 on: circles.filter(c => c.getAttribute('class') === 'on').length,
-                 off: circles.filter(c => c.getAttribute('class') === '').length,
-                 aria: el.getAttribute('aria-label') };
-      const svgRef = el.childNodes[0];
-      d.set('1');
-      r.noRebuild = (el.childNodes[0] === svgRef);
-      r.on1 = [...svgRef.childNodes].filter(c => c.getAttribute('class') === 'on').length;
-      d.set('88');
-      r.viewBox88 = el.childNodes[0].getAttribute('viewBox');
-      r.n88 = el.childNodes[0].childNodes.length;
-      d.set(null);
-      r.ariaNull = el.getAttribute('aria-label');
+      I.inkTo(el, 'var(--accent)');
+      const c1 = el.style.color;
+      I.inkTo(el, 'var(--accent)');
+      r.inkStable = (el.style.color === c1);
+      // ⚠️ v1.1.71 防回归：色阶**绝不能**返回半透明的背景色变量
+      //    （--warning-soft 是 12% 透明的背景色，当文字色用会发灰发淡）
+      r.badInk = [];
+      r.badAt = [];
+      ['cpu', 'mem', 'cap', 'temp', 'gen'].forEach(function (k) {
+        for (let v = 0; v <= 100; v += 1) {
+          const ink = I.rampInk(v, k);
+          if (String(ink).indexOf('--warning-soft') >= 0) r.badInk.push(k + ':' + v + '=' + ink);
+          const at = I.rampAt(v, k);
+          if (String(at).indexOf('--warning-soft') >= 0) r.badAt.push(k + ':' + v + '=' + at);
+        }
+      });
+      // 色阶里出现的所有变量名（供人工核对）
+      r.vars = (function () {
+        const set = new Set();
+        ['cpu', 'mem', 'cap', 'temp', 'gen'].forEach(function (k) {
+          for (let v = 0; v <= 100; v += 5) {
+            [I.rampInk(v, k), I.rampAt(v, k)].forEach(function (s) {
+              const m = String(s).match(/var\((--[a-z0-9-]+)\)/);
+              if (m) set.add(m[1]);
+            });
+          }
+        });
+        return [...set].sort();
+      })();
       return r;
     }""")
-    eq('Dot', '数字 0 的 aria-label', res['aria'], '0')
-    eq('Dot', '数字 0 的 viewBox 宽 5', res['viewBox'], '0 0 5 7')
-    eq('Dot', '数字 0 的 circle 数 = 5×7', res['n'], 35)
-    eq('Dot', '数字 0 点亮点数 = 19', res['on'], 19)
-    eq('Dot', '数字 0 熄灭点数 = 16', res['off'], 16)
-    truthy('Dot', '同宽度更新不重建 SVG', res['noRebuild'])
-    eq('Dot', '数字 1 点亮点数 = 10', res['on1'], 10)
-    eq('Dot', '数字 88 的 viewBox = 11', res['viewBox88'], '0 0 11 7')
-    eq('Dot', '数字 88 的 circle 数 = 11×7 = 70', res['n88'], 70)
-    eq('Dot', 'null 渲染为 --', res['ariaNull'], '--')
+    eq('着色', 'CPU 正常档 = 品牌蓝', res['cpuOk'], 'var(--accent)')
+    # 70% 已越过 st[2]=68（蓝→橙的过渡端点）→ 取 st[2] 实色
+    # （与 fnmonitor rampInk 的 t>0.98 → 返回 st[i] 同一套逻辑）
+    # ⚠️ v1.1.71：st[2] 从 --warning-soft 改成 --ramp-mid ——
+    #    --warning-soft 是 12% 透明度的**背景色**，当文字色用会与底色相混
+    #    → 发灰发淡（实机实测存储 69% 渲染成米色，几乎看不清）。
+    eq('着色', 'CPU 70% 越过过渡端点 = 橙调实色', res['cpuMid'],
+       'var(--ramp-mid)')
+    eq('着色', 'CPU 告警档 = 橙', res['cpuWarn'], 'var(--warning)')
+    eq('着色', 'CPU 严重档 = 红', res['cpuCrit'], 'var(--danger)')
+    eq('着色', '内存正常档 = 品牌蓝', res['memOk'], 'var(--accent)')
+    eq('着色', '容量告警档 = 橙', res['capWarn'], 'var(--warning)')
+    eq('着色', '容量严重档 = 红', res['capCrit'], 'var(--danger)')
+    eq('着色', '温度正常档 = 品牌蓝', res['tempOk'], 'var(--accent)')
+    eq('着色', '温度告警档 = 橙', res['tempWarn'], 'var(--warning)')
+    eq('着色', '温度严重档 = 红', res['tempCrit'], 'var(--danger)')
+    # 5% 落在 st[0]→st[1] 区间 → 混合色（同色混合视觉上仍是蓝）
+    truthy('着色', 'rampAt 低位取到色值', res['atLow'] != '', res['atLow'])
+    truthy('着色', 'rampAt 低位含品牌蓝', 'var(--accent)' in res['atLow'], res['atLow'])
+    eq('着色', 'rampAt 告警线 = 橙', res['atWarn'], 'var(--warning)')
+    eq('着色', 'rampAt 严重线 = 红', res['atCrit'], 'var(--danger)')
+    truthy('着色', 'rampAt 高位为混合色或实色',
+           res['atHigh'] != '', res['atHigh'])
+    eq('着色', '阈值 CPU 告警 85', res['th']['cpuWarn'], 85)
+    eq('着色', '阈值 CPU 严重 95', res['th']['cpuCrit'], 95)
+    eq('着色', '阈值 温度告警 80', res['th']['tempWarn'], 80)
+    eq('着色', '阈值 温度严重 90', res['th']['tempCrit'], 90)
+    truthy('着色', 'inkTo 幂等（同色不重复写）', res['inkStable'])
+    # ⚠️ v1.1.71 防回归：色阶不得返回半透明背景色变量
+    #    （--warning-soft 是 12% 透明度背景色，当文字色用 → 发灰发淡）
+    eq('着色', 'rampInk 全量程不返回 --warning-soft', res['badInk'], [])
+    eq('着色', 'rampAt 全量程不返回 --warning-soft', res['badAt'], [])
+    truthy('着色', '色阶只用实心色变量',
+           res['vars'] and '--warning-soft' not in res['vars'],
+           res['vars'])
+
+    # ----------------------------------------------------------
+    section('A3 官方图标（fnmonitor sprite 内联）')
+    # ----------------------------------------------------------
+    res = page.evaluate("""() => {
+      const I = window.FnStyleOverview._internal;
+      const r = {};
+      // 图标构建器：24×24 坐标系
+      const g = I.buildIcon(I.ICONS.cpu);
+      r.cpuKinds = [...g.childNodes].map(n => n.tagName);
+      r.cpuHasRect = !!g.querySelector('rect');
+      r.cpuHasPath = !!g.querySelector('path');
+      // 存储图标含 ellipse
+      const gs = I.buildIcon(I.ICONS.storage);
+      r.storageHasEllipse = !!gs.querySelector('ellipse');
+      // 内存图标：1 rect + 1 path
+      const gm = I.buildIcon(I.ICONS.mem);
+      r.memN = gm.childNodes.length;
+      // 闪电：1 path
+      const gb = I.buildIcon(I.ICONS.power);
+      r.boltN = gb.childNodes.length;
+      // 全部描边、无填充
+      const allStroke = [...g.childNodes].every(n =>
+        n.getAttribute('stroke') === 'currentColor' &&
+        n.getAttribute('fill') === 'none');
+      r.allStroke = allStroke;
+      r.strokeW = g.childNodes[0].getAttribute('stroke-width');
+      // 箭头
+      const gd = I.buildIcon(I.ARROWS.down);
+      r.arrowD = gd.querySelector('path').getAttribute('d');
+      const gu = I.buildIcon(I.ARROWS.up);
+      r.arrowU = gu.querySelector('path').getAttribute('d');
+      r.arrowDiff = r.arrowD !== r.arrowU;
+      return r;
+    }""")
+    eq('图标', 'CPU 图标 = rect + rect + path', res['cpuKinds'],
+       ['rect', 'rect', 'path'])
+    truthy('图标', 'CPU 图标含 rect', res['cpuHasRect'])
+    truthy('图标', 'CPU 图标含 path（引脚）', res['cpuHasPath'])
+    truthy('图标', '存储图标含 ellipse（圆柱顶面）', res['storageHasEllipse'])
+    eq('图标', '内存图标 = 2 个元素', res['memN'], 2)
+    eq('图标', '闪电图标 = 1 个元素', res['boltN'], 1)
+    truthy('图标', '图标全部描边 currentColor / fill:none', res['allStroke'])
+    eq('图标', '描边宽度 1.6（对齐 fnmonitor）', res['strokeW'], '1.6')
+    truthy('图标', '上下行箭头图形不同', res['arrowDiff'])
+    truthy('图标', '下行箭头是竖线+下尖',
+           'M12 5v14' in res['arrowD'], res['arrowD'])
+    truthy('图标', '上行箭头是竖线+上尖',
+           'M12 19V5' in res['arrowU'], res['arrowU'])
 
     # ----------------------------------------------------------
     section('B 环形仪表 makeGauge')
     # ----------------------------------------------------------
     res = page.evaluate("""() => {
       const I = window.FnStyleOverview._internal;
-      const g = I.makeGauge('M0 0');
+      const g = I.makeGauge(null);
       const val = g.el.childNodes[0].childNodes[1];
       const C = 2 * Math.PI * 40, A = C * 0.75;
       const r = { dasharray: val.getAttribute('stroke-dasharray'),
@@ -212,17 +379,18 @@ def run_tests(page):
     res = page.evaluate("""() => {
       const I = window.FnStyleOverview._internal;
       return {
-        cpu: [I.lvCPU(0), I.lvCPU(69.9), I.lvCPU(70), I.lvCPU(89.9),
-              I.lvCPU(90), I.lvCPU(null)],
-        mem: [I.lvMem(79.9), I.lvMem(80), I.lvMem(90)],
-        cap: [I.lvCap(79.9), I.lvCap(80), I.lvCap(90)],
-        tmp: [I.lvTemp(69.9), I.lvTemp(70), I.lvTemp(85)],
+        cpu: [I.lvCPU(0), I.lvCPU(84.9), I.lvCPU(85), I.lvCPU(94.9),
+              I.lvCPU(95), I.lvCPU(null)],
+        mem: [I.lvMem(84.9), I.lvMem(85), I.lvMem(95)],
+        cap: [I.lvCap(84.9), I.lvCap(85), I.lvCap(95)],
+        tmp: [I.lvTemp(79.9), I.lvTemp(80), I.lvTemp(90)],
       };
     }""")
-    eq('阈值', 'CPU 分级', res['cpu'], ['', '', 'warn', 'warn', 'crit', ''])
-    eq('阈值', '内存分级', res['mem'], ['', 'warn', 'crit'])
-    eq('阈值', '容量分级', res['cap'], ['', 'warn', 'crit'])
-    eq('阈值', '温度分级', res['tmp'], ['', 'warn', 'crit'])
+    eq('阈值', 'CPU 分级（fnmonitor 口径 85/95）', res['cpu'],
+       ['', '', 'warn', 'warn', 'crit', ''])
+    eq('阈值', '内存分级（85/95）', res['mem'], ['', 'warn', 'crit'])
+    eq('阈值', '容量分级（85/95）', res['cap'], ['', 'warn', 'crit'])
+    eq('阈值', '温度分级（80/90）', res['tmp'], ['', 'warn', 'crit'])
 
     # ----------------------------------------------------------
     section('E 温度取值')
@@ -297,6 +465,10 @@ def run_tests(page):
         r1: I.fmtRate(1024).v, r2: I.fmtRate(1024).u, r3: I.fmtRate(0).v,
         r4: I.fmtRate(null).v,
         g1: I.fmtGB(1073741824), e1: I.esc('<a&b>'),
+        d1: I.fmtDSize(1760000000000), d2: I.fmtDSize(2560000000000),
+        d3: I.fmtDSize(1500000000000), d4: I.fmtDSize(200000000000),
+        d5: I.fmtDSize(50000000), d6: I.fmtDSize(null),
+        d7: I.fmtDSize(8589934592),
       };
     }""")
     eq('格式', 'fmtInt(42.4)', res['i1'], '42')
@@ -315,6 +487,16 @@ def run_tests(page):
     eq('格式', 'fmtRate(null).v', res['r4'], '--')
     eq('格式', 'fmtGB(1GiB)', res['g1'], '1.0')
     eq('格式', 'esc 转义', res['e1'], '&lt;a&amp;b&gt;')
+    # ⚠️ v1.1.70：存储容量改**十进制**口径（对齐 fnmonitor 的 F.dsize）
+    eq('格式', 'fmtDSize(1.76 TB) → 1.76 TB', res['d1'], '1.76 TB')
+    eq('格式', 'fmtDSize(2.56 TB) → 2.56 TB', res['d2'], '2.56 TB')
+    # fnmonitor F.dsize：v>=10 → toFixed(1)，v<10 → toFixed(2)
+    eq('格式', 'fmtDSize(1.5 TB) → 1.50 TB（fnmonitor 口径）', res['d3'], '1.50 TB')
+    eq('格式', 'fmtDSize(200 GB) → 200 GB', res['d4'], '200 GB')
+    eq('格式', 'fmtDSize(50 MB) → 50 MB', res['d5'], '50 MB')
+    eq('格式', 'fmtDSize(null) → --', res['d6'], '--')
+    # fnmonitor F.dsize：GB 段 v>=100 → 取整，否则 toFixed(1)
+    eq('格式', 'fmtDSize(8 GiB) → 8.6 GB（非二进制）', res['d7'], '8.6 GB')
 
     # ----------------------------------------------------------
     section('H 六卡片渲染')
@@ -328,8 +510,9 @@ def run_tests(page):
       const host = document.getElementById('monOverview');
       const cards = [...host.querySelectorAll('.ov-metric')];
       const q = s => { const e = host.querySelector(s); return e ? e.textContent : null; };
+      /* ⚠️ v1.1.70：弃用点阵后，大数字是**普通文本** → 读 textContent */
       const aria = s => { const e = host.querySelector(s);
-                          return e ? e.getAttribute('aria-label') : null; };
+                          return e ? e.textContent : null; };
       const pips = host.querySelector('.ov-pips');
       const grid = host.querySelector('.ov-metrics');
       return {
@@ -402,13 +585,97 @@ def run_tests(page):
           const r = host.querySelector('[data-ov="cpu"]').getBoundingClientRect();
           return { w: Math.round(r.width), h: Math.round(r.height) };
         })(),
-        dotCircles: (() => {
-          const e = host.querySelector('[data-ov-val="cpuV"] svg');
-          return e ? e.querySelectorAll('circle').length : -1;
+        /* ⚠️ v1.1.71：六卡必须**完全等高**（逐行锁高后仍会漂移） */
+        cardHeights: cards.map(c => Math.round(c.getBoundingClientRect().height)),
+        /* ⚠️ v1.1.71：左侧数字与右侧仪表图标必须**同一水平线**
+           （.ov-m-main 用 baseline + line-height:.8 会让字形下沉 ~19px） */
+        alignDiffs: (() => {
+          const pairs = [['cpu', 'cpuV'], ['mem', 'memV'], ['disk', 'diskV'],
+                         ['temp', 'tempV'], ['pwr', 'pwrV']];
+          return pairs.map(([k, v]) => {
+            const g = host.querySelector('[data-ov-gauge-el="' + k + '"]');
+            const n = host.querySelector('[data-ov-val="' + v + '"]');
+            if (!g || !n) return -999;
+            const gr = g.getBoundingClientRect(), nr = n.getBoundingClientRect();
+            /* 用**字形盒**而非行盒：数字元素是 inline-flex，取其内容盒中心 */
+            const ncy = nr.top + nr.height / 2;
+            const gcy = gr.top + gr.height / 2;
+            return Math.round(Math.abs(ncy - gcy));
+          });
         })(),
-        dotOn: (() => {
-          const e = host.querySelector('[data-ov-val="cpuV"] svg');
-          return e ? e.querySelectorAll('circle.on').length : -1;
+        /* 数字行与仪表行是否真的同行（top 差 < 半个仪表高） */
+        sameRow: (() => {
+          const g = host.querySelector('[data-ov-gauge-el="cpu"]');
+          const n = host.querySelector('[data-ov-val="cpuV"]');
+          if (!g || !n) return false;
+          const gr = g.getBoundingClientRect(), nr = n.getBoundingClientRect();
+          return Math.abs(gr.top - nr.top) < gr.height;
+        })(),
+        /* v1.1.70：不再是点阵 → 每个数值元素自身内部不应有 svg / circle */
+        numSvg: [...host.querySelectorAll('[data-ov-val]')]
+          .filter(e => e.querySelector('svg')).length,
+        numCircles: host.querySelectorAll('[data-ov-val] circle').length,
+        numFonts: [...host.querySelectorAll('[data-ov-val]')]
+          .map(e => getComputedStyle(e).fontFamily),
+        /* 分级着色：CPU 32% 正常 → 品牌蓝 */
+        cpuInk: (() => {
+          const e = host.querySelector('[data-ov-val="cpuV"]');
+          return e ? e.style.color : null;
+        })(),
+        /* 网络卡字号分级 */
+        netRxH: (() => {
+          const e = host.querySelector('[data-ov-val="rxV"]');
+          return e ? Math.round(e.getBoundingClientRect().height) : -1;
+        })(),
+        netTxH: (() => {
+          const e = host.querySelector('[data-ov-val="txV"]');
+          return e ? Math.round(e.getBoundingClientRect().height) : -1;
+        })(),
+        netTxColor: (() => {
+          const e = host.querySelector('[data-ov-val="txV"]');
+          return e ? getComputedStyle(e).color : null;
+        })(),
+        netArrows: host.querySelectorAll('.ov-arrow-svg').length,
+        /* 盘位条填充色（分级着色） */
+        pipColors: (() => {
+          if (!pips) return [];
+          return [...pips.querySelectorAll('.ov-pip > i')].map(i => i.style.background);
+        })(),
+        /* 存储副标题（十进制容量） */
+        diskSubText: (() => {
+          const e = host.querySelector('[data-ov-sub="disk"]');
+          return e ? e.textContent : null;
+        })(),
+        /* 趋势线配色 */
+        sparkLineStroke: (() => {
+          const e = host.querySelector('.ov-spark-line');
+          return e ? getComputedStyle(e).stroke : null;
+        })(),
+        sparkAreaFill: (() => {
+          const e = host.querySelector('.ov-spark-area');
+          return e ? getComputedStyle(e).fill : null;
+        })(),
+        /* 卡片圆角 */
+        cardRadius: (() => {
+          const e = host.querySelector('[data-ov="cpu"]');
+          return e ? getComputedStyle(e).borderRadius : null;
+        })(),
+        cardMinH: (() => {
+          const e = host.querySelector('[data-ov="cpu"]');
+          return e ? Math.round(e.getBoundingClientRect().height) : -1;
+        })(),
+        /* 仪表图标子元素类型（官方图形） */
+        gaugeIcoTags: (() => {
+          const e = host.querySelector('[data-ov-gauge-el="cpu"] .ov-gauge-ico');
+          return e ? [...e.childNodes].map(n => n.tagName) : [];
+        })(),
+        gaugeIcoMemoryTags: (() => {
+          const e = host.querySelector('[data-ov-gauge-el="mem"] .ov-gauge-ico');
+          return e ? [...e.childNodes].map(n => n.tagName) : [];
+        })(),
+        gaugeIcoStorageTags: (() => {
+          const e = host.querySelector('[data-ov-gauge-el="disk"] .ov-gauge-ico');
+          return e ? [...e.childNodes].map(n => n.tagName) : [];
         })(),
         gaugeDash: (() => {
           const e = host.querySelector('[data-ov-gauge-el="cpu"] .ov-gauge-val');
@@ -480,11 +747,11 @@ def run_tests(page):
     eq('状态词', '网络低速 → 空闲', res['states']['net'], '空闲')
     eq('状态词', '温度 45℃ → 正常', res['states']['temp'], '正常')
     eq('状态词', '功耗 RAPL → 实测 + 估算', res['states']['pwr'], '实测 + 估算')
-    eq('数值', '处理器点阵 32', res['vals']['cpu'], '32')
-    eq('数值', '内存点阵 42', res['vals']['mem'], '42')
-    eq('数值', '存储点阵 69', res['vals']['disk'], '69')
-    eq('数值', '温度点阵 45', res['vals']['temp'], '45')
-    eq('数值', '功耗点阵 29.0', res['vals']['pwr'], '29.0')
+    eq('数值', '处理器 32', res['vals']['cpu'], '32')
+    eq('数值', '内存 42', res['vals']['mem'], '42')
+    eq('数值', '存储 69', res['vals']['disk'], '69')
+    eq('数值', '温度 45', res['vals']['temp'], '45')
+    eq('数值', '功耗 29.0', res['vals']['pwr'], '29.0')
     eq('数值', '网络下行 2.0', res['vals']['rx'], '2.0')
     eq('数值', '网络上行 512', res['vals']['tx'], '512')
     eq('单位', '处理器 %', res['units']['cpu'], '%')
@@ -496,6 +763,12 @@ def run_tests(page):
     truthy('副标题', '处理器含频率', '2.20 GHz' in (res['subs']['cpu'] or ''), res['subs']['cpu'])
     truthy('副标题', '内存含用量/总量', '3.3 GiB' in (res['subs']['mem'] or ''), res['subs']['mem'])
     truthy('副标题', '存储含容量', 'GB' in (res['subs']['disk'] or ''), res['subs']['disk'])
+    # ⚠️ v1.1.70：存储容量改十进制口径（对齐 fnmonitor 的 F.dsize）
+    #    快照 total=8589934592 → 8.59 GB（不是 8 GiB）
+    truthy('副标题', '存储容量用十进制 GB（非二进制 GiB）',
+           '8.6 GB' in (res['subs']['disk'] or ''), res['subs']['disk'])
+    truthy('副标题', '存储容量不含 GiB',
+           'GiB' not in (res['subs']['disk'] or ''), res['subs']['disk'])
     truthy('副标题', '存储含硬盘数', '2 块硬盘' in (res['subs']['disk'] or ''), res['subs']['disk'])
     truthy('副标题', '网络含今日流量', '今日' in (res['subs']['net'] or ''), res['subs']['net'])
     truthy('副标题', '温度含主板温度', '主板 38℃' in (res['subs']['temp'] or ''), res['subs']['temp'])
@@ -520,11 +793,64 @@ def run_tests(page):
            res['pipFillH'] not in (None, ''), res['pipFillH'])
     truthy('盘位', '条本身有实际宽度（不是撑满）',
            res['pipW'] > 4 and res['pipW'] < 200, 'width=%s' % res['pipW'])
-    truthy('盘位', '条高度 22px（与 fnmonitor 一致）',
-           abs(res['pipH'] - 22) < 1.5, 'height=%s' % res['pipH'])
-    truthy('真实渲染', '处理器点阵有 70 个圆点（2 字符×5 宽×7 行）',
-           res['dotCircles'] == 70, res['dotCircles'])
-    truthy('真实渲染', '处理器点阵点亮 = 28（数字 32）', res['dotOn'] == 28, res['dotOn'])
+    truthy('盘位', '条高度 20px（v1.1.71 压缩后）',
+           abs(res['pipH'] - 20) < 1.5, 'height=%s' % res['pipH'])
+    # ⚠️ v1.1.70 回归：概览**不再使用点阵数字**（老板明确指示
+    #    「不使用点阵数字，保持与其他的数字字体一致」）——
+    #    数字区里不能残留任何 SVG / circle，否则就是点阵漏网。
+    # 网络卡的上下行箭头是合法的内联 SVG（官方 #i-down/#i-up），
+    # 这里断言「除箭头外没有别的 SVG」+ 「没有任何 circle 点阵」。
+    eq('真实渲染', '每个数值元素内部都没有 SVG（已弃用点阵）',
+       res['numSvg'], 0)
+    eq('真实渲染', '每个数值元素内部都没有 circle 点阵',
+       res['numCircles'], 0)
+    truthy('真实渲染', '所有大数字都用 --font-display',
+           res['numFonts'] and all('SF Pro Display' in f for f in res['numFonts']),
+           json.dumps(res['numFonts'], ensure_ascii=False))
+    # 分级着色：CPU 32% 正常段 → 品牌蓝
+    eq('真实渲染', 'CPU 32% 大数字着色 = 品牌蓝',
+       res['cpuInk'], 'var(--accent)')
+    # 网络卡字号分级：下行大字 / 上行小字
+    truthy('真实渲染', '网络下行字号 > 上行字号',
+           res['netRxH'] > res['netTxH'],
+           'rx=%s tx=%s' % (res['netRxH'], res['netTxH']))
+    truthy('真实渲染', '网络上行用次要文字色（分级）',
+           res['netTxColor'] not in (None, ''), res['netTxColor'])
+    eq('真实渲染', '网络上下行箭头图标 = 2', res['netArrows'], 2)
+    # 盘位条填充色按占用率分级（sda 70% → 蓝，sdb 68% → 蓝）
+    truthy('真实渲染', '盘位填充色按占用率分级',
+           res['pipColors'] and all(c for c in res['pipColors']),
+           json.dumps(res['pipColors']))
+    # 趋势线配色：深色主线 + 浅灰面积
+    truthy('真实渲染', '趋势线主线取到颜色',
+           res['sparkLineStroke'] not in (None, ''), res['sparkLineStroke'])
+    truthy('真实渲染', '趋势线面积取到填充色',
+           res['sparkAreaFill'] not in (None, ''), res['sparkAreaFill'])
+    # 卡片圆角（对齐 fnmonitor 的大圆角）
+    truthy('真实渲染', '卡片圆角 ≥ 16px（对齐 fnmonitor）',
+           res['cardRadius'] and float(res['cardRadius'].replace('px', '')) >= 16,
+           res['cardRadius'])
+    # ⚠️ v1.1.71：卡片高度**压缩**到 215px 以内（老板反馈「太高了太占空间」）。
+    #    原 265px → 去掉 min-height:236px + 逐行锁高后 = 215px。
+    truthy('真实渲染', '卡片高度 ≤ 220px（已压缩，对齐老板要求）',
+           res['cardMinH'] <= 220, res['cardMinH'])
+    truthy('真实渲染', '卡片高度 ≥ 180px（不能压扁到失去信息量）',
+           res['cardMinH'] >= 180, res['cardMinH'])
+    # ⚠️ v1.1.71：六卡**完全等高**（m-top/m-main/m-sub/m-foot 逐行锁高）
+    hs = res['cardHeights']
+    truthy('真实渲染', '六卡完全等高（max-min ≤ 1px）',
+           hs and (max(hs) - min(hs)) <= 1, hs)
+    # ⚠️ v1.1.71：数字与仪表**同一水平线**（中心差 = 0）
+    ad = res['alignDiffs']
+    truthy('真实渲染', '数字与仪表中心对齐（5 张仪表 diff ≤ 2px）',
+           ad and all(d <= 2 for d in ad), ad)
+    # 官方图标形状：CPU=rect+rect+path / 内存=rect+path / 存储=ellipse+path
+    eq('真实渲染', 'CPU 仪表图标 = rect+rect+path（官方 #i-cpu）',
+       res['gaugeIcoTags'], ['rect', 'rect', 'path'])
+    eq('真实渲染', '内存仪表图标 = rect+path（官方 #i-mem）',
+       res['gaugeIcoMemoryTags'], ['rect', 'path'])
+    eq('真实渲染', '存储仪表图标 = ellipse+path（官方 #i-storage）',
+       res['gaugeIcoStorageTags'], ['ellipse', 'path'])
     truthy('真实渲染', '仪表 dashoffset 已计算',
            res['gaugeDash'] not in (None, ''), res['gaugeDash'])
     truthy('真实渲染', '仪表描边取到 accent 色',
@@ -539,8 +865,8 @@ def run_tests(page):
     truthy('真实渲染', '仪表在数字右侧同排',
            res['gaugeRightOfNum'], '仪表left=%s 数字right=%s' %
            (res['gaugeLeft'], res['numRight']))
-    truthy('真实渲染', '仪表尺寸 92×92（对齐 fnmonitor）',
-           abs(res['gaugeW'] - 92) < 2 and abs(res['gaugeH'] - 92) < 2,
+    truthy('真实渲染', '仪表尺寸 76×76（v1.1.71 压缩后）',
+           abs(res['gaugeW'] - 76) < 2 and abs(res['gaugeH'] - 76) < 2,
            '%sx%s' % (res['gaugeW'], res['gaugeH']))
     # ⚠️ v1.1.69 修正：fnmonitor 的仪表**有**中心图标（24×24 居中）。
     #    之前塞 16×16 未居中的 path → 缩到 92px 后只剩左上角一个小点。
@@ -620,6 +946,20 @@ def run_tests(page):
     truthy('告警', '功耗估算源 → 状态词「估算」', res['pwr']['state'] == '估算',
            res['pwr']['state'])
 
+    # ⚠️ v1.1.70：告警态下大数字要**分级着色**（对齐 fnmonitor 的 rampInk）
+    inks = page.evaluate("""() => {
+      const host = document.getElementById('monOverview');
+      const g = k => {
+        const e = host.querySelector('[data-ov-val="' + k + 'V"]');
+        return e ? e.style.color : null;
+      };
+      return { cpu: g('cpu'), mem: g('mem'), disk: g('disk'), temp: g('temp') };
+    }""")
+    eq('告警', 'CPU 95% 大数字 = 红色（严重）', inks['cpu'], 'var(--danger)')
+    eq('告警', '内存 85% 大数字 = 橙色（告警）', inks['mem'], 'var(--warning)')
+    eq('告警', '存储 95% 大数字 = 红色（严重）', inks['disk'], 'var(--danger)')
+    eq('告警', '温度 90℃ 大数字 = 红色（严重）', inks['temp'], 'var(--danger)')
+
     # ----------------------------------------------------------
     section('K 边界与降级')
     # ----------------------------------------------------------
@@ -637,8 +977,9 @@ def run_tests(page):
         out.nullsOk = true;
       } catch (e) { out.nullsOk = false; out.nullsErr = e.message; }
       const q = s => { const e = host.querySelector(s); return e ? e.textContent : null; };
+      /* v1.1.70：大数字是普通文本 → 读 textContent */
       const aria = s => { const e = host.querySelector(s);
-                          return e ? e.getAttribute('aria-label') : null; };
+                          return e ? e.textContent : null; };
       out.states = {
         cpu: q('[data-ov-state="cpu"]'), mem: q('[data-ov-state="mem"]'),
         disk: q('[data-ov-state="disk"]'), net: q('[data-ov-state="net"]'),

@@ -1,14 +1,17 @@
 /* FnStyle —— 系统重要内容概览（六卡片）
  *
- * ⚠️ v1.1.69 新增。对齐 fnmonitor 总览页的「核心指标」模块：
- *   处理器 / 内存 / 存储 / 网络 / 温度 / 功耗 六张卡片，
- *   每张卡 = 标题 + 状态词 + 点阵大数字 + 环形仪表 + 副标题 + 迷你趋势线。
+ * ⚠️ v1.1.70 返工：对齐 fnmonitor 总览页的「核心指标」模块。
  *
- * 组件来源：
- *   · 点阵数字（Dot）—— 字模移植自 fnmonitor（MIT License，
- *     Copyright (c) 2026 Misite齊 / iqiuzixuan），渲染方式对齐其 Dot 类。
- *   · 环形仪表（makeGauge）—— 270° 弧线 + 中间图标，移植自 fnmonitor。
- *   · 迷你趋势线（makeSpark）—— 单调三次插值平滑，移植自 fnmonitor。
+ * 组件来源（结构照搬 fnmonitor，保留 FnStyle 蓝色主题）：
+ *   · 卡片结构：m-top(标题+状态词) / m-main(大数字+环形仪表) / m-sub(副标题) / m-foot(趋势线或盘位条)
+ *   · 环形仪表：270° 弧线 + 中心 24×24 官方图标（#i-cpu / #i-mem / #i-storage / #i-temp / #i-bolt）
+ *   · 迷你趋势线：单调三次插值平滑，深色主线 + 浅灰面积 + 末端实心点
+ *   · 盘位指示条：每块盘一条，填充高度 = 已用百分比，按占用率着色
+ *
+ * ⚠️ v1.1.70 老板指示：**不使用点阵数字**，保持与项目其它板块
+ *    （能耗 / 温度 / 存储 / 对比）完全一致的大数字字体 ——
+ *    `.dnum > .dm` 普通文本（--font-display，700，tabular-nums）。
+ *    v1.1.69 用的 5×7 LED 点阵（SVG circle 阵）已整体下线。
  *
  * 口径与 fnmonitor 的差异（有意为之）：
  *   · **网络卡片统计的接口范围**与「物理网口数」不同 ——
@@ -44,130 +47,192 @@
     return v != null && v !== '' && isFinite(v);
   }
 
+  /* HTML 转义（盘位名可能含特殊字符） */
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
   /* ---------------------------------------------------------------------
-     点阵数字（Dot）
+     色阶（对齐 fnmonitor 的 RAMP / rampAt / rampInk）
      ---------------------------------------------------------------------
-     字模为 7 行点阵，每个字符宽度不一（5 或 3 或 2）。
-     '.' = 熄灭，'#' = 点亮。渲染成 SVG <circle>，
-     用 CSS 变量控制「亮/灭」两色。
+     fnmonitor 的点阵/大数字颜色由 rampInk(v, ramp) 决定：
+       低 → 绿，逼近告警线 → 黄绿，越过 → 橙（warn），越过严重线 → 红（crit）。
+     FnStyle 保留蓝色主题，所以**绿色段换成我们的 --accent 蓝**，
+     告警段仍用 --warning（橙）/ --danger（红）——
+     「正常=品牌蓝，越高越橙/红」与 fnmonitor 的语义一致。
+
+     rampAt() 用于**连续填充**（仪表弧、盘位条），
+     rampInk() 用于**文字/大数字**（只有 4 档硬色，不做渐变）。
      --------------------------------------------------------------------- */
-  var GLYPH_SRC = {
-    '0': ['.###.', '#...#', '#..##', '#.#.#', '##..#', '#...#', '.###.'],
-    '1': ['..#..', '.##..', '..#..', '..#..', '..#..', '..#..', '.###.'],
-    '2': ['.###.', '#...#', '....#', '...#.', '..#..', '.#...', '#####'],
-    '3': ['#####', '...#.', '..#..', '...#.', '....#', '#...#', '.###.'],
-    '4': ['...#.', '..##.', '.#.#.', '#..#.', '#####', '...#.', '...#.'],
-    '5': ['#####', '#....', '####.', '....#', '....#', '#...#', '.###.'],
-    '6': ['..##.', '.#...', '#....', '####.', '#...#', '#...#', '.###.'],
-    '7': ['#####', '....#', '...#.', '..#..', '.#...', '.#...', '.#...'],
-    '8': ['.###.', '#...#', '#...#', '.###.', '#...#', '#...#', '.###.'],
-    '9': ['.###.', '#...#', '#...#', '.####', '....#', '...#.', '.##..'],
-    '.': ['.', '.', '.', '.', '.', '.', '#'],
-    ',': ['..', '..', '..', '..', '..', '.#', '#.'],
-    '-': ['....', '....', '....', '####', '....', '....', '....'],
-    ' ': ['..', '..', '..', '..', '..', '..', '..'],
-    '%': ['##...', '##..#', '...#.', '..#..', '.#...', '#..##', '...##'],
-    '/': ['....#', '....#', '...#.', '..#..', '.#...', '#....', '#....'],
-    '°': ['.#.', '#.#', '.#.', '...', '...', '...', '...'],
-    '℃': ['.#.', '#.#', '.#.', '...', '...', '...', '...'],
-    '↓': ['..#..', '..#..', '..#..', '#.#.#', '.###.', '..#..', '.....'],
-    '↑': ['.....', '..#..', '.###.', '#.#.#', '..#..', '..#..', '..#..']
+  var RAMP = {
+    /* 百分比型：正常段(蓝) → 接近告警(黄绿→橙) → 越界(红)
+       ⚠️ v1.1.71：中间档必须用**实心**色（--ramp-mid / --ramp-mid-2），
+          不能用 --warning-soft —— 那是 12% 透明度的背景色，
+          当文字色 / 填充色用会与底色相混 → 发灰（实测存储 69% 变米色）。 */
+    pct: function (warn, crit) {
+      return [
+        [0, 'var(--accent)'],
+        [warn * 0.5, 'var(--accent)'],
+        [warn * 0.8, 'var(--ramp-mid)'],
+        [warn, 'var(--warning)'],
+        [Math.max(crit, warn), 'var(--danger)']
+      ];
+    },
+    cpu: function () { return RAMP.pct(TH.cpuWarn, TH.cpuCrit); },
+    mem: function () { return RAMP.pct(TH.memWarn, TH.memCrit); },
+    cap: function () { return RAMP.pct(TH.capWarn, TH.capCrit); },
+    gen: function () { return RAMP.pct(70, 90); },
+    /* 温度：起点 30℃ 即为正常段末尾，70℃ 起橙，85℃ 起红 */
+    temp: function () {
+      var w = TH.tempWarn, c = TH.tempCrit;
+      return [
+        [Math.min(30, w - 26), 'var(--accent)'],
+        [w - 25, 'var(--accent)'],
+        [w - 10, 'var(--ramp-mid)'],
+        [w, 'var(--warning)'],
+        [c, 'var(--danger)']
+      ];
+    }
   };
 
-  var GL = {};
-  for (var gch in GLYPH_SRC) {
-    GL[gch] = { w: GLYPH_SRC[gch][0].length, rows: GLYPH_SRC[gch] };
+  /* 阈值（对齐 fnmonitor 的 TH_SPEC 默认值：
+     cpuWarn 85 / cpuCrit 95 / memWarn 85 / memCrit 95 /
+     capWarn 85 / capCrit 95 / tempWarn 80 / tempCrit 90） */
+  var TH = {
+    cpuWarn: 85, cpuCrit: 95,
+    memWarn: 85, memCrit: 95,
+    capWarn: 85, capCrit: 95,
+    tempWarn: 80, tempCrit: 90
+  };
+
+  function rampStops(k) {
+    return Array.isArray(k) ? k : RAMP[k]();
   }
 
-  function Dot(el) {
-    this.el = el;
-    this.str = null;
-    this.sig = null;
-    this.cells = null;
-    el.classList.add('ov-dm');
-    el.setAttribute('role', 'img');
-    if (el.getAttribute('data-dm') != null) this.set(el.getAttribute('data-dm'));
+  /* 连续取色：用于仪表弧 / 盘位条填充 */
+  function rampAt(v, k) {
+    var st = rampStops(k);
+    if (v <= st[0][0]) return st[0][1];
+    for (var i = 1; i < st.length; i++) {
+      if (v <= st[i][0]) {
+        var t = clamp((v - st[i - 1][0]) / ((st[i][0] - st[i - 1][0]) || 1), 0, 1);
+        if (t < 0.02) return st[i - 1][1];
+        if (t > 0.98) return st[i][1];
+        return 'color-mix(in oklch, ' + st[i][1] + ' ' + Math.round(t * 100) +
+          '%, ' + st[i - 1][1] + ')';
+      }
+    }
+    return st[st.length - 1][1];
   }
 
-  Dot.prototype.set = function (v) {
-    var raw = String(v == null ? '--' : v);
-    if (raw === this.str) return;
-    this.str = raw;
-    this.el.setAttribute('aria-label', raw);
-    var chars = Array.from(raw);
-    var gl = chars.map(function (c) {
-      return GL[c] || GL[c.toUpperCase()] || GL['?'] || GL[' '];
-    });
-    var sig = gl.map(function (x) { return x.w; }).join(',');
-    if (sig !== this.sig) {
-      this.build(gl);
-      this.sig = sig;
-    }
-    var k = 0;
-    for (var i = 0; i < gl.length; i++) {
-      var g = gl[i];
-      for (var r = 0; r < 7; r++) {
-        var row = g.rows[r] || '';
-        for (var c = 0; c < g.w; c++) {
-          var lit = row[c] === '#';
-          var ci = this.cells[k++];
-          if (!ci) continue;
-          var cls = lit ? 'on' : '';
-          if (ci.getAttribute('class') !== cls) ci.setAttribute('class', cls);
-        }
-      }
-    }
-  };
+  /* 分级取色：用于大数字（文字只能是实色，不能渐变）
+     与 fnmonitor rampInk 同构 —— 4 档：正常 / 接近告警 / 告警 / 严重 */
+  function rampInk(v, k) {
+    var st = rampStops(k);
+    if (v >= st[4][0]) return 'var(--danger)';
+    if (v >= st[3][0]) return 'var(--warning)';
+    if (v >= (st[2][0] + st[3][0]) / 2) return 'var(--ramp-mid-2)';
+    var t = clamp((v - st[1][0]) / ((st[2][0] - st[1][0]) || 1), 0, 1);
+    if (t < 0.02) return 'var(--accent)';
+    if (t > 0.98) return 'var(--ramp-mid)';
+    return 'color-mix(in oklch, var(--ramp-mid) ' + Math.round(t * 100) +
+      '%, var(--accent))';
+  }
 
-  Dot.prototype.build = function (gl) {
-    var U = gl.reduce(function (a, x) { return a + x.w; }, 0) +
-      Math.max(0, gl.length - 1);
-    var svg = svgEl('svg', {
-      viewBox: '0 0 ' + U + ' 7',
-      'aria-hidden': 'true',
-      preserveAspectRatio: 'xMinYMid meet'
-    });
-    svg.style.setProperty('--ov-dm-u', U);
-    var cells = [];
-    var x = 0;
-    for (var i = 0; i < gl.length; i++) {
-      var g = gl[i];
-      for (var r = 0; r < 7; r++) {
-        for (var c = 0; c < g.w; c++) {
-          var ci = svgEl('circle', {
-            cx: x + c + 0.5, cy: r + 0.5, r: 0.39
-          });
-          svg.appendChild(ci);
-          cells.push(ci);
-        }
-      }
-      x += g.w + 1;
+  /* 给元素上色（对齐 fnmonitor 的 inkTo，带脏检查避免重复写样式） */
+  function inkTo(el, col) {
+    if (el && el._ink !== col) {
+      el._ink = col;
+      el.style.color = col;
     }
-    this.el.replaceChildren(svg);
-    this.cells = cells;
-  };
-
-  var dotMap = new WeakMap();
-
-  function dot(el) {
-    if (!el) return null;
-    var d = dotMap.get(el);
-    if (!d) { d = new Dot(el); dotMap.set(el, d); }
-    return d;
   }
 
   /* ---------------------------------------------------------------------
-     环形仪表（270° 弧）
+     官方图标（移植自 fnmonitor 的 <symbol> sprite，24×24 viewBox）
+     ---------------------------------------------------------------------
+     fnmonitor 用 <use href="#i-bolt"> 引用全局 sprite，
+     我们没有那套 sprite → 把 symbol 里的图形**内联**成 SVG 元素。
+     元素类型混合（rect / ellipse / path），所以用描述表 + 构建器，
+     不能简单当成单个 path。
+
+     注意：图标**始终描边**（fill:none + stroke:currentColor），
+     颜色由 CSS 的 .ov-gauge-ico 给 --text-muted（对齐 fnmonitor 的 ink-3）。
      --------------------------------------------------------------------- */
-  /* 环形仪表（对齐 fnmonitor 的 makeGauge）
-   * ⚠️ v1.1.69 修正：fnmonitor 的仪表**是有中心图标的** ——
-   *    <use href="#i-bolt" x="38" y="38" width="24" height="24" .../>
-   *    即 24×24 的图标居中在 100×100 的 viewBox 里。
-   *    我之前直接塞了个 16×16 坐标系的 path（没居中也没放大），
-   *    缩到 92px 后只剩左上角一个小点 → 看着像渲染缺陷。
-   *    正解：把 16×16 的 path 装进 <g transform="translate(38,38) scale(1.5)">，
-   *    正好变成 24×24 且居中。 */
-  function makeGauge(iconPath) {
+  var ICONS = {
+    /* #i-cpu：芯片方框 + 引脚 */
+    cpu: [
+      { t: 'rect', x: 5, y: 5, width: 14, height: 14, rx: 3 },
+      { t: 'rect', x: 9.25, y: 9.25, width: 5.5, height: 5.5, rx: 1 },
+      { t: 'path', d: 'M9 2.5V5M15 2.5V5M9 19v2.5M15 19v2.5M2.5 9H5M2.5 15H5M19 9h2.5M19 15h2.5' }
+    ],
+    /* #i-mem：内存条 */
+    mem: [
+      { t: 'rect', x: 2.5, y: 6.5, width: 19, height: 10, rx: 2 },
+      { t: 'path', d: 'M7 10v3M11 10v3M15 10v3M6 16.5V19M10 16.5V19M14 16.5V19M18 16.5V19' }
+    ],
+    /* #i-storage：硬盘圆柱 */
+    storage: [
+      { t: 'ellipse', cx: 12, cy: 6, rx: 8, ry: 3 },
+      { t: 'path', d: 'M4 6v12c0 1.66 3.58 3 8 3s8-1.34 8-3V6M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3' }
+    ],
+    /* #i-temp：温度计 */
+    temp: [
+      { t: 'path', d: 'M14 14.76V5a2 2 0 1 0-4 0v9.76a4 4 0 1 0 4 0Z' },
+      { t: 'path', d: 'M12 9.5v8' }
+    ],
+    /* #i-bolt：闪电（功耗） */
+    power: [
+      { t: 'path', d: 'M13 2.5 4.5 13.5H12l-1 8 8.5-11H12l1-8Z' }
+    ]
+  };
+
+  /* 上下行箭头（移植自 fnmonitor 的 #i-down / #i-up，24×24） */
+  var ARROWS = {
+    down: [{ t: 'path', d: 'M12 5v14m0 0-5.5-5.5M12 19l5.5-5.5' }],
+    up: [{ t: 'path', d: 'M12 19V5m0 0L6.5 10.5M12 5l5.5 5.5' }]
+  };
+
+  /* 构建图标组：24×24 坐标系，可平移缩放 */
+  function buildIcon(parts, cls) {
+    var g = svgEl('g', { class: cls || '' });
+    if (!parts) return g;
+    parts.forEach(function (p) {
+      var e;
+      if (p.t === 'rect') {
+        e = svgEl('rect', {
+          x: p.x, y: p.y, width: p.width, height: p.height, rx: p.rx || 0
+        });
+      } else if (p.t === 'ellipse') {
+        e = svgEl('ellipse', { cx: p.cx, cy: p.cy, rx: p.rx, ry: p.ry });
+      } else {
+        e = svgEl('path', { d: p.d });
+      }
+      e.setAttribute('fill', 'none');
+      e.setAttribute('stroke', 'currentColor');
+      e.setAttribute('stroke-width', '1.6');
+      e.setAttribute('stroke-linecap', 'round');
+      e.setAttribute('stroke-linejoin', 'round');
+      g.appendChild(e);
+    });
+    return g;
+  }
+
+  /* ---------------------------------------------------------------------
+     环形仪表（270° 弧 + 中心 24×24 图标）
+     ---------------------------------------------------------------------
+     对齐 fnmonitor 的 makeGauge：
+       <svg class="m-gauge" viewBox="0 0 100 100">
+         <g transform="rotate(135 50 50)">
+           <circle class="gauge-track" ... stroke-dasharray="188.50 251.33"/>
+           <circle class="gauge-val"   ... stroke-dashoffset="188.50"/>
+         </g>
+         <use href="#i-bolt" x="38" y="38" width="24" height="24" .../>
+       </svg>
+     图标位置：x=38 y=38 宽高 24 → 正好居中在 100×100 的画布里。
+     --------------------------------------------------------------------- */
+  function makeGauge(iconParts) {
     var r = 40, C = 2 * Math.PI * r, A = C * 0.75;
     var svg = svgEl('svg', {
       viewBox: '0 0 100 100', 'aria-hidden': 'true', class: 'ov-gauge'
@@ -187,18 +252,12 @@
       'stroke-dashoffset': A.toFixed(2)
     });
     g.appendChild(val);
-    if (iconPath) {
-      /* 16×16 的 path → translate(38,38) scale(1.5) → 24×24 且居中 */
-      var ig = svgEl('g', {
-        transform: 'translate(38 38) scale(1.5)'
-      });
-      var p = svgEl('path', {
-        d: iconPath, fill: 'none', stroke: 'currentColor',
-        'stroke-width': 1.6, 'stroke-linecap': 'round',
-        'stroke-linejoin': 'round'
-      });
-      p.setAttribute('class', 'ov-gauge-ico');
-      ig.appendChild(p);
+    if (iconParts && iconParts.length) {
+      /* ⚠️ v1.1.70：仪表从 92px 缩到 76px，图标同步缩到 20×20，
+         保持官方比例（24/92 ≈ 26% → 20/76 ≈ 26%）。
+         偏移 (100-20)/2 = 40 → 正好居中。 */
+      var ig = svgEl('g', { transform: 'translate(40 40) scale(0.8333)' });
+      ig.appendChild(buildIcon(iconParts, 'ov-gauge-ico'));
       svg.appendChild(ig);
     }
     return {
@@ -218,6 +277,7 @@
   /* ---------------------------------------------------------------------
      迷你趋势线（makeSpark）
      单调三次插值，避免普通三次样条在数据抖动时产生回折。
+     配色对齐 fnmonitor：主线深色、面积浅灰、末端实心点。
      --------------------------------------------------------------------- */
   function monoPath(xs, ys) {
     var n = xs.length;
@@ -279,10 +339,9 @@
         var ys = vals.map(function (v) {
           return pad + (1 - (clamp(v, lo, hi) - lo) / (hi - lo)) * (h - pad * 2);
         });
-        /* ⚠️ v1.1.69：只有 1 个数据点时画不出曲线（monoPath 需要 ≥2 点）。
-           fnmonitor 靠历史数据天然多点；我们首帧只有 1 点 →
-           画一个孤零零的圆点占位，等第二个采样点到达后自然变成曲线。
-           （否则首帧趋势线区域完全空白，看着像没渲染。） */
+        /* ⚠️ 只有 1 个数据点时画不出曲线（monoPath 需要 ≥2 点）。
+           首帧只有 1 点 → 画一个孤零零的圆点占位，
+           等第二个采样点到达后自然变成曲线（否则首帧趋势线区域完全空白）。 */
         if (n === 1) {
           if (si === 0) {
             html += '<circle class="ov-spark-dot" cx="' + w +
@@ -322,6 +381,7 @@
 
   function fmt1(v) {
     if (v == null || !isFinite(v)) return '--';
+    if (Math.abs(v) >= 100) return String(Math.round(v));
     return (Math.round(v * 10) / 10).toFixed(1);
   }
 
@@ -331,18 +391,16 @@
     var i = 0;
     var n = Math.abs(v);
     while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
-    var s = (i === 0) ? String(Math.round(v)) : (Math.round(n * 10) / 10).toFixed(1);
+    var s = (i === 0) ? String(Math.round(v))
+      : (n >= 100 ? String(Math.round(n)) : n.toFixed(1));
     return s + ' ' + units[i];
   }
 
   function fmtRate(v) {
     if (v == null || !isFinite(v)) return { v: '--', u: '' };
-    var units = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
-    var i = 0;
-    var n = Math.abs(v);
-    while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
-    var num = (i === 0) ? String(Math.round(v)) : (Math.round(n * 10) / 10).toFixed(1);
-    return { v: num, u: units[i] };
+    var p = fmtBytes(v);
+    var sp = p.split(' ');
+    return { v: sp[0], u: sp[1] ? sp[1] + '/s' : '' };
   }
 
   function fmtGB(v) {
@@ -350,58 +408,69 @@
     return (Math.round(v / 1073741824 * 10) / 10).toFixed(1);
   }
 
+  /* 十进制容量（对齐 fnmonitor 的 F.dsize）
+   * 口径：T=1e12, G=1e9, M=1e6 —— 与磁盘厂商标称容量一致。
+   * 1.76 TB → v>=10 用一位小数、v<10 用两位小数、v>=100 取整。 */
+  function fmtDSize(v) {
+    if (v == null || !isFinite(v)) return '--';
+    var T = 1e12, G = 1e9, M = 1e6;
+    var n = Math.abs(v);
+    if (n >= T) {
+      var t = n / T;
+      return (t >= 100 ? String(Math.round(t)) : (t >= 10 ? t.toFixed(1) : t.toFixed(2))) + ' TB';
+    }
+    if (n >= G) {
+      var g = n / G;
+      return (g >= 100 ? String(Math.round(g)) : g.toFixed(1)) + ' GB';
+    }
+    return String(Math.round(n / M)) + ' MB';
+  }
+
   /* ---------------------------------------------------------------------
      状态阈值（对齐 fnmonitor 的 LV）
      --------------------------------------------------------------------- */
   function lvCPU(p) {
     if (p == null) return '';
-    if (p >= 90) return 'crit';
-    if (p >= 70) return 'warn';
+    if (p >= TH.cpuCrit) return 'crit';
+    if (p >= TH.cpuWarn) return 'warn';
     return '';
   }
 
   function lvMem(p) {
     if (p == null) return '';
-    if (p >= 90) return 'crit';
-    if (p >= 80) return 'warn';
+    if (p >= TH.memCrit) return 'crit';
+    if (p >= TH.memWarn) return 'warn';
     return '';
   }
 
   function lvCap(p) {
     if (p == null) return '';
-    if (p >= 90) return 'crit';
-    if (p >= 80) return 'warn';
+    if (p >= TH.capCrit) return 'crit';
+    if (p >= TH.capWarn) return 'warn';
     return '';
   }
 
   function lvTemp(t) {
     if (t == null) return '';
-    if (t >= 85) return 'crit';
-    if (t >= 70) return 'warn';
+    if (t >= TH.tempCrit) return 'crit';
+    if (t >= TH.tempWarn) return 'warn';
     return '';
   }
 
   var LV_TXT = { warn: '偏高', crit: '严重' };
 
-  /* 阈值 → 颜色档（对应 CSS 的 .is-warn / .is-crit） */
-  function toneOf(lv) {
-    if (lv === 'crit') return 'var(--danger)';
-    if (lv === 'warn') return 'var(--warning)';
-    return '';
-  }
-
   /* ---------------------------------------------------------------------
      六卡片渲染
+     ---------------------------------------------------------------------
+     卡片结构（对齐 fnmonitor 的 card()）：
+       <article class="ov-metric">
+         <div class="ov-m-top">标题 / 状态词</div>
+         <div class="ov-m-main">大数字(+单位) / 仪表</div>
+         <div class="ov-m-sub">副标题</div>
+         <div class="ov-m-foot">趋势线 或 盘位条</div>
+       </article>
+     网络卡无仪表 → 数字区横跨两列（对齐 fnmonitor 的 style="grid-column:1/-1"）。
      --------------------------------------------------------------------- */
-  var ICONS = {
-    cpu: 'M8 2v3M8 11v3M2 8h3M11 8h3M4.2 4.2l2.1 2.1M9.7 9.7l2.1 2.1M11.8 4.2l-2.1 2.1M6.3 9.7l-2.1 2.1',
-    mem: 'M2 5h12M2 8h12M2 11h12M4 3v10M8 3v10M12 3v10',
-    storage: 'M8 2.2c3.2 0 5.8.8 5.8 1.8S11.2 5.8 8 5.8 2.2 5 2.2 4 4.8 2.2 8 2.2zM2.2 4v8c0 1 2.6 1.8 5.8 1.8s5.8-.8 5.8-1.8V4',
-    net: 'M2 8.5h3l2-5 2 9 2-6 1.5 2H14',
-    temp: 'M8 5.5a1.5 1.5 0 011.5 1.5v3.2a3 3 0 11-3 0V7A1.5 1.5 0 018 5.5z',
-    power: 'M8 2v7M4.6 4.2a5 5 0 106.8 0'
-  };
-
   /* 可打开详情抽屉的卡片 kind —— 与 compute.js 的 openCompute 支持的一致
      （cpu / mem / temp / power 四种）。
      ⚠️ 存储与网络**没有**对应的计算抽屉：若硬塞 data-sheet，
@@ -448,16 +517,16 @@
            ⚠️ 网络卡**没有仪表** → 数字区要横跨两列，
            否则右侧会空出一列 92px 的白区。 */
         html += '<div class="ov-net-vals">' +
-          '<div class="row"><span class="ov-arrow">↓</span>' +
+          '<div class="row"><span class="ov-arrow" data-ov-arrow="down"></span>' +
           '<span class="ov-dnum"><span class="ov-dm" data-ov-val="rxV"></span>' +
           '<span class="ov-unit" data-ov-unit="rxU"></span></span></div>' +
-          '<div class="row sec"><span class="ov-arrow">↑</span>' +
+          '<div class="row sec"><span class="ov-arrow" data-ov-arrow="up"></span>' +
           '<span class="ov-dnum"><span class="ov-dm" data-ov-val="txV"></span>' +
           '<span class="ov-unit" data-ov-unit="txU"></span></span></div>' +
           '</div>';
       } else {
-        html += '<span class="ov-dm" data-ov-val="' + c.k + 'V"></span>' +
-          '<span class="ov-unit" data-ov-unit="' + c.k + 'U">' + c.unit + '</span>';
+        html += '<span class="ov-dnum"><span class="ov-dm" data-ov-val="' + c.k + 'V"></span>' +
+          '<span class="ov-unit" data-ov-unit="' + c.k + 'U">' + c.unit + '</span></span>';
       }
       html += '</div>';
       if (c.gauge) {
@@ -488,6 +557,16 @@
       slot.appendChild(sp.el);
       sp.el.setAttribute('data-ov-spark', k);
       sp.el._ovSpark = sp;
+    });
+    /* 网络卡箭头（官方 i-down / i-up 图标） */
+    ['down', 'up'].forEach(function (dir) {
+      var slot = host.querySelector('[data-ov-arrow="' + dir + '"]');
+      if (!slot) return;
+      var svg = svgEl('svg', {
+        viewBox: '0 0 24 24', class: 'ov-arrow-svg', 'aria-hidden': 'true'
+      });
+      svg.appendChild(buildIcon(ARROWS[dir], 'ov-arrow-ico'));
+      slot.appendChild(svg);
     });
   }
 
@@ -569,7 +648,10 @@
     var cp = cpu.percent;
     var lc = lvCPU(cp);
     var cv = host.querySelector('[data-ov-val="cpuV"]');
-    if (cv) dot(cv).set(fmtInt(cp));
+    if (cv) {
+      cv.textContent = okNum(cp) ? fmtInt(cp) : '--';
+      inkTo(cv, okNum(cp) ? rampInk(cp, 'cpu') : '');
+    }
     setState(host, 'cpu', lc, !okNum(cp) ? '无数据'
       : (lc === 'crit' ? '高负载' : (lc === 'warn' ? '繁忙'
         : (cp < 35 ? '平稳' : '适中'))));
@@ -579,7 +661,9 @@
     if (cpu.loadavg && cpu.loadavg.length) cpuSub.push('负载 ' + cpu.loadavg[0]);
     setSub(host, 'cpu', cpuSub.join(' · '));
     var cg = findGauge(host, 'cpu');
-    if (cg) cg.set(cp == null ? 0 : cp / 100, toneOf(lc));
+    if (cg) {
+      cg.set(okNum(cp) ? cp / 100 : 0, okNum(cp) ? rampAt(cp, 'cpu') : '');
+    }
     pushLive('cpu', cp);
 
     /* ---- 内存 ---- */
@@ -587,7 +671,10 @@
     var mp = mem.percent;
     var lm = lvMem(mp);
     var mv = host.querySelector('[data-ov-val="memV"]');
-    if (mv) dot(mv).set(fmtInt(mp));
+    if (mv) {
+      mv.textContent = okNum(mp) ? fmtInt(mp) : '--';
+      inkTo(mv, okNum(mp) ? rampInk(mp, 'mem') : '');
+    }
     setState(host, 'mem', lm, !okNum(mp) ? '无数据'
       : (lm ? LV_TXT[lm] : '充裕'));
     var memSub = [];
@@ -595,14 +682,19 @@
     if (mem.availText) memSub.push('可用 ' + mem.availText);
     setSub(host, 'mem', memSub.join(' · '));
     var mg = findGauge(host, 'mem');
-    if (mg) mg.set(mp == null ? 0 : mp / 100, toneOf(lm));
+    if (mg) {
+      mg.set(okNum(mp) ? mp / 100 : 0, okNum(mp) ? rampAt(mp, 'mem') : '');
+    }
     pushLive('mem', mp);
 
     /* ---- 存储 ---- */
     var dk = diskOf(d);
     var ld = lvCap(dk.pct);
     var dv = host.querySelector('[data-ov-val="diskV"]');
-    if (dv) dot(dv).set(dk.pct == null ? '--' : fmtInt(dk.pct));
+    if (dv) {
+      dv.textContent = okNum(dk.pct) ? fmtInt(dk.pct) : '--';
+      inkTo(dv, okNum(dk.pct) ? rampInk(dk.pct, 'cap') : '');
+    }
     var smartBad = 0;
     dk.disks.forEach(function (x) {
       var g = String((x && (x.grade || x.health || x.smartStatus)) || '');
@@ -614,12 +706,18 @@
           : (smartBad ? smartBad + ' 块需留意' : '充足'))));
     var diskSub = [];
     if (dk.total > 0) {
-      diskSub.push(fmtBytes(dk.used) + ' / ' + fmtBytes(dk.total));
+      /* ⚠️ 十进制容量（对齐 fnmonitor 的 F.dsize）：
+         1.76 TB / 2.56 TB —— 与磁盘厂商标称一致，
+         不是二进制口径的 1.6 TiB / 2.3 TiB。 */
+      diskSub.push(fmtDSize(dk.used) + ' / ' + fmtDSize(dk.total));
     }
     if (dk.disks.length) diskSub.push(dk.disks.length + ' 块硬盘');
     setSub(host, 'disk', diskSub.join(' · ') || '未检测到存储');
     var dg = findGauge(host, 'disk');
-    if (dg) dg.set(dk.pct == null ? 0 : dk.pct / 100, toneOf(ld));
+    if (dg) {
+      dg.set(okNum(dk.pct) ? dk.pct / 100 : 0,
+        okNum(dk.pct) ? rampAt(dk.pct, 'cap') : '');
+    }
     /* 盘位指示条（对齐 fnmonitor 的 drive-pips） */
     renderPips(host, dk.disks);
 
@@ -630,8 +728,8 @@
     var rxu = host.querySelector('[data-ov-unit="rxU"]');
     var txu = host.querySelector('[data-ov-unit="txU"]');
     var rr = fmtRate(net.rxRate), tr = fmtRate(net.txRate);
-    if (rxv) dot(rxv).set(net.available ? rr.v : '--');
-    if (txv) dot(txv).set(net.available ? tr.v : '--');
+    if (rxv) rxv.textContent = net.available ? rr.v : '--';
+    if (txv) txv.textContent = net.available ? tr.v : '--';
     if (rxu) rxu.textContent = net.available ? rr.u : '';
     if (txu) txu.textContent = net.available ? tr.u : '';
     var rxT = (net.rxRate || 0) + (net.txRate || 0);
@@ -652,7 +750,10 @@
     var tp = tempOf(d);
     var lt = lvTemp(tp.main);
     var tv = host.querySelector('[data-ov-val="tempV"]');
-    if (tv) dot(tv).set(tp.main == null ? '--' : fmtInt(tp.main));
+    if (tv) {
+      tv.textContent = okNum(tp.main) ? fmtInt(tp.main) : '--';
+      inkTo(tv, okNum(tp.main) ? rampInk(tp.main, 'temp') : '');
+    }
     setState(host, 'temp', lt, tp.main == null ? '无传感器'
       : (lt === 'crit' ? '过热' : (lt === 'warn' ? '偏高' : '正常')));
     var tempSub = [];
@@ -661,7 +762,8 @@
     setSub(host, 'temp', tempSub.join(' · ') || 'CPU 封装温度');
     var tg = findGauge(host, 'temp');
     if (tg) {
-      tg.set(tp.main == null ? 0 : (tp.main - 20) / 80, toneOf(lt));
+      tg.set(okNum(tp.main) ? (tp.main - 20) / 80 : 0,
+        okNum(tp.main) ? rampAt(tp.main, 'temp') : '');
     }
     pushLive('temp', tp.cpu != null ? tp.cpu : tp.main);
 
@@ -669,7 +771,11 @@
     var pw = (d && d.power) || {};
     var w = pw.ok ? Number(pw.total) : null;
     var pv = host.querySelector('[data-ov-val="pwrV"]');
-    if (pv) dot(pv).set(w == null ? '--' : fmt1(w));
+    if (pv) {
+      pv.textContent = okNum(w) ? fmt1(w) : '--';
+      /* 功耗按「占额定容量比例」分级（对齐 fnmonitor 的 w / capW * 100） */
+      inkTo(pv, okNum(w) ? rampInk(pwrPct(w, pw), 'gen') : '');
+    }
     setState(host, 'pwr', '', !pw.ok ? '不可用'
       : (pw.source === 'rapl' ? '实测 + 估算' : '估算'));
     var pwrSub = [];
@@ -689,7 +795,10 @@
     }
     setSub(host, 'pwr', pwrSub.join(' · ') || '整机功耗');
     var pg = findGauge(host, 'pwr');
-    if (pg) pg.set(0, '');
+    if (pg) {
+      pg.set(okNum(w) ? pwrPct(w, pw) / 100 : 0,
+        okNum(w) ? rampAt(pwrPct(w, pw), 'gen') : '');
+    }
     pushLive('power', w);
 
     /* ---- 迷你趋势线 ---- */
@@ -698,6 +807,22 @@
     setSpark(host, 'net', [{ values: live.rx }, { values: live.tx }], { min: 0 });
     setSpark(host, 'temp', [live.temp], {});
     setSpark(host, 'pwr', [live.power], { min: 0 });
+  }
+
+  /* 功耗占额定容量的百分比（对齐 fnmonitor 的 w / capW * 100）
+   * 额定容量来源：后端 estimation_params（tdp + base + 硬盘 + 网口），
+   * 拿不到时用「当前功耗 × 1.5」兜底。 */
+  function pwrPct(w, pw) {
+    if (!okNum(w)) return 0;
+    var ep = pw && pw.estimation_params;
+    var capW = 0;
+    if (ep) {
+      capW = (Number(ep.tdp_w) || 0) + (Number(ep.base_w) || 0) +
+        (Number(ep.disk_typical_w) || 0) * Math.max(1, Number(ep.disks) || 1) +
+        (Number(ep.nic_fixed_w) || 0) * Math.max(1, Number(ep.nics) || 1);
+    }
+    if (!capW) capW = Math.max(60, w * 1.5);
+    return clamp(w / capW * 100, 0, 100);
   }
 
   function findGauge(host, k) {
@@ -716,7 +841,11 @@
   }
 
   /* 盘位指示条：每块盘一条，填充高度 = 已用百分比
-     （对齐 fnmonitor 的 drive-pips：条 + 下方设备名） */
+     （对齐 fnmonitor 的 drive-pips：条 + 下方设备名）
+     ⚠️ 结构必须与 fnmonitor 的 .drive-pips 一致 ——
+        外层 flex 容器 → 每块盘一个**列容器**（grid：条 + 名字）→
+        条（.ov-pip，position:relative）+ 填充（i，absolute 贴底）。
+        少一层列容器 → `inset:auto 0 0 0` 定位失效 → 条变成横铺大圆角块。 */
   function renderPips(host, disks) {
     var foot = host.querySelector('[data-ov-foot="disk"]');
     if (!foot) return;
@@ -738,23 +867,14 @@
       var pct = Number((x && (x.percent != null ? x.percent : x.usage)) || 0);
       if (!isFinite(pct)) pct = 0;
       var h = clamp(pct, 0, 100).toFixed(1);
-      /* ⚠️ v1.1.69：结构必须与 fnmonitor 的 .drive-pips 一致 ——
-         外层 flex 容器 → 每块盘一个**列容器**（grid：条 + 名字）→
-         条（.ov-pip，position:relative）+ 填充（i，absolute 贴底）。
-         之前少了一层列容器，直接把 .ov-pip 当列容器 →
-         `inset:auto 0 0 0` 定位失效 → 条变成横铺的大圆角块。
-         与 fnmonitor 的 <div><div class="pip"><i></i></div><span>…</span></div> 对齐。 */
-      html += '<div><div class="ov-pip"><i style="height:' + h + '%"></i></div>' +
+      /* 填充色按占用率分级（对齐 fnmonitor 的 rampAt(+d.percent, 'cap')）：
+         占用高的盘转橙/红，其余保持品牌蓝。 */
+      var col = rampAt(pct, 'cap');
+      html += '<div><div class="ov-pip"><i style="height:' + h + '%;background:' +
+        col + '"></i></div>' +
         '<span>' + esc(nm) + '</span></div>';
     });
     box.innerHTML = html;
-  }
-
-  /* HTML 转义（盘位名可能含特殊字符） */
-  function esc(s) {
-    return String(s == null ? '' : s)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
   /* ---------------------------------------------------------------------
@@ -772,13 +892,15 @@
     },
     /* 供测试用：暴露内部工具 */
     _internal: {
-      dot: dot, makeGauge: makeGauge, makeSpark: makeSpark,
+      makeGauge: makeGauge, makeSpark: makeSpark, buildIcon: buildIcon,
       fmtBytes: fmtBytes, fmtRate: fmtRate, fmtInt: fmtInt, fmt1: fmt1,
-      fmtGB: fmtGB, clamp: clamp, esc: esc,
+      fmtGB: fmtGB, fmtDSize: fmtDSize, clamp: clamp, esc: esc,
       lvCPU: lvCPU, lvMem: lvMem, lvCap: lvCap, lvTemp: lvTemp,
       tempOf: tempOf, diskOf: diskOf, monoPath: monoPath,
       okNum: okNum, CARDS: CARDS, SHEET_KINDS: SHEET_KINDS,
-      live: live, pushLive: pushLive
+      rampAt: rampAt, rampInk: rampInk, inkTo: inkTo,
+      rampStops: rampStops, TH: TH, ICONS: ICONS, ARROWS: ARROWS,
+      pwrPct: pwrPct, live: live, pushLive: pushLive
     }
   };
 
