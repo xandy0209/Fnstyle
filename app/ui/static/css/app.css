@@ -4743,6 +4743,12 @@ html.mon-scroll-lock body {
   line-height: 1.6;
   color: var(--text-secondary);
 }
+/* ⚠️ v1.1.60：推导解释行 —— 说明「本月生效档位是怎么来的」，
+   取代原来那段重复罗列下方季节参数数字的说明文字。 */
+.tariff-tb-derive {
+  color: var(--text-tertiary, var(--text-secondary));
+  font-variant-numeric: tabular-nums;
+}
 /* ── 季节参数（v1.1.57）─────────────────────────────────────
    成都电价分两个季节维度：
      · 丰水期 / 枯平期 → 低谷价不同
@@ -4762,6 +4768,41 @@ html.mon-scroll-lock body {
   background: var(--bg-hover);
   font-size: .69rem;
   color: var(--text-secondary);
+}
+/* ⚠️ v1.1.60：头部改成 <button>（可点击展开/折叠），
+   样式要跟原来的 div 完全一致，另外补上按钮的复位。 */
+button.tariff-season-head {
+  width: 100%;
+  border: 0;
+  font-family: inherit;
+  font-size: .69rem;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+button.tariff-season-head:hover {
+  color: var(--text-primary);
+}
+.tariff-season-caret {
+  width: 0;
+  height: 0;
+  flex: none;
+  border-left: 4px solid currentColor;
+  border-top: 3.5px solid transparent;
+  border-bottom: 3.5px solid transparent;
+  transform: rotate(90deg);
+  transition: transform .18s ease;
+}
+.tariff-season.collapsed .tariff-season-caret {
+  transform: rotate(0deg);
+}
+/* ⚠️ v1.1.60：折叠态下只留头部，参数区与说明行全部收起 */
+.tariff-season.collapsed .tariff-season-body,
+.tariff-season.collapsed .tariff-season-cur {
+  display: none;
+}
+.tariff-season-sum {
+  white-space: nowrap;
 }
 .tariff-season-body {
   padding: 8px 10px;

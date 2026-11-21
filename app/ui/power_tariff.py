@@ -1115,6 +1115,12 @@ def profile_list(cfg=None):
             eff_limits, _, _ = effective_tier_limits(key, cfg)
         except Exception:
             eff_limits = None
+        # ⚠️ v1.1.60：推导明细也按地区给一份 ——
+        #    前端切换地区时推导行要跟着变，不能残留上一个地区的。
+        try:
+            eff_deriv = tier_derivation(key, cfg)
+        except Exception:
+            eff_deriv = {}
         out.append({
             "id": key,
             "name": p["name"],
@@ -1127,6 +1133,8 @@ def profile_list(cfg=None):
             "tiers_other": p["tiers_other"],
             # 该地区当前生效的档位（含抄表周期 ×2 / 一户多人口加成 / 结转）
             "effective_tiers": eff_limits,
+            # 该地区当前生效档位的推导明细（前端解释行用）
+            "effective_derivation": eff_deriv,
             "summer_months": p["summer_months"],
             "wet_months": p["wet_months"],
             "peak_hours": p["peak_hours"],
@@ -1143,6 +1151,53 @@ def profile_list(cfg=None):
             "supports_meter_cycle": bool(p.get("supports_meter_cycle")),
         })
     return out
+
+
+def tier_derivation(region=None, cfg=None, ts=None):
+    """算出本月生效档位的**推导明细**（前端解释行用）。
+
+    ⚠️ v1.1.60：价目表上方的表格显示的是「本月实际生效门槛」，
+       但它由好几层规则叠加而成（抄表周期倍数、一户多人口加成、
+       跨月结转），用户看到 490/690 根本不知道是怎么来的。
+       这里把**推导链**显式算出来，让前端能渲染一行解释。
+
+    返回 dict：
+      base_tiers   本月对应的**基准**档位（未乘倍数、未加加成）
+      base_label   基准档位名称（夏季档位 / 其他月档位）
+      meter_months 抄表周期（月），1 表示不放大
+      mp_extra     一户多人口加出的一档容量（度）
+      carry1/2     跨月结转额度（度）
+      base_after_cycle 乘完抄表周期后的档位
+      limits       最终生效的累计上限 [490, 690, None]
+    """
+    cfg = cfg if cfg is not None else load_config()
+    region = region or cfg.get("region") or DEFAULT_REGION
+    prof = effective_profile(region, cfg)
+    lt = time.localtime(ts if ts is not None else time.time())
+    month = lt.tm_mon
+    is_summer = month in (prof.get("summer_months") or [])
+    base = list(prof["tiers_summer"] if is_summer else prof["tiers_other"])
+    base_label = "夏季档位" if is_summer else "其他月档位"
+
+    mm = _meter_months_of(cfg, prof)
+    after_cycle = ([None if t is None else float(t) * mm for t in base]
+                   if mm > 1 else [None if t is None else float(t) for t in base])
+
+    carry1, carry2 = carry_in_for(_month_key(ts), prof)
+    mp_extra = (multi_person_extra(cfg.get("household_people"))
+                if prof.get("supports_multi_person") else 0.0)
+    limits, _caps, _extra = effective_tier_limits(region, cfg, ts)
+    return {
+        "base_tiers": base,
+        "base_label": base_label,
+        "is_summer": is_summer,
+        "meter_months": mm,
+        "mp_extra": round(float(mp_extra or 0.0), 2),
+        "carry1": round(float(carry1 or 0.0), 2),
+        "carry2": round(float(carry2 or 0.0), 2),
+        "base_after_cycle": after_cycle,
+        "limits": limits,
+    }
 
 
 def effective_tier_limits(region=None, cfg=None, ts=None):
@@ -1233,6 +1288,12 @@ def describe():
     #    这里统一转成 None（= 不限），与 tiers 的表示法保持一致。
     active_caps = [None if (c is None or c == float("inf")) else c
                     for c in (active_caps or [])]
+    # ⚠️ v1.1.60：推导明细（本月生效门槛是怎么来的）
+    #    前端据此渲染一行解释，取代原来那段重复罗列季节参数的说明文字。
+    try:
+        derivation = tier_derivation(region, cfg)
+    except Exception:
+        derivation = {}
     return {
         "config": cfg,
         "current_month": month,
@@ -1244,6 +1305,8 @@ def describe():
                                 else prof["valley_rates_dry"]),
         "is_summer_tier": is_summer,
         "is_wet_season": is_wet,
+        # 推导明细：基准档位 → ×抄表周期 → +人口/结转 → 生效门槛
+        "tier_derivation": derivation,
         # 本月因「一户多人口」额外扩出的一档容量（度/月）
         "multi_person_extra": round(float(mp_extra_now or 0.0), 2),
         # 用户对当前地区做的季节参数覆盖（前端「季节参数」区块回填用）

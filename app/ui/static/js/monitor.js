@@ -2970,11 +2970,18 @@
       return html + '</div>';
     }
 
+    /* ⚠️ v1.1.60：季节参数默认**折叠**。
+       这些都是「地方电网口径差异 / 政策调整」才需要改的项，
+       默认值已按官方口径内置，绝大多数用户根本不用动，
+       之前一直平铺着把真正要看的价目表挤到下面去了。
+       头部保留一行摘要（当前季节 + 生效档位），折叠后仍能一眼看到。 */
     var html = '<div class="tariff-season" data-tariff-season>' +
-      '<div class="tariff-season-head">季节参数' +
+      '<button type="button" class="tariff-season-head" data-tariff-season-toggle>' +
+      '<span class="tariff-season-caret" aria-hidden="true"></span>' +
+      '<span>季节参数</span>' +
       '<span style="flex:1"></span>' +
-      '<span>当前：' + (isWet ? '丰水期' : '枯平期') +
-      ' · ' + (isSummer ? '夏季档' : '非夏季档') + '</span></div>' +
+      '<span class="tariff-season-sum">当前：' + (isWet ? '丰水期' : '枯平期') +
+      ' · ' + (isSummer ? '夏季档' : '非夏季档') + '</span></button>' +
       '<div class="tariff-season-body">';
 
     /* 丰枯水期 */
@@ -3025,9 +3032,10 @@
         }
       }
     }
-    var vw = prof.valley_rates_wet || [];
+    /* ⚠️ v1.1.60：原来这里的 vw / ts / isSummer / isWet 只服务于
+       下方那段重复说明文字，说明文字改成推导行后它们就没用了，
+       一并删掉，避免留下误导性的死变量。 */
     var vd = prof.valley_rates_dry || [];
-    var ts = prof.tiers_summer || [];
     var to = prof.tiers_other || [];
     var hasTou = prof.has_time_of_use !== false;
 
@@ -3037,8 +3045,6 @@
     var cur = (active && active.active_tiers) ? active.active_tiers : to;
     var curV = (active && active.active_valley_rates)
       ? active.active_valley_rates : (hasTou ? vd : peaks);
-    var isSummer = active && active.is_summer_tier;
-    var isWet = active && active.is_wet_season;
 
     function bandLabel(tiers, i) {
       var prev = 0;
@@ -3064,22 +3070,79 @@
           : '') +
         '</div>';
     }
-    /* 季节说明：让用户知道什么时候会变 */
-    var notes = [];
-    if (prof.summer_months && prof.summer_months.length) {
-      notes.push('7–9 月档位 ' + bandLabel(ts, 0).replace(/^\d+–/, '0–') +
-        ' / ' + bandLabel(ts, 1) + ' / ' + bandLabel(ts, 2));
-    }
-    if (hasTou && prof.wet_months && prof.wet_months.length) {
-      notes.push('6–10 月低谷价 ' + vw[0] + '，其余月份 ' + vd[0] + ' 元/kWh');
-    }
-    if (notes.length) {
-      html += '<div class="tariff-tb-note">当前生效：' +
-        (isSummer ? '夏季档位' : '非夏季档位') +
-        (isWet ? ' · 丰水期' : ' · 枯平期') + '。' +
-        esc(notes.join('；')) + '。</div>';
-    }
+    /* ⚠️ v1.1.60：这里原来是一段「7–9 月档位 0–260 / 261–460 / 460+；
+       6–10 月低谷价 0.175，其余月份 0.2535」的说明 ——
+       但这些数字**全是下方季节参数输入框里已经有的**，
+       属于纯重复，且真正该说的「本月生效门槛 490/690 怎么来的」反而没说。
+       现在换成**推导解释行**：讲清楚本月生效档位是怎么算出来的。 */
+    html += tariffDerivationHtml(active);
+
     return html;
+  }
+
+  /* 推导解释行（v1.1.60）
+     ------------------------------------------------------------
+     表格上方显示的是「本月实际生效门槛」，它 = 基准档位 × 抄表周期
+     + 一户多人口加成 + 跨月结转。用户看到 490/690 不知道来源，
+     这里把推导链写出来。没有放大因素时（如单月抄表、无人口加成），
+     只说明当前用的是哪套基准，不啰嗦。 */
+  function tariffDerivationHtml(active) {
+    var dv = active && active.tier_derivation;
+    if (!dv || !dv.base_tiers) return '';
+
+    function num(v) {
+      if (v === null || v === undefined) return '';
+      var n = Number(v);
+      if (!isFinite(n)) return '';
+      return (Math.round(n * 100) / 100).toString();
+    }
+    function tierText(tiers) {
+      var out = [];
+      for (var i = 0; i < 3; i++) {
+        var t = tiers && tiers[i];
+        if (t === null || t === undefined) {
+          out.push('不限');
+          break;
+        }
+        out.push(String(num(t)));
+      }
+      return out.join(' / ');
+    }
+
+    var mm = Number(dv.meter_months || 1);
+    var mp = Number(dv.mp_extra || 0);
+    var c1 = Number(dv.carry1 || 0);
+    var c2 = Number(dv.carry2 || 0);
+    var limits = dv.limits || [];
+    var parts = [];
+
+    /* ① 基准档位：哪一套在生效 */
+    parts.push('本月生效档位 ' + tierText(limits) + '（' +
+      (dv.base_label || '其他月档位') + '基准 ' + tierText(dv.base_tiers) +
+      '）');
+
+    /* ② 抄表周期放大 */
+    if (mm > 1) {
+      parts.push('抄表周期 ' + mm + ' 个月 → ×' + mm + ' = ' +
+        tierText(dv.base_after_cycle));
+    }
+
+    /* ③ 一户多人口加成 */
+    if (mp > 0) {
+      parts.push('一户多人口 +' + num(mp) + ' 度');
+    }
+
+    /* ④ 跨月结转 */
+    if (c1 > 0 || c2 > 0) {
+      parts.push('上月结转 +' + num(c1) + (c2 > 0 ? ' / +' + num(c2) : '') + ' 度');
+    }
+
+    /* ⑤ 当前季节（峰谷价取哪套） */
+    var season = active.is_wet_season ? '丰水期' : '枯平期';
+    parts.push('当前 ' + season + '，低谷价取' + season + '标准');
+
+    return '<div class="tariff-tb-note tariff-tb-derive">生效口径：' +
+      esc(parts.join('；')) + '。</div>';
   }
 
   /* 采集电价面板的当前表单状态
@@ -3254,6 +3317,22 @@
     if (cb) {
       cb.addEventListener('change', function () { /* 立即保存 */ });
     }
+    /* ⚠️ v1.1.60：季节参数折叠开关。
+       折叠状态存在 DOM 属性上，重绘（live 重建 / 切地区）后仍保持。 */
+    var seasonToggle = box.querySelector('[data-tariff-season-toggle]');
+    if (seasonToggle) {
+      var seasonBox = seasonToggle.closest('[data-tariff-season]');
+      if (seasonBox) {
+        /* 首次渲染默认折叠；用户手动展开过则记住 */
+        if (seasonBox.getAttribute('data-season-open') !== '1') {
+          seasonBox.classList.add('collapsed');
+        }
+        seasonToggle.addEventListener('click', function () {
+          var open = seasonBox.classList.toggle('collapsed') ? '0' : '1';
+          seasonBox.setAttribute('data-season-open', open);
+        });
+      }
+    }
     /* 电压等级（v1.1.59）：切换后**即时**重画价目表。
        ⚠️ 真实缺陷修复：之前电压下拉没有 change 监听，
           用户切了「1-10 千伏」，表格里的峰价还是「不满 1 千伏」的
@@ -3333,6 +3412,9 @@
               ? hit.effective_tiers
               : (summer ? hit.tiers_summer : hit.tiers_other);
             j.active_valley_rates = wet ? hit.valley_rates_wet : hit.valley_rates_dry;
+            /* ⚠️ v1.1.60：推导明细也要按新地区重算，
+               否则解释行会残留上一个地区的门槛来源。 */
+            j.tier_derivation = hit.effective_derivation || {};
           }
           /* ① 缓存同步更新，否则下一次 loadTariff 会用旧地区刷回来 */
           tariffCache = j;
