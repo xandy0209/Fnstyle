@@ -3661,7 +3661,12 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     ['归档常量 DAILY_KEEP_DAYS=400 / DAILY_CHUNK=7天',
       /DAILY_KEEP_DAYS\s*=\s*400/.test(st53) && /DAILY_CHUNK\s*=\s*7\s*\*\s*86400/.test(st53)],
     ['cleanup 先归档再删（否则原始点删了就永久没了）',
-      /def cleanup[\s\S]{0,900}?archive_daily[\s\S]{0,900}?DELETE FROM metrics/.test(st53)],
+      /def cleanup[\s\S]{0,2600}?archive_daily[\s\S]{0,2600}?DELETE FROM metrics/.test(st53)],
+    /* ---- v1.1.62：归档必须按完整自然日推进，且删除线不得越过归档线 ---- */
+    ['archive_daily 把 target 向上取整到自然日边界（不切半天）',
+      /def archive_daily[\s\S]{0,1200}?_day_start\(_raw_target\)/.test(st53)],
+    ['cleanup 的删除线不晚于归档水位线（删掉的都已入档）',
+      /del_before\s*=\s*cutoff[\s\S]{0,600}?wm\s*<\s*del_before/.test(st53)],
     ['daily_rows 里用了「已归档 + 实时尾段」两段式',
       /FROM daily_summary WHERE day >= \?/.test(st53) &&
       /_daily_aggregate\(conn, tail_start/.test(st53)],

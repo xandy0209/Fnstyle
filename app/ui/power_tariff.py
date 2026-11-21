@@ -408,6 +408,14 @@ def load_config():
         pass
     if cfg.get("region") not in PROFILES:
         cfg["region"] = DEFAULT_REGION
+    # ⚠️ v1.1.62：主动丢弃 v1.1.61 之前遗留的这两个已废弃键。
+    #    save_config() 也会丢，但那只在「用户保存过」之后才生效；
+    #    而 describe() 里的 "config": cfg 会**原样透出**读到的键，
+    #    → 升版后若用户没打开过电价面板，/api/power/tariff 仍会带出
+    #      household_people / meter_months，看着像功能还在。
+    #    在读取层就丢，保证「读出来就是干净的」。
+    cfg.pop("household_people", None)
+    cfg.pop("meter_months", None)
     return cfg
 
 

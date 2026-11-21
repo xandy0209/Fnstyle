@@ -58,6 +58,61 @@ def build_store(points_per_day=48, days=3, watts=30.0):
     return store, len(rows)
 
 
+def build_legacy_store(points_per_day=48, days=12, watts=30.0):
+    """构造一个**真实的 v1.1.61 老库**（升级前的典型状态），返回 (store, cutoff)。
+
+    复现三个 v1.1.61 的真实特征：
+      1. 归档水位线 daily_archived_until 落在**一天中间**（= cutoff 时刻），
+         不是自然日 00:00 —— 这是 v1.1.61 的归档 bug（按任意时刻切区间）。
+      2. daily_summary 里水位线那一天是**残缺半天**（只归档了 00:00–cutoff，
+         小时桶不满 24 个）。
+      3. 原始点已按 `ts < cutoff` 删掉 —— cutoff 之前的点**永久没了**，
+         剩下的 [cutoff, ...) 还在库里。
+
+    v1.1.62 的自然日对齐 + `_UPSERT_DAILY_ADD` 累加应当能把这条残缺日
+    **自动补齐**为完整日（这正是本次修复要保住的升级路径）。
+    """
+    tmpdir = tempfile.mkdtemp(prefix='fnst_legacy_')
+    db = os.path.join(tmpdir, 'storage.db')
+    store = sc.HistoryStore(db)
+    now = time.time()
+    lt = time.localtime(now - (days - 1) * 86400)
+    start = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1))
+    step = 86400.0 / points_per_day
+    rows = []
+    t = start
+    while t < now:
+        rows.append((t, 'power', watts))
+        t += step
+    store.write(rows)
+
+    # cutoff = now - 7 天（v1.1.61 的保留期删除线），落在一天中间。
+    # 万一 now 恰好在日界附近，就把 cutoff 挪到当天 13:00，保证是「半天」。
+    cutoff = now - 7 * 86400
+    lt_cut = time.localtime(cutoff)
+    if lt_cut.tm_hour < 1:
+        cutoff = store._day_start(cutoff) + 13 * 3600
+
+    # 模拟 v1.1.61 的 archive_daily(cutoff)：归档 [day_start(now-400d), cutoff)
+    conn = store._connect(write=True)
+    try:
+        wm0 = store._day_start(now - 400 * 86400)
+        agg = store._daily_aggregate(conn, wm0, cutoff, 60)
+        for (day, k), v in agg.items():
+            conn.execute(store._UPSERT_DAILY_MAX if k in store._DAILY_MAX_KEYS
+                         else store._UPSERT_DAILY_ADD, (day, k, v))
+        conn.execute("INSERT INTO meta(key, value) VALUES('daily_archived_until', ?) "
+                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                     (repr(cutoff),))
+        conn.commit()
+        # 模拟 v1.1.61 的 cleanup：删 ts < cutoff
+        conn.execute("DELETE FROM metrics WHERE ts < ?", (cutoff,))
+        conn.commit()
+    finally:
+        conn.close()
+    return store, cutoff
+
+
 def main():
     print('\n=== 归档机制（archive_daily / daily_rows）===')
     store, npts = build_store()
@@ -235,6 +290,130 @@ def main():
     check('归档里没有半天数据（归档只结算完整日）',
           all(abs(v - 0.72) < 0.05 for v in arc.values()), str(arc))
     check('水位线推进到保留期边界', wm is not None, str(wm))
+
+    # ⚠️ v1.1.62：归档必须按**完整自然日**推进（新增断言，防回归）
+    #   1) 水位线必须落在自然日 00:00（不是一天中间的任意时刻）
+    #   2) 归档表里每个自然日要么有全部 24 个 kwh@HH 小时桶，要么完全没有
+    #   3) 连续多轮 cleanup 后不出现「同一天被累加超过整日」的超量
+    wmv = eval(wm[0])
+    lt_wm = time.localtime(wmv)
+    check('归档水位线对齐自然日 00:00',
+          lt_wm.tm_hour == 0 and lt_wm.tm_min == 0 and lt_wm.tm_sec == 0,
+          time.strftime('%Y-%m-%d %H:%M:%S', lt_wm))
+
+    conn = store2._connect()
+    try:
+        buckets = {}
+        for _d, _m, _v in conn.execute(
+                "SELECT day, metric, value FROM daily_summary WHERE metric LIKE 'kwh@%'"):
+            buckets.setdefault(_d, set()).add(_m)
+    finally:
+        conn.close()
+    check('归档表里每个自然日的小时桶要么 0 个要么 24 个（无残缺半天）',
+          all(len(s) in (0, 24) for s in buckets.values()),
+          str({d: len(s) for d, s in buckets.items()}))
+
+    # 多轮推进：模拟真实运行里每小时一次 cleanup
+    store3, _n3 = build_store(points_per_day=48, days=10, watts=30.0)
+    for _i in range(5):
+        store3.cleanup(7)
+    conn = store3._connect()
+    try:
+        arc3 = dict((r[0], r[1]) for r in conn.execute(
+            "SELECT day, value FROM daily_summary WHERE metric='kwh'"))
+        wm3 = conn.execute(
+            "SELECT value FROM meta WHERE key='daily_archived_until'").fetchone()
+    finally:
+        conn.close()
+    check('多轮 cleanup 后归档值不超量（不因重复归档而累加）',
+          all(v <= 0.76 for v in arc3.values()), str(arc3))
+    lt3 = time.localtime(eval(wm3[0]))
+    check('多轮 cleanup 后水位线仍对齐自然日 00:00',
+          lt3.tm_hour == 0 and lt3.tm_min == 0 and lt3.tm_sec == 0,
+          time.strftime('%Y-%m-%d %H:%M:%S', lt3))
+    # 关键不变量：删掉的原始点必须都已经进归档（归档线 ≤ 删除线）
+    check('多轮 cleanup 后归档日都是完整日',
+          all(abs(v - 0.72) < 0.05 for v in arc3.values()), str(arc3))
+
+    # ⚠️ v1.1.62 新增：删除线收紧到 min(cutoff, 水位线) 后，
+    #   必须确认「数据清理不会失效」—— 原始点数量要随时间推进而减少，
+    #   不能因为删除线卡在水位线上而永远不删（存储无限增长）。
+    store4, _n4 = build_store(points_per_day=48, days=20, watts=30.0)
+    _orig_time = time.time
+    counts = []
+    for _i in range(4):
+        _off = _i * 86400
+        time.time = lambda: _orig_time() + _off
+        try:
+            store4.cleanup(7)
+        finally:
+            time.time = _orig_time
+        _c = store4._connect()
+        try:
+            counts.append(_c.execute("SELECT COUNT(*) FROM metrics").fetchone()[0])
+        finally:
+            _c.close()
+    check('原始点数量随时间推进而减少（删除线没卡死）',
+          counts[-1] < counts[0], str(counts))
+    check('原始点数量收敛到保留期附近（不无限增长）',
+          counts[-1] <= counts[0] * 0.75, str(counts))
+
+    # ⚠️ v1.1.62 新增：**老库升级自愈**回归。
+    #   真实 v1.1.61 老库的水位线落在一天中间，归档表里那一天是残缺半天。
+    #   升级到 v1.1.62 后必须能自动补齐 —— 这是本次修复最关键的升级路径，
+    #   一旦回归，老用户升上来就会看到「某天用电只有一半」。
+    print('\n=== 老库升级自愈（v1.1.61 半成品归档 → v1.1.62 完整日）===')
+    store5, cut5 = build_legacy_store(points_per_day=48, days=12, watts=30.0)
+    conn = store5._connect()
+    try:
+        legacy_kwh = dict((r[0], r[1]) for r in conn.execute(
+            "SELECT day, value FROM daily_summary WHERE metric='kwh'"))
+        legacy_wm = conn.execute(
+            "SELECT value FROM meta WHERE key='daily_archived_until'").fetchone()
+        legacy_buckets = {}
+        for _d, _m in conn.execute(
+                "SELECT day, metric FROM daily_summary WHERE metric LIKE 'kwh@%'"):
+            legacy_buckets.setdefault(_d, set()).add(_m)
+    finally:
+        conn.close()
+    lt_leg = time.localtime(eval(legacy_wm[0]))
+    check('老库水位线确实落在一天中间（复现 v1.1.61 特征）',
+          not (lt_leg.tm_hour == 0 and lt_leg.tm_min == 0 and lt_leg.tm_sec == 0),
+          time.strftime('%Y-%m-%d %H:%M:%S', lt_leg))
+    legacy_partial = [d for d, s in legacy_buckets.items() if len(s) not in (0, 24)]
+    check('老库归档表里存在残缺半天（复现 v1.1.61 特征）',
+          len(legacy_partial) > 0,
+          '残缺日: %s' % legacy_partial)
+
+    # 升级：跑几轮 cleanup（v1.1.62 的自然日对齐 + 累加补齐）
+    for _i in range(3):
+        store5.cleanup(7)
+    conn = store5._connect()
+    try:
+        fixed_kwh = dict((r[0], r[1]) for r in conn.execute(
+            "SELECT day, value FROM daily_summary WHERE metric='kwh'"))
+        fixed_wm = conn.execute(
+            "SELECT value FROM meta WHERE key='daily_archived_until'").fetchone()
+        fixed_buckets = {}
+        for _d, _m in conn.execute(
+                "SELECT day, metric FROM daily_summary WHERE metric LIKE 'kwh@%'"):
+            fixed_buckets.setdefault(_d, set()).add(_m)
+    finally:
+        conn.close()
+
+    lt_fix = time.localtime(eval(fixed_wm[0]))
+    check('老库升级后水位线对齐自然日 00:00',
+          lt_fix.tm_hour == 0 and lt_fix.tm_min == 0 and lt_fix.tm_sec == 0,
+          time.strftime('%Y-%m-%d %H:%M:%S', lt_fix))
+    check('老库升级后归档表不再有残缺半天（全部 24 桶）',
+          all(len(s) in (0, 24) for s in fixed_buckets.values()),
+          str({d: len(s) for d, s in fixed_buckets.items()}))
+    still_partial = [d for d, s in fixed_buckets.items() if len(s) not in (0, 24)]
+    check('老库升级后原残缺日已补齐为完整日',
+          len(still_partial) == 0 and len(fixed_buckets) > 0,
+          '仍残缺: %s / 全部: %s' % (still_partial, sorted(fixed_buckets.keys())))
+    check('老库升级后每个归档日都是整日电量',
+          all(abs(v - 0.72) < 0.05 for v in fixed_kwh.values()), str(fixed_kwh))
 
     print('\n=== 空数据兜底 ===')
     empty = sc.HistoryStore(os.path.join(tempfile.mkdtemp(), 'empty.db'))

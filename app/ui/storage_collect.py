@@ -2225,14 +2225,61 @@ class HistoryStore(object):
         return acc
 
     def archive_daily(self, target, default_dt=60):
-        """把 [水位线, target) 的 metrics 汇总进 daily_summary（7 天一段独立事务）。"""
+        """把 [水位线, target) 的 metrics 汇总进 daily_summary（7 天一段独立事务）。
+
+        ⚠️ v1.1.62：归档必须按**完整自然日**结算 —— target **向上取整到
+        下一个自然日 00:00**。
+
+        为什么：daily_summary 的语义是「按天汇总」，`kwh` 是日总量、`kwh@HH` 是
+        小时分桶。归档区间若切在某天的中间（比如 cutoff = now-7d 落在 12:58），
+        那一天会被拆成两半：
+          · 归档表里先写入 00:00–12:58 的部分（`kwh` = 半天值、只有 kwh@00..kwh@12）
+          · 剩余部分要等下一轮归档才补上（`_UPSERT_DAILY_ADD` 累加）
+        → 归档表在补齐之前一直是**半成品**（某天 kwh 只有半天、小时桶缺一半），
+          而 `_integrate_points` 直接消费 `kwh@HH` 分桶 → 半天空档期的
+          谷/平拆分会短暂算错。
+
+        向上取整到自然日边界后：每个自然日要么**完整归档**（含全部 24 个
+        小时桶），要么完全不出现，不会再有半天状态。
+        边界日会晚最多 24 小时入档（那一天的实时数据仍由水位线后的尾段
+        提供，不会丢）；`cleanup()` 的删除线也随之收紧到水位线，
+        保证「凡是删掉的都已经进 daily_summary」。
+
+        注：向上取整可能让 target 超过"当前已有的数据"，
+        `_daily_aggregate` 只统计 ts < end 的**现存**点，
+        未来时段没有点 → 天然安全，不会凭空造数据。
+        """
         if not self.db_path:
             return 0
+        # 向上取整到下一个自然日 00:00（只归档完整日）
+        _raw_target = float(target)
+        target = self._day_start(_raw_target)
+        if target <= _raw_target:
+            target += 86400
         n = 0
         try:
             conn = self._connect(write=True)
             try:
                 wm, _ = self._daily_watermark(conn)
+                # ⚠️ v1.1.62：归档必须按**完整自然日**结算。
+                #    target 向上取整到下一个自然日 00:00 —— 这样每次推进的边界
+                #    都落在自然日边界上，daily_summary 里每个自然日要么完整归档
+                #    （含全部 24 个 kwh@HH 小时桶），要么完全不出现，
+                #    不会再出现「某天只有半天、小时桶缺一半」的半成品状态。
+                #
+                #    ⚠️ 老库的水位线可能落在任意时刻（v1.1.61 及之前的 bug）。
+                #    这里**不能**把水位线单独归整 —— 那样 [00:00, 老wm) 这段
+                #    数据会被永久跳过、永远丢失。正确做法：把 target 推到
+                #    「晚于老水位线的下一个自然日边界」，把老水位线到该边界
+                #    这一段照常归档掉（老库遗留的一次性代价），
+                #    之后所有推进都落在自然日边界上。
+                if wm >= target:
+                    # 老水位线已越过对齐点 → target 推到下一个自然日边界，
+                    # 把 [老wm, 下一个边界) 这段补归档掉，之后水位线就对齐了。
+                    nxt = self._day_start(wm)
+                    if nxt <= wm:
+                        nxt += 86400
+                    target = nxt
                 while wm < target:
                     end = min(float(target), wm + self.DAILY_CHUNK)
                     with conn:
@@ -2322,9 +2369,27 @@ class HistoryStore(object):
                 self.archive_daily(cutoff)
             except Exception:
                 pass
+            # ⚠️ v1.1.62：删除边界必须**不晚于**归档水位线。
+            #    archive_daily() 现在只按**完整自然日**归档（v1.1.62 起），
+            #    水位线停在自然日 00:00；而 cutoff = now - N*86400 落在
+            #    一天中间（12:58 这种）→ 若直接按 cutoff 删，cutoff 当天
+            #    00:00–12:58 那批点会因为「还没归档到」而被永久删掉。
+            #    → 实际删除线取 min(cutoff, 归档水位线)，保证
+            #      「凡是删掉的，都已经进 daily_summary 了」。
+            try:
+                conn = self._connect()
+                try:
+                    wm, has = self._daily_watermark(conn)
+                finally:
+                    conn.close()
+            except Exception:
+                wm, has = None, False
+            del_before = cutoff
+            if has and wm is not None and wm < del_before:
+                del_before = wm
             conn = self._connect(write=True)
             try:
-                cur = conn.execute("DELETE FROM metrics WHERE ts < ?", (cutoff,))
+                cur = conn.execute("DELETE FROM metrics WHERE ts < ?", (del_before,))
                 conn.commit()
                 return cur.rowcount or 0
             finally:
