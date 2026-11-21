@@ -1,21 +1,23 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""CDP 探针（v1.1.59）：实机验证三个新增配置项（电压等级 / 一户多人口 / 抄表周期）
+"""CDP 探针（v1.1.62）：实机验证电价面板只剩「电压等级」一个新增配置项
 
-依据官方 PDF（成都居民阶梯电价表 2026-07-01 起执行）新增的三项：
-  ① 电压等级：不满1千伏 / 1-10千伏 / 35-110千伏（峰价不同）
-  ② 一户多人口：满 5 人每户每月 +100 度，超出 5 人按 30 度/人·月递增（川发改价格〔2024〕668号）
-  ③ 抄表周期：两个月一次时，分档电量按同档次月用电量的 2 倍确定（川发改价格〔2012〕560号）
+⚠️ v1.1.62 变更：「家庭人口」「抄表周期」两个输入项**已删除**
+   · 「一户多人口」（川发改价格〔2024〕668号）需用户**主动申报**才生效，
+     软件里填个数字不代表供电企业已批准 → 留着反而误导；
+   · 「抄表周期」（川发改价格〔2012〕560号）是两个月抄表场景，
+     自动抄表时代已不适用。
+   → 档位门槛回到官方基准（四川其他月 180/280）。
 
 逐项验证：
-  A. 四川地区 → 三个控件都出现
-  B. 天津/固定单价地区 → 三个控件都**不**出现（地方政策不外溢）
+  A. 四川地区 → 只出现电压等级下拉，**没有**人口/抄表控件
+  B. 天津/固定单价地区 → 电压下拉也不出现
   C. 切电压等级 → 价目表峰价随之变化（0.5224 → 0.5124）
-  D. 填家庭人口 → 计费真的按人口加成走（后端接口读回一致）
-  E. 填抄表周期 → 门槛翻倍 + 用电窗口翻倍（后端接口读回 bill_months=2）
-  F. 保存后后端配置持久化，重载页面仍在
-  G. live 重建（9 秒）不丢三个控件的值
-  H. 切地区后三项正确回落（不留旧地区残留）
+  D. 保存后后端配置持久化（voltage 生效）
+  E. 生效门槛回到官方基准 180/280
+  F. live 重建（9 秒）不丢电压等级的值
+  G. 重载页面后仍在
+  H. 切地区后电压正确回落（不留旧地区残留）
 
 前置：Chrome 已带 --remote-debugging-port=9222 启动。
 """
@@ -38,64 +40,62 @@ class CDP:
     def send(self, method, params=None):
         self._id += 1
         mid = self._id
-        self.ws.send(json.dumps({"id": mid, "method": method, "params": params or {}}))
+        self.ws.send(json.dumps({"id": mid, "method": method,
+                                 "params": params or {}}))
         while True:
             msg = json.loads(self.ws.recv())
             if msg.get("id") == mid:
+                if "error" in msg:
+                    raise RuntimeError("%s: %s" % (method, msg["error"]))
                 return msg.get("result", {})
-            if "method" in msg:
-                self.events.append(msg)
+            self.events.append(msg)
 
     def pump(self, seconds):
         end = time.time() + seconds
-        self.ws.settimeout(1.0)
+        self.ws.settimeout(0.4)
         while time.time() < end:
             try:
-                msg = json.loads(self.ws.recv())
+                self.events.append(json.loads(self.ws.recv()))
             except Exception:
-                continue
-            if "method" in msg:
-                self.events.append(msg)
+                pass
         self.ws.settimeout(60)
 
     def js(self, expr):
         r = self.send("Runtime.evaluate",
                       {"expression": expr, "returnByValue": True})
-        if r.get("exceptionDetails"):
-            return None
-        return r.get("result", {}).get("value")
+        res = (r.get("result") or {})
+        if res.get("subtype") == "error":
+            raise RuntimeError(str(res.get("description")))
+        return res.get("value")
 
 
-FAIL = []
 PASSN = [0]
+FAIL = []
 
 
-def check(label, ok, extra=""):
-    if ok:
+def check(label, cond, extra=""):
+    if cond:
         PASSN[0] += 1
-        print("  ✓ %s%s" % (label, ("  → " + extra) if extra else ""))
+        print("  ✓ %s" % label)
     else:
-        print("  ✗ %s  → %s" % (label, extra))
         FAIL.append(label)
+        print("  ✗ %s%s" % (label, ("  → %s" % extra) if extra else ""))
 
 
-def api(path, method="GET", payload=None):
-    data = None
-    headers = {}
-    if payload is not None:
-        data = json.dumps(payload).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-    req = urllib.request.Request(API + path, data=data,
-                                 headers=headers, method=method)
-    with urllib.request.urlopen(req, timeout=20) as r:
-        return json.loads(r.read().decode("utf-8"))
+def api(path, method="GET", body=None):
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(API + path, data=data, method=method,
+                                 headers={"Content-Type": "application/json"})
+    return json.loads(urllib.request.urlopen(req, timeout=15).read().decode())
 
 
-TB = "document.querySelector('#monComputeBody [data-tariff-box]')"
+TB = ("document.querySelector('#monComputeBody [data-tariff-box]')"
+      " || document.querySelector('#monComputeBody .tariff-box')"
+      " || document.querySelector('#monComputeBody')")
 
 
 def snapshot(c):
-    """抓取抽屉电价面板当前三个控件 + 价目表文本。"""
+    """抓取抽屉电价面板当前控件 + 价目表文本。"""
     expr = """(function(){
       var tb = %s;
       if (!tb) return '{"err":"NO TARIFF BOX"}';
@@ -114,8 +114,6 @@ def snapshot(c):
         hasPeople: !!tb.querySelector('[data-tariff-people]'),
         hasMeter: !!tb.querySelector('[data-tariff-meter]'),
         voltage: v('[data-tariff-voltage]'),
-        people: v('[data-tariff-people]'),
-        meter: v('[data-tariff-meter]'),
         voltageOptions: opts,
         hasTable: !!tt,
         tableText: tt ? tt.innerText.replace(/\\s+/g,' ').trim() : null,
@@ -164,10 +162,13 @@ def main():
     # ⚠️ 后端 save_config 强制校验 valley_start/valley_end 必须是 0-23 的整数，
     #    缺这两个字段会直接 400（前端保存时是带上的，这里补齐）。
     print("--- 复位配置到四川/默认 ---")
+    # ⚠️ v1.1.62：必须显式给 "lv1"，不能给 ""。
+    #    后端 save_config 对空电压是「继承旧值」语义（v1.1.59 起），
+    #    给 "" 会拿到上一轮跑测残留的电压等级 → C 项起点不确定。
     api("/api/power/tariff", "POST", {
         "region": "sichuan", "enabled": True,
         "valley_start": 23, "valley_end": 7,
-        "voltage": "", "household_people": 0, "meter_months": 1,
+        "voltage": "lv1",
     })
     c.send("Page.navigate", {"url": URL})
     c.pump(7)
@@ -176,12 +177,16 @@ def main():
     c.js("window.FnStyleCompute.open('power', window.FnStyleMonitor.lastData());'ok'")
     c.pump(4)
 
-    # ---------- A. 四川地区三个控件都在 ----------
-    print("\n--- A. 四川地区：三个新控件应全部出现 ---")
+    # ---------- A. 四川地区只剩电压下拉 ----------
+    print("\n--- A. 四川地区：只剩电压等级下拉 ---")
     st = snapshot(c)
     check("A 四川地区显示电压等级下拉", st.get("hasVoltage") is True)
-    check("A 四川地区显示一户多人口输入", st.get("hasPeople") is True)
-    check("A 四川地区显示抄表周期下拉", st.get("hasMeter") is True)
+    check("A 四川地区**不**显示一户多人口输入", st.get("hasPeople") is False)
+    check("A 四川地区**不**显示抄表周期下拉", st.get("hasMeter") is False)
+    check("A 面板文本不含「家庭人口」", "家庭人口" not in (st.get("panelText") or ""),
+          (st.get("panelText") or "")[:120])
+    check("A 面板文本不含「抄表周期」", "抄表周期" not in (st.get("panelText") or ""),
+          (st.get("panelText") or "")[:120])
     check("A 电压等级下拉有 3 个选项",
           len(st.get("voltageOptions") or []) == 3,
           str(st.get("voltageOptions")))
@@ -192,7 +197,7 @@ def main():
             check("A 电压选项含「不满 1 千伏」", True, opt)
 
     # ---------- B. 其它地区不应出现 ----------
-    print("\n--- B. 天津 / 固定单价：地方政策控件不应出现 ---")
+    print("\n--- B. 天津 / 固定单价：电压下拉也不出现 ---")
     set_field(c, "[data-tariff-region]", "tianjin")
     c.pump(3)
     st2 = snapshot(c)
@@ -211,8 +216,7 @@ def main():
     set_field(c, "[data-tariff-region]", "sichuan")
     c.pump(3)
     st4 = snapshot(c)
-    check("B 切回四川后三个控件恢复", st4.get("hasVoltage") is True
-          and st4.get("hasPeople") is True and st4.get("hasMeter") is True)
+    check("B 切回四川后电压控件恢复", st4.get("hasVoltage") is True)
 
     # ---------- C. 电压等级切换 → 峰价变化 ----------
     print("\n--- C. 电压等级切换应改变峰价 ---")
@@ -238,28 +242,20 @@ def main():
           "0.5124" in (st6.get("tableText") or ""),
           (st6.get("tableText") or "")[:90])
 
-    # ---------- G. live 重建不丢值 ----------
-    print("\n--- G. live 重建（9 秒）后三个控件的值不丢 ---")
+    # ---------- F. live 重建不丢值 ----------
+    print("\n--- F. live 重建（9 秒）后电压等级的值不丢 ---")
     set_field(c, "[data-tariff-voltage]", "lv1")
     c.pump(2)
-    set_field(c, "[data-tariff-people]", "6", evt="input")
-    c.pump(2)
-    set_field(c, "[data-tariff-meter]", "2")
-    c.pump(2)
     pre = snapshot(c)
-    check("G 设置后：电压 lv1", pre.get("voltage") == "lv1", str(pre.get("voltage")))
-    check("G 设置后：人口 6", pre.get("people") == "6", str(pre.get("people")))
-    check("G 设置后：抄表周期 2", pre.get("meter") == "2", str(pre.get("meter")))
+    check("F 设置后：电压 lv1", pre.get("voltage") == "lv1", str(pre.get("voltage")))
 
     print("  …等待 9 秒（跨过 3 轮 live 重建）…")
     c.pump(9)
     post = snapshot(c)
-    check("G 9 秒后电压仍是 lv1", post.get("voltage") == "lv1", str(post.get("voltage")))
-    check("G 9 秒后人口仍是 6", post.get("people") == "6", str(post.get("people")))
-    check("G 9 秒后抄表周期仍是 2", post.get("meter") == "2", str(post.get("meter")))
+    check("F 9 秒后电压仍是 lv1", post.get("voltage") == "lv1", str(post.get("voltage")))
 
-    # ---------- D/E/F. 保存并核验后端 ----------
-    print("\n--- D/E/F. 保存后后端配置与计费应按新参数走 ---")
+    # ---------- D/E. 保存并核验后端 ----------
+    print("\n--- D/E. 保存后后端配置与生效门槛应正确 ---")
     saved = c.js("""(function(){
       var btn = document.querySelector('#monComputeBody [data-tariff-save]')
              || document.querySelector('#monComputeBody .tariff-save');
@@ -272,37 +268,31 @@ def main():
 
     cfg = api("/api/power/tariff")
     conf = cfg.get("config", {})
-    check("F 后端 region=sichuan", conf.get("region") == "sichuan",
+    check("D 后端 region=sichuan", conf.get("region") == "sichuan",
           str(conf.get("region")))
-    check("F 后端 voltage=lv1", conf.get("voltage") == "lv1",
+    check("D 后端 voltage=lv1", conf.get("voltage") == "lv1",
           str(conf.get("voltage")))
-    check("F 后端 household_people=6", conf.get("household_people") == 6,
-          str(conf.get("household_people")))
-    check("F 后端 meter_months=2", conf.get("meter_months") == 2,
-          str(conf.get("meter_months")))
+    check("D 后端已无 household_people 键（v1.1.62）",
+          "household_people" not in conf, sorted(conf.keys()))
+    check("D 后端已无 meter_months 键（v1.1.62）",
+          "meter_months" not in conf, sorted(conf.keys()))
 
-    # 抄表周期 ×2 → 门槛翻倍
-    # ⚠️ 口径修正（v1.1.59 修复后）：active_tiers 现在是**本月实际生效**的门槛，
-    #    含抄表周期 ×2 + 一户多人口加成 + 结转。
-    #    本次保存的是 6 人 + 双月 → 一档 = 180×2 + 130 = 490；二档累计 = 280×2 + 130 = 690。
+    # ⚠️ v1.1.62：生效门槛回到官方基准（无人口加成、无抄表周期放大）
     tiers = cfg.get("active_tiers") or []
-    check("E 抄表周期2月 + 6人 → 一档生效门槛 490（360+130）",
-          abs((tiers[0] if tiers else 0) - 490.0) < 0.01, str(tiers))
-    check("E 抄表周期2月 + 6人 → 二档生效门槛 690（560+130）",
-          abs((tiers[1] if len(tiers) > 1 else 0) - 690.0) < 0.01, str(tiers))
-
-    # 一户多人口：满 5 人 → +100 度；第 6 人 → +30 度/人 → 130 度
-    extra = cfg.get("multi_person_extra")
-    check("D 6 人 → 一户多人口加 130 度（100+30）",
-          extra is not None and abs(float(extra) - 130.0) < 0.01, str(extra))
+    check("E 一档生效门槛 180（官方基准）",
+          abs((tiers[0] if tiers else 0) - 180.0) < 0.01, str(tiers))
+    check("E 二档生效门槛 280（官方基准）",
+          abs((tiers[1] if len(tiers) > 1 else 0) - 280.0) < 0.01, str(tiers))
+    check("E describe 不再返回 multi_person_extra",
+          "multi_person_extra" not in cfg, sorted(cfg.keys()))
 
     # 峰价按电压等级（lv1 = 不满1千伏）
     peak = cfg.get("profile", {}).get("peak_rates")
     check("D 保存后峰价仍为不满1千伏 0.5224",
           peak is not None and abs(peak[0] - 0.5224) < 0.0001, str(peak))
 
-    # ---------- H. 重载后仍在 ----------
-    print("\n--- H. 重载页面后配置应持久化 ---")
+    # ---------- G. 重载后仍在 ----------
+    print("\n--- G. 重载页面后配置应持久化 ---")
     c.send("Page.navigate", {"url": URL})
     c.pump(7)
     c.js("var b=document.querySelector('[data-tab=monitor]');if(b)b.click();'ok'")
@@ -310,18 +300,16 @@ def main():
     c.js("window.FnStyleCompute.open('power', window.FnStyleMonitor.lastData());'ok'")
     c.pump(4)
     st7 = snapshot(c)
-    check("H 重载后电压仍为 lv1", st7.get("voltage") == "lv1", str(st7.get("voltage")))
-    check("H 重载后人口仍为 6", st7.get("people") == "6", str(st7.get("people")))
-    check("H 重载后抄表周期仍为 2", st7.get("meter") == "2", str(st7.get("meter")))
+    check("G 重载后电压仍为 lv1", st7.get("voltage") == "lv1", str(st7.get("voltage")))
+    check("G 重载后仍无人口控件", st7.get("hasPeople") is False)
+    check("G 重载后仍无抄表周期控件", st7.get("hasMeter") is False)
 
     # ---------- H2. 切地区后回落 ----------
-    print("\n--- H2. 切到天津后三个控件应回落消失且不留残值 ---")
+    print("\n--- H2. 切到天津后电压控件应消失且不留残值 ---")
     set_field(c, "[data-tariff-region]", "tianjin")
     c.pump(3)
     st8 = snapshot(c)
     check("H2 切天津后电压控件消失", st8.get("hasVoltage") is False)
-    check("H2 切天津后人口控件消失", st8.get("hasPeople") is False)
-    check("H2 切天津后抄表周期控件消失", st8.get("hasMeter") is False)
     check("H2 切天津后面板文本不含「千伏」",
           "千伏" not in (st8.get("panelText") or ""),
           (st8.get("panelText") or "")[:120])
@@ -329,43 +317,37 @@ def main():
     set_field(c, "[data-tariff-region]", "sichuan")
     c.pump(3)
     st9 = snapshot(c)
-    # ⚠️ 口径说明：voltage / household_people / meter_months 是**全局配置**
-    #    （不是按地区存），所以切回四川应**恢复已保存的值**，
-    #    而不是清空。天津不支持这些项 → 控件直接不渲染（上面已验证）。
+    # ⚠️ 口径说明：voltage 是**全局配置**（不是按地区存），
+    #    所以切回四川应**恢复已保存的值**，而不是清空。
     check("H2 切回四川后电压恢复为已保存的 lv1",
           st9.get("voltage") == "lv1", repr(st9.get("voltage")))
-    check("H2 切回四川后人口恢复为已保存的 6",
-          st9.get("people") == "6", repr(st9.get("people")))
-    check("H2 切回四川后抄表周期恢复为已保存的 2",
-          st9.get("meter") == "2", repr(st9.get("meter")))
 
     # ---------- 截图 ----------
     set_field(c, "[data-tariff-voltage]", "lv2")
-    c.pump(2)
-    set_field(c, "[data-tariff-people]", "6", evt="input")
     c.pump(2)
     c.js("""(function(){ var tb = %s;
       if (tb) tb.scrollIntoView({block:'center'}); return 'ok'; })()""" % TB)
     c.pump(1.5)
     shot = c.send("Page.captureScreenshot", {"format": "png"})
     import base64
-    with open("/tmp/fnstyle_v1159_tariff_cfg.png", "wb") as f:
+    with open("/tmp/fnstyle_v1162_tariff_cfg.png", "wb") as f:
         f.write(base64.b64decode(shot["data"]))
-    print("\n  截图已保存：/tmp/fnstyle_v1159_tariff_cfg.png")
+    print("\n  截图已保存：/tmp/fnstyle_v1162_tariff_cfg.png")
 
     # ---------- 还原配置 ----------
     print("\n--- 还原配置 ---")
+    # ⚠️ 同样要显式给 "lv1"：空串是「继承旧值」语义，
+    #    跑测结束时电压可能已被改成 lv2 → 空串会把 lv2 留下来。
     api("/api/power/tariff", "POST", {
         "region": "sichuan", "enabled": True,
         "valley_start": 23, "valley_end": 7,
-        "voltage": "", "household_people": 0, "meter_months": 1,
+        "voltage": "lv1",
     })
     rc = api("/api/power/tariff").get("config", {})
-    # ⚠️ 后端 save_config 会把空 voltage **规整成该地区默认档**（lv1 不满1千伏），
-    #    这是设计如此（避免存一个无效值），所以这里断言 lv1 而不是空串。
-    check("还原成功（voltage=lv1 默认档 / people 0 / meter 1）",
-          rc.get("voltage") == "lv1" and rc.get("household_people") == 0
-          and rc.get("meter_months") == 1, str(rc))
+    check("还原成功（voltage=lv1 默认档）",
+          rc.get("voltage") == "lv1"
+          and "household_people" not in rc
+          and "meter_months" not in rc, str(rc))
 
     print("\n" + "=" * 56)
     print("通过 %d 项，失败 %d 项" % (PASSN[0], len(FAIL)))

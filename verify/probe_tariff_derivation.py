@@ -4,11 +4,14 @@
 
 改动背景
 --------
-用户反馈电价面板上方档位表（0–490 / 491–690）与下面两个档位输入框
+用户反馈电价面板上方档位表（0–180 / 181–280）与下面两个档位输入框
 看着像重复。核查结论：上方是**结果**、下方是**参数**，不是重复；
 但表格下方那行说明文字（7–9 月档位 260/460、6–10 月低谷价 0.175）
 **全是下方输入框已有的数字** → 纯重复；
-而真正该说的「490/690 怎么来的」反而缺失。
+而真正该说的「180/280 怎么来的」反而缺失。
+
+⚠️ v1.1.62：删掉「一户多人口」「抄表周期」后，档位门槛回到官方基准
+   （四川其他月 180/280、夏季 260/460），不再有 490/690 这类加成后的数字。
 
 本轮改动：
   ① 表格下方重复说明 → 换成**推导解释行**（讲清生效门槛的来源）
@@ -17,7 +20,7 @@
 逐项验证：
   A. 推导解释行存在，且含生效档位数字
   B. 旧重复说明文字已消失
-  C. 6 人 + 双月抄表 → 解释行含 490/690 与「×2」「130 度」
+  C. 四川官方基准 → 解释行含 180/280（v1.1.62 已移除双月抄表与一户多人口）
   D. 季节参数默认折叠，展开后参数可见
   E. 切地区后解释行同步更新（不残留旧地区）
   F. 天津等固定单价地区不显示推导行/季节参数
@@ -114,8 +117,6 @@ def snap(c):
       function v(sel){ var e = tb.querySelector(sel); return e ? e.value : null; }
       return JSON.stringify({
         region: v('[data-tariff-region]'),
-        people: v('[data-tariff-people]'),
-        meter: v('[data-tariff-meter]'),
         voltage: v('[data-tariff-voltage]'),
         hasDerive: !!derive,
         deriveText: derive ? derive.innerText.replace(/\\s+/g,' ').trim() : null,
@@ -213,24 +214,22 @@ def main():
         check("不再出现「6–10 月低谷价 0.175」",
               "6–10 月低谷价" not in pt, pt[:160])
 
-        # ── C. 6 人 + 双月 → 490/690 ───────────────────────────
-        print("\n[C] 6 人 + 两个月抄表 → 解释行显示推导链")
-        set_field(c, "[data-tariff-people]", "6")
-        set_field(c, "[data-tariff-meter]", "2")
+        # ── C. 门槛回到官方基准 180/280（v1.1.62 移除人口/抄表） ──
+        print("\n[C] 解释行显示官方基准门槛 180/280")
         time.sleep(0.6)
         click(c, "[data-tariff-save]")
         time.sleep(2.5)
         s2 = snap(c)
         dt2 = s2.get("deriveText") or ""
         print("  解释行:", dt2)
-        check("解释行含生效一档 490", "490" in dt2, dt2[:160])
-        check("解释行含生效二档 690", "690" in dt2, dt2[:160])
-        check("解释行含抄表周期 ×2", "×2" in dt2 or "x2" in dt2, dt2[:160])
-        check("解释行含人口加成 130", "130" in dt2, dt2[:160])
-        check("表格电量列为 0–490",
-              "0–490" in (s2.get("tableText") or ""), (s2.get("tableText") or "")[:120])
-        check("表格电量列为 491–690",
-              "491–690" in (s2.get("tableText") or ""), (s2.get("tableText") or "")[:120])
+        check("解释行含生效一档 180", "180" in dt2, dt2[:160])
+        check("解释行含生效二档 280", "280" in dt2, dt2[:160])
+        check("解释行不含抄表周期描述", "抄表周期" not in dt2, dt2[:160])
+        check("解释行不含一户多人口描述", "一户多人口" not in dt2, dt2[:160])
+        check("表格电量列为 0–180",
+              "0–180" in (s2.get("tableText") or ""), (s2.get("tableText") or "")[:120])
+        check("表格电量列为 181–280",
+              "181–280" in (s2.get("tableText") or ""), (s2.get("tableText") or "")[:120])
 
         # ── D. 季节参数折叠 ────────────────────────────────────
         print("\n[D] 季节参数默认折叠")
@@ -261,7 +260,6 @@ def main():
         print("\n[E] 切换地区后解释行同步更新")
         api("/api/power/tariff", "POST",
             {"enabled": True, "region": "sichuan",
-             "household_people": 6, "meter_months": 2,
              "valley_start": 23, "valley_end": 7})
         time.sleep(1.0)
         c.send("Page.reload", {"ignoreCache": True})
@@ -271,7 +269,8 @@ def main():
         s4 = snap(c)
         dt4 = s4.get("deriveText") or ""
         print("  四川解释行:", dt4)
-        check("四川解释行仍含 490", "490" in dt4, dt4[:160])
+        check("四川解释行含 180", "180" in dt4, dt4[:160])
+        check("四川解释行不含 490", "490" not in dt4, dt4[:160])
 
         # 切到天津
         c.js("""(function(){
@@ -285,8 +284,8 @@ def main():
         s5 = snap(c)
         dt5 = s5.get("deriveText") or ""
         print("  天津解释行:", dt5)
-        check("切天津后解释行不含 490", "490" not in dt5, dt5[:160])
-        check("切天津后解释行不含 690", "690" not in dt5, dt5[:160])
+        check("切天津后解释行不含 180", "180" not in dt5, dt5[:160])
+        check("切天津后解释行不含 280", "280" not in dt5, dt5[:160])
         check("天津不显示季节参数区块", s5.get("hasSeason") is False,
               str(s5.get("hasSeason")))
 
@@ -302,7 +301,8 @@ def main():
         s6 = snap(c)
         dt6 = s6.get("deriveText") or ""
         print("  切回四川:", dt6)
-        check("切回四川后解释行恢复 490", "490" in dt6, dt6[:160])
+        check("切回四川后解释行恢复 180（v1.1.62 官方基准）",
+              "180" in dt6 and "490" not in dt6, dt6[:160])
 
         # ── F. 电压等级切换 ────────────────────────────────────
         print("\n[F] 电压等级切换 → 峰价与解释行")
@@ -321,8 +321,10 @@ def main():
         open_panel(c)
         s8 = snap(c)
         check("重载后解释行存在", s8.get("hasDerive") is True)
-        check("重载后解释行含 490",
-              "490" in (s8.get("deriveText") or ""), (s8.get("deriveText") or "")[:160])
+        check("重载后解释行含 180 且不含 490（v1.1.62 官方基准）",
+              "180" in (s8.get("deriveText") or "")
+              and "490" not in (s8.get("deriveText") or ""),
+              (s8.get("deriveText") or "")[:160])
         check("重载后季节参数仍折叠", s8.get("seasonCollapsed") is True,
               str(s8.get("seasonCollapsed")))
 

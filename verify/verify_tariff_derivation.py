@@ -72,65 +72,49 @@ print("=" * 70)
 
 import power_tariff as pt
 
-# ── ① 默认配置（单月抄表、无人口加成）────────────────────────────
+# ── ① 默认配置 ──────────────────────────────────────────────────
+# ⚠️ v1.1.62：推导链只剩两环 —— **基准档位 + 跨月结转**。
+#    「抄表周期倍数」与「一户多人口加成」两项已移除。
 print("\n[1] 默认配置推导明细")
 cfg0 = dict(pt.load_config())
-cfg0.update({"region": "sichuan", "household_people": 0, "meter_months": 1})
+cfg0.update({"region": "sichuan"})
 d0 = pt.tier_derivation("sichuan", cfg0)
 
 check("默认返回推导明细", isinstance(d0, dict) and bool(d0))
 check("基准档位 = 其他月 180/280",
       d0["base_tiers"][:2] == [180.0, 280.0], str(d0["base_tiers"]))
 check("基准标签 = 其他月档位", d0["base_label"] == "其他月档位", d0["base_label"])
-check("抄表周期 = 1", d0["meter_months"] == 1, str(d0["meter_months"]))
-check("人口加成 = 0", approx(d0["mp_extra"], 0), str(d0["mp_extra"]))
+check("不再返回 meter_months（v1.1.62 已移除）",
+      "meter_months" not in d0, sorted(d0.keys()))
+check("不再返回 mp_extra（v1.1.62 已移除）",
+      "mp_extra" not in d0, sorted(d0.keys()))
+check("不再返回 base_after_cycle（v1.1.62 已移除）",
+      "base_after_cycle" not in d0, sorted(d0.keys()))
 check("结转 = 0", approx(d0["carry1"], 0) and approx(d0["carry2"], 0))
 check("生效档位 = 180/280/不限",
       d0["limits"][:2] == [180.0, 280.0] and d0["limits"][2] is None,
       str(d0["limits"]))
 
-# ── ② 抄表周期 ×2 ────────────────────────────────────────────────
-print("\n[2] 抄表周期 2 个月 → 门槛 ×2")
+# ── ② 残留的旧配置不再影响门槛 ─────────────────────────────────
+print("\n[2] 旧配置残留（抄表周期/人口数）不再影响门槛")
 cfg2 = dict(cfg0)
 cfg2["meter_months"] = 2
+cfg2["household_people"] = 6
 d2 = pt.tier_derivation("sichuan", cfg2)
-check("乘倍数后基准 = 360/560",
-      d2["base_after_cycle"][:2] == [360.0, 560.0], str(d2["base_after_cycle"]))
-check("生效档位 = 360/560（无人口加成）",
-      d2["limits"][:2] == [360.0, 560.0], str(d2["limits"]))
+check("生效档位仍为 180/280/不限",
+      d2["limits"][:2] == [180.0, 280.0] and d2["limits"][2] is None,
+      str(d2["limits"]))
 
-# ── ③ 一户多人口加成（6 人 = +130）──────────────────────────────
-print("\n[3] 一户多人口加成")
-cfg6 = dict(cfg0)
-cfg6["household_people"] = 6
-d6 = pt.tier_derivation("sichuan", cfg6)
-check("6 人加成 = 130 度", approx(d6["mp_extra"], 130), str(d6["mp_extra"]))
-check("生效一档 = 180+130 = 310", approx(d6["limits"][0], 310), str(d6["limits"]))
-check("生效二档 = 310+100 = 410", approx(d6["limits"][1], 410), str(d6["limits"]))
+# ── ③ 跨月结转仍生效 ───────────────────────────────────────────
+print("\n[3] 跨月结转仍参与推导")
+cfgC = dict(cfg0)
+dC = pt.tier_derivation("sichuan", cfgC)
+check("结转字段仍存在", "carry1" in dC and "carry2" in dC, sorted(dC.keys()))
 
-cfg5 = dict(cfg0)
-cfg5["household_people"] = 5
-d5 = pt.tier_derivation("sichuan", cfg5)
-check("5 人加成 = 100 度", approx(d5["mp_extra"], 100), str(d5["mp_extra"]))
-check("不足 5 人不加成",
-      approx(pt.multi_person_extra(4), 0))
-
-# ── ④ 截图复现：6 人 + 双月抄表 = 490/690 ───────────────────────
-print("\n[4] 复现用户截图（6 人 + 两个月抄表）")
-cfgS = dict(cfg0)
-cfgS["household_people"] = 6
-cfgS["meter_months"] = 2
-dS = pt.tier_derivation("sichuan", cfgS)
-check("乘抄表周期后 = 360/560",
-      dS["base_after_cycle"][:2] == [360.0, 560.0], str(dS["base_after_cycle"]))
-check("生效一档 = 360+130 = 490", approx(dS["limits"][0], 490), str(dS["limits"]))
-check("生效二档 = 490+200 = 690", approx(dS["limits"][1], 690), str(dS["limits"]))
-check("三档不限", dS["limits"][2] is None, str(dS["limits"]))
-
-# ── ⑤ 一致性：推导明细的 limits 必须等于 effective_tier_limits ──
-print("\n[5] 推导明细与生效档位严格一致")
-for tag, c in (("默认", cfg0), ("双月", cfg2), ("6人", cfg6), ("截图组合", cfgS)):
-    lim, _caps, _extra = pt.effective_tier_limits("sichuan", c)
+# ── ④ 一致性：推导明细的 limits 必须等于 effective_tier_limits ──
+print("\n[4] 推导明细与生效档位严格一致")
+for tag, c in (("默认", cfg0), ("残留配置", cfg2), ("结转", cfgC)):
+    lim, _caps = pt.effective_tier_limits("sichuan", c)
     dv = pt.tier_derivation("sichuan", c)
     same = (lim[:2] == dv["limits"][:2]) and (lim[2] is None) == (dv["limits"][2] is None)
     check("%s 组合 limits 一致" % tag, same, "%s vs %s" % (lim, dv["limits"]))
@@ -175,15 +159,13 @@ for p in plist:
         inconsistent.append("%s: %s vs %s" % (p["id"], et, ed))
 check("各地区 effective_tiers 与推导明细一致", not inconsistent, "; ".join(inconsistent))
 
-# ── ⑧ 天津（不支持四川地方政策）不受人口/抄表影响 ───────────────
-print("\n[8] 天津：地方政策开关隔离")
+# ── ⑧ 天津不受旧配置残留影响 ───────────────────────────────────
+print("\n[8] 天津：旧配置残留不生效")
 cfgT = dict(cfg0)
 cfgT["region"] = "tianjin"
 cfgT["household_people"] = 6
 cfgT["meter_months"] = 2
 dT = pt.tier_derivation("tianjin", cfgT)
-check("天津不受人口加成", approx(dT["mp_extra"], 0), str(dT["mp_extra"]))
-check("天津抄表周期仍为 1", dT["meter_months"] == 1, str(dT["meter_months"]))
 check("天津生效档位 = 220/400",
       dT["limits"][:2] == [220.0, 400.0], str(dT["limits"]))
 

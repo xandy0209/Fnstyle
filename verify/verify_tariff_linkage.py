@@ -273,45 +273,42 @@ pt._cfg_path = lambda: _tmpcfg
 try:
     if os.path.exists(_tmpcfg):
         os.remove(_tmpcfg)
-    # 四川设：lv2 + 6 人 + 两个月抄表
+    # 四川设：lv2（人口/抄表配置项已在 v1.1.62 移除）
     pt.save_config({"region": "sichuan", "enabled": True,
                     "valley_start": 23, "valley_end": 7, "rate_override": None,
                     "voltage": "lv2", "household_people": 6, "meter_months": 2})
     c = pt.load_config()
-    check("四川保存后 people=6", c.get("household_people") == 6, c.get("household_people"))
-    check("四川保存后 meter=2", c.get("meter_months") == 2, c.get("meter_months"))
     check("四川保存后 voltage=lv2", c.get("voltage") == "lv2", c.get("voltage"))
-    check("四川生效档位 490/690",
+    check("四川保存后 people 键已被丢弃（v1.1.62）",
+          "household_people" not in c, c.get("household_people"))
+    check("四川保存后 meter 键已被丢弃（v1.1.62）",
+          "meter_months" not in c, c.get("meter_months"))
+    check("四川生效档位 180/280（官方基准）",
           [approx(x, e) for x, e in zip(pt.effective_tier_limits("sichuan", c)[0],
-                                        [490.0, 690.0])],
+                                        [180.0, 280.0])],
           str(pt.effective_tier_limits("sichuan", c)[0]))
 
-    # 切到三个不支持地方政策的地区各保存一次（前端不提交这三个字段）
+    # 切到没有电压等级的地区各保存一次（前端不提交 voltage）
     for reg in ("tianjin", "sichuan_shared", "flat"):
         pt.save_config({"region": reg, "enabled": True,
                         "valley_start": 23, "valley_end": 7, "rate_override": None})
         c = pt.load_config()
-        check("切 %s 保存后 people 仍为 6" % reg,
-              c.get("household_people") == 6, c.get("household_people"))
-        check("切 %s 保存后 meter 仍为 2" % reg,
-              c.get("meter_months") == 2, c.get("meter_months"))
         check("切 %s 保存后 voltage 仍为 lv2" % reg,
               c.get("voltage") == "lv2", c.get("voltage"))
-        # 该地区本身不套用四川地方政策
         lim = pt.effective_tier_limits(reg, c)[0]
         if reg == "tianjin":
-            check("天津档位仍为 220/400（不套四川政策）",
+            check("天津档位仍为 220/400",
                   [approx(x, e) for x, e in zip(lim, [220.0, 400.0])], str(lim))
         else:
-            check("%s 不套四川政策（无档位）" % reg, lim[0] is None, str(lim))
+            check("%s 无档位" % reg, lim[0] is None, str(lim))
 
-    # 切回四川 → 设置全部恢复
+    # 切回四川 → 电压恢复
     pt.save_config({"region": "sichuan", "enabled": True,
                     "valley_start": 23, "valley_end": 7, "rate_override": None})
     c = pt.load_config()
-    check("切回四川档位恢复 490/690",
+    check("切回四川档位为 180/280",
           [approx(x, e) for x, e in zip(pt.effective_tier_limits("sichuan", c)[0],
-                                        [490.0, 690.0])],
+                                        [180.0, 280.0])],
           str(pt.effective_tier_limits("sichuan", c)[0]))
     check("切回四川峰价恢复 lv2 的 0.5124",
           approx(pt.resolve_voltage("sichuan", c)[2][0], 0.5124),
@@ -337,10 +334,14 @@ check("谷时段判定改为区间语义（vs<ve / vs>ve / vs==ve）",
 print("\n=== 10. 前端保存：无控件地区也要提交保留值（⑧ 号缺陷）===")
 check("前端保存时用 cfgSave 兜底提交 voltage",
       "cfgSave.voltage" in js, "未见 cfgSave.voltage")
-check("前端保存时用 cfgSave 兜底提交 household_people",
-      "cfgSave.household_people" in js, "未见 cfgSave.household_people")
-check("前端保存时用 cfgSave 兜底提交 meter_months",
-      "cfgSave.meter_months" in js, "未见 cfgSave.meter_months")
+check("前端不再提交 household_people（v1.1.62 已移除）",
+      "payload.household_people" not in js, "仍见 payload.household_people")
+check("前端不再提交 meter_months（v1.1.62 已移除）",
+      "payload.meter_months" not in js, "仍见 payload.meter_months")
+check("前端不再渲染家庭人口输入框",
+      "data-tariff-people" not in js, "仍见 data-tariff-people")
+check("前端不再渲染抄表周期下拉",
+      "data-tariff-meter" not in js, "仍见 data-tariff-meter")
 
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 62)

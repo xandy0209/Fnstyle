@@ -189,20 +189,17 @@ time.sleep(0.6)
 # ---------------------------------------------------------------------------
 print("\n=== ⑥⑦ 切地区保存后设置不被清零 ===")
 goto_region(c, 'sichuan')
-# 设 6 人 + 双月 + lv2
-setf(c, '[data-tariff-people]', '6')
-setf(c, '[data-tariff-meter]', '2')
+# ⚠️ v1.1.62：人口/抄表控件已删除，只设电压 lv2
 setf(c, '[data-tariff-voltage]', 'lv2')
 time.sleep(0.8)
 save(c)
 s = snap(c)
-print("  保存后：电压=%s 人口=%s 抄表=%s" % (
-    (s.get('voltage') or {}).get('value'),
-    (s.get('people') or {}).get('value'),
-    (s.get('meter') or {}).get('value')))
-check("四川保存后档位 = 490/690",
-      '0–490' in ' '.join(s.get('rows') or []) and '491–690' in ' '.join(s.get('rows') or []),
+print("  保存后：电压=%s" % ((s.get('voltage') or {}).get('value')))
+check("四川保存后档位 = 180/280（官方基准）",
+      '0–180' in ' '.join(s.get('rows') or []) and '181–280' in ' '.join(s.get('rows') or []),
       str(s.get('rows')))
+check("面板不再有家庭人口控件", s.get('hasPeople') is False)
+check("面板不再有抄表周期控件", s.get('hasMeter') is False)
 
 # 切天津并保存
 goto_region(c, 'tianjin')
@@ -211,14 +208,13 @@ raw = api_get(c, BASE + 'api/power/tariff')
 try:
     j = raw if isinstance(raw, dict) else json.loads(raw)
     cfg = j.get('config') or {}
-    print("  切天津保存后 config：voltage=%r people=%r meter=%r" % (
-        cfg.get('voltage'), cfg.get('household_people'), cfg.get('meter_months')))
+    print("  切天津保存后 config：voltage=%r" % (cfg.get('voltage'),))
     check("切天津保存后 voltage 未被清零", cfg.get('voltage') == 'lv2',
           repr(cfg.get('voltage')))
-    check("切天津保存后 人口数 未被清零", cfg.get('household_people') == 6,
-          repr(cfg.get('household_people')))
-    check("切天津保存后 抄表周期 未被清零", cfg.get('meter_months') == 2,
-          repr(cfg.get('meter_months')))
+    check("切天津保存后已无 household_people 键",
+          'household_people' not in cfg, sorted(cfg.keys()))
+    check("切天津保存后已无 meter_months 键",
+          'meter_months' not in cfg, sorted(cfg.keys()))
 except Exception as e:
     check("解析后端配置", False, "%s / %s" % (e, str(raw)[:120]))
 # 切回四川
@@ -226,8 +222,8 @@ goto_region(c, 'sichuan')
 s = snap(c)
 print("  切回四川：电压=%s 表格=%s" % (
     (s.get('voltage') or {}).get('value'), peaks_of(s)))
-check("切回四川档位恢复 490/690",
-      '0–490' in ' '.join(s.get('rows') or []), str(s.get('rows')))
+check("切回四川档位为 180/280",
+      '0–180' in ' '.join(s.get('rows') or []), str(s.get('rows')))
 check("切回四川电压恢复 lv2",
       (s.get('voltage') or {}).get('value') == 'lv2',
       str((s.get('voltage') or {}).get('value')))

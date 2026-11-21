@@ -3868,13 +3868,23 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     ['堆叠条高度 12px（CSS 层对齐 fnmonitor）',
       /\.stack \{[^}]*height: 12px/.test(css54)],
 
-    /* ---- ⑦ 版本号（随当前版本递增；v1.1.59 起为 1.1.59）---- */
-    ['manifest 版本 1.1.58', /version\s+= 1\.1\.59/.test(man54)],
-    ['index.cgi 版本 1.1.58', /APP_VERSION="1\.1\.59"/.test(cgi54)],
-    ['index.html 版本 1.1.58', /id="verPill"[^>]*>v1\.1\.59</.test(html54)],
-    ['app.js 版本 1.1.58',
-      /var APP_VERSION = '1\.1\.59';/.test(
+    /* ---- ⑦ 版本号（版本无关：四处格式合法且一致，不写死具体号）---- */
+    ['manifest 版本号格式合法', /version\s+= \d+\.\d+\.\d+/.test(man54)],
+    ['index.cgi 版本号格式合法', /APP_VERSION="\d+\.\d+\.\d+"/.test(cgi54)],
+    ['index.html 版本号格式合法', /id="verPill"[^>]*>v\d+\.\d+\.\d+</.test(html54)],
+    ['app.js 版本号格式合法',
+      /var APP_VERSION = '\d+\.\d+\.\d+'/.test(
         fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'js', 'app.js'), 'utf8'))],
+    ['四处版本号彼此一致', (function () {
+      const pick = (re, t) => { const m = t.match(re); return m ? m[1] : null; };
+      const vMan = pick(/version\s+= (\d+\.\d+\.\d+)/, man54);
+      const vCgi = pick(/APP_VERSION="(\d+\.\d+\.\d+)"/, cgi54);
+      const vHtml = pick(/id="verPill"[^>]*>v(\d+\.\d+\.\d+)</, html54);
+      const vApp = pick(/var APP_VERSION = '(\d+\.\d+\.\d+)'/,
+        fs.readFileSync(path.join(__dirname, '..', 'app', 'ui', 'static', 'js', 'app.js'), 'utf8'));
+      return !!(vMan && vCgi && vHtml && vApp
+        && vMan === vCgi && vCgi === vHtml && vHtml === vApp);
+    })()],
   ];
 
   rules54.forEach(([label, ok]) => {
@@ -3995,8 +4005,15 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       /remain_secs = max\(0\.0, \(end_dt - now_dt\)\.total_seconds\(\)\)/.test(hist55)],
     ['month_proj_remain_days 改为小数天（精确剩余）',
       /month_proj_remain_days.*remain_secs \/ 86400\.0/.test(hist55)],
-    ['month_proj_yuan = month_proj_kwh × eff（未改）',
-      /month_proj_yuan.*month_proj_kwh.*eff/.test(hist55)],
+    /* ⚠️ v1.1.62：month_proj_yuan 不再用 eff（均价）倒推，
+       改用 proj_rate（预计电费单价，默认成都最低档 0.5224）。
+       ⚠️ 注意：实际代码里这两行是**跨行**的，正则要用 [\s\S] 匹配。 */
+    ['month_proj_yuan = month_proj_kwh × proj_rate（v1.1.62 不再用 eff 倒推）',
+      /month_proj_yuan[\s\S]{0,80}month_proj_kwh[\s\S]{0,40}proj_rate/.test(hist55)],
+    ['month_proj_yuan 不再用 eff 倒推',
+      /month_proj_yuan[\s\S]{0,80}month_proj_kwh[\s\S]{0,40}\* eff/.test(hist55) === false],
+    ['history_collect 输出 proj_rate_yuan_per_kwh',
+      /proj_rate_yuan_per_kwh/.test(hist55)],
 
     /* ---- ③ 电费口径统一 ----
        ⚠️ v1.1.56：标题栏徽标与摘要行已按用户要求删除，
@@ -4138,9 +4155,9 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       /\.stat-cell \.sub-rate \{/.test(css56)],
     ['CSS 有 .sub-rate .rate-lbl 标签样式',
       /\.stat-cell \.sub-rate \.rate-lbl \{/.test(css56)],
-    /* ---- ④ 版本号（v1.1.59 起）---- */
-    ['manifest 版本 1.1.58',
-      /version\s+= 1\.1\.59/.test(
+    /* ---- ④ 版本号（版本无关：格式合法，不写死具体号）---- */
+    ['manifest 版本号格式合法',
+      /version\s+= \d+\.\d+\.\d+/.test(
         fs.readFileSync(path.join(__dirname, '..', 'manifest'), 'utf8'))],
   ];
 
@@ -4272,13 +4289,17 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       /"active_tiers"/.test(tar)],
     ['后端 describe 返回季节状态',
       /"is_summer_tier"/.test(tar) && /"is_wet_season"/.test(tar)],
-    /* ---- ⑥ v1.1.59：生效档位必须反映抄表周期/人口加成/结转 ---- */
+    /* ---- ⑥ v1.1.62：生效档位只反映跨月结转（人口/抄表已移除） ---- */
     ['后端有 effective_tier_limits（生效档位计算）',
       /def effective_tier_limits/.test(tar)],
     ['后端 effective_tier_limits 用了 _effective_caps',
-      /_effective_caps\(tiers, carry1, carry2, mp_extra\)/.test(tar)],
-    ['后端 describe 返回 multi_person_extra',
-      /"multi_person_extra"/.test(tar)],
+      /_effective_caps\(tiers, carry1, carry2\)/.test(tar)],
+    ['后端不再返回 multi_person_extra',
+      !/"multi_person_extra"/.test(tar)],
+    ['后端不再有 supports_multi_person 开关',
+      !/supports_multi_person/.test(tar)],
+    ['后端不再有 supports_meter_cycle 开关',
+      !/supports_meter_cycle/.test(tar)],
     ['后端 profiles 每项带 effective_tiers',
       /"effective_tiers": eff_limits/.test(tar)],
     ['前端切地区用 effective_tiers（不再用原始档位）',
@@ -4290,14 +4311,23 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       /lvList\[i\]\.peak_rates/.test(src) || /lvList\[li\]\.peak_rates/.test(src)],
     ['前端 tariffTableHtml 按 active.voltage 取峰价',
       /active\.voltage/.test(src)],
-    /* ---- ⑤ 版本号 ---- */
-    ['manifest 版本 1.1.58', /version\s+= 1\.1\.59/.test(man)],
-    ['index.cgi 版本 1.1.58',
-      /APP_VERSION="1\.1\.59"/.test(
+    /* ---- ⑤ 版本号（版本无关：格式合法且彼此一致）---- */
+    ['manifest 版本号格式合法', /version\s+= \d+\.\d+\.\d+/.test(man)],
+    ['index.cgi 版本号格式合法',
+      /APP_VERSION="\d+\.\d+\.\d+"/.test(
         fs.readFileSync(path.join(UI, 'index.cgi'), 'utf8'))],
-    ['app.js 版本 1.1.58',
-      /var APP_VERSION = '1\.1\.59'/.test(
+    ['app.js 版本号格式合法',
+      /var APP_VERSION = '\d+\.\d+\.\d+'/.test(
         fs.readFileSync(path.join(UI, 'static', 'js', 'app.js'), 'utf8'))],
+    ['三处版本号彼此一致', (function () {
+      const pick = (re, t) => { const m = t.match(re); return m ? m[1] : null; };
+      const vMan = pick(/version\s+= (\d+\.\d+\.\d+)/, man);
+      const vCgi = pick(/APP_VERSION="(\d+\.\d+\.\d+)"/,
+        fs.readFileSync(path.join(UI, 'index.cgi'), 'utf8'));
+      const vApp = pick(/var APP_VERSION = '(\d+\.\d+\.\d+)'/,
+        fs.readFileSync(path.join(UI, 'static', 'js', 'app.js'), 'utf8'));
+      return !!(vMan && vCgi && vApp && vMan === vCgi && vCgi === vApp);
+    })()],
   ];
 
   rules.forEach(([label, ok]) => {

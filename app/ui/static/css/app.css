@@ -4609,6 +4609,40 @@ html.mon-scroll-lock body {
   background: #BA7517;
 }
 
+/* ⚠️ v1.1.62：判档依据说明行（「本月用电」格内）
+   老板的原话：「我没有输入电量，你怎么知道是按那个阶段进行计费呢？」
+   → 把判档依据直接写出来：FnStyle 按**本机自测的月总电量**判档。
+   做成一枚淡色胶囊，与其他 .sub 行区分开，一眼可辨。 */
+.stat-cell .sub-tier {
+  margin-top: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  font-size: .69rem;
+}
+
+/* ⚠️ v1.1.62：预计电费单价说明行（「本月预计电费」格内）
+   标明这个数字是「预计电量 × 该单价」估出来的，不是精确账单。 */
+.stat-cell .sub-proj-rate {
+  margin-top: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  font-size: .69rem;
+}
+
 /* ⚠️ v1.1.57：电价设置面板（能耗详情抽屉） */
 .tariff-box {
   display: flex;

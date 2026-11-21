@@ -42,6 +42,11 @@ RANGE_SECONDS = {
 # 采样间隔（秒）。与 fnmonitor 的 history_interval 一致。
 HISTORY_INTERVAL = 60
 
+# 「本月预计电费」的默认估算单价（元/kWh）
+# ⚠️ v1.1.62：成都（四川）一户一表居民不满 1 千伏**第一档**高峰平段电价。
+#    实际取值从电价配置 proj_rate 读（用户可改），这里只是兜底常量。
+DEFAULT_PROJ_RATE = 0.5224
+
 
 def _data_dir():
     """数据目录（与 monitor_collect 的 _storage_data_dir 同一套解析规则）。"""
@@ -518,11 +523,9 @@ def energy_stats(rate_yuan_per_kwh=0.6, uptime_seconds=None):
         import power_tariff as pt
         tcfg = pt.load_config()
         if tcfg.get("enabled"):
-            # ⚠️ v1.1.59：抄表周期为两个月时，档位门槛 ×2，
-            #   用电窗口也必须同步取**双月**（口径自洽），否则低估电费。
-            tprof = pt.effective_profile(tcfg.get("region"), tcfg)
-            bill_months = pt._meter_months_of(tcfg, tprof)
-            split = split_energy_by_period(tcfg, months=bill_months)
+            # ⚠️ v1.1.62：抄表周期配置项已删除（自动抄表时代不适用），
+            #   计费窗口固定按**当月**统计。
+            split = split_energy_by_period(tcfg, months=1)
             tariff = pt.compute_bill(split.get("flat", 0.0), split.get("valley", 0.0), tcfg)
     except Exception:
         tariff = None
@@ -575,6 +578,10 @@ def energy_stats(rate_yuan_per_kwh=0.6, uptime_seconds=None):
         result["flat_yuan"] = round(float(tariff.get("flat_yuan") or 0.0), 4)
         result["tier_kwh"] = tariff.get("tier_kwh")
         result["tier_rates"] = tariff.get("tier_rates")
+        # ⚠️ v1.1.62：当前判档结果 —— 界面据此显示「判档依据」
+        #   （判档靠本机自测的月总电量，不是用户输入的数）
+        result["current_tier"] = tariff.get("current_tier")
+        result["tier_limits"] = tariff.get("tier_limits")
         result["tariff_detail"] = tariff.get("detail")
         result["valley_label"] = tariff.get("valley_label")
         result["tariff_carry_in"] = tariff.get("carry_in")
@@ -582,7 +589,6 @@ def energy_stats(rate_yuan_per_kwh=0.6, uptime_seconds=None):
         result["bill_months"] = int(bill_months or 1)
         result["tariff_voltage"] = tariff.get("voltage")
         result["tariff_voltage_name"] = tariff.get("voltage_name")
-        result["tariff_multi_person_extra"] = tariff.get("multi_person_extra")
         # 本月用电量写进阶梯台账（供下月结转）
         try:
             update_tier_ledger(split.get("flat", 0.0), split.get("valley", 0.0))
@@ -644,10 +650,27 @@ def energy_stats(rate_yuan_per_kwh=0.6, uptime_seconds=None):
         else:
             eff = rate
         result["eff_rate_yuan_per_kwh"] = round(eff, 4)
+        # ⚠️ v1.1.62：「本月预计电费」不再用**均价倒推**。
+        #   旧算法：预计电量 × 本月均价（均价 = 已发生电费 / 已发生电量）。
+        #   问题：这个乘积隐含假设「剩余电量的电价结构与已用部分完全相同」，
+        #   一旦预计电量跨过档位门槛就完全不准，且数字不会随档位跳变。
+        #   老板决定：**不按阶梯算、不区分地区**，统一用成都最低档
+        #   （一户一表居民不满1千伏第一档高峰平段 0.5224 元/kWh），
+        #   并提供手动调整的能力。
+        #   → 这里取配置里的 proj_rate；未启用电价模型时退回默认价。
+        proj_rate = DEFAULT_PROJ_RATE
+        try:
+            import power_tariff as _pt
+            proj_rate = float(_pt.load_config().get("proj_rate")
+                              or DEFAULT_PROJ_RATE)
+        except Exception:
+            pass
+        result["proj_rate_yuan_per_kwh"] = round(proj_rate, 4)
         if result["month_proj_kwh"] is not None:
-            result["month_proj_yuan"] = round(result["month_proj_kwh"] * eff, 2)
+            result["month_proj_yuan"] = round(
+                result["month_proj_kwh"] * proj_rate, 2)
         if result["year_proj_kwh"] is not None:
-            result["year_proj_yuan"] = round(result["year_proj_kwh"] * eff, 2)
+            result["year_proj_yuan"] = round(result["year_proj_kwh"] * proj_rate, 2)
 
     # ---- 阶梯模式：补上电费构成明细，供前端展示 ----
     if tariff is not None:

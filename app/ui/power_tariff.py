@@ -113,12 +113,6 @@ PROFILES = {
         ],
         # 默认电压等级
         "default_voltage": "lv1",
-        # ⚠️ v1.1.59：地方政策开关。
-        #   「一户多人口」（川发改价格〔2024〕668号）与「两个月抄表周期」
-        #   （川发改价格〔2012〕560号）是**四川**的地方性文件，
-        #   天津/合表/固定单价不适用 —— 不能只按 has_tiers 判断。
-        "supports_multi_person": True,
-        "supports_meter_cycle": True,
     },
     "sichuan_shared": {
         "name": "四川合表居民（多户共用计量表）",
@@ -148,9 +142,6 @@ PROFILES = {
              "peak_rates": [0.5364, 0.5364, 0.5364]},
         ],
         "default_voltage": "lv1",
-        # 合表居民不执行阶梯 → 一户多人口 / 抄表周期均不适用
-        "supports_multi_person": False,
-        "supports_meter_cycle": False,
     },
     "tianjin": {
         "name": "天津市居民",
@@ -171,11 +162,6 @@ PROFILES = {
         # 执行阶梯电价（按年周期）
         "has_tiers": True,
         "carry_over_since": None,
-        # ⚠️ v1.1.59：天津**不适用**四川的「一户多人口」与「两个月抄表周期」
-        #    地方政策（川发改价格〔2024〕668号 / 〔2012〕560号），
-        #    否则会凭空多出 100 度阶梯电量、档位门槛翻倍。
-        "supports_multi_person": False,
-        "supports_meter_cycle": False,
     },
     "flat": {
         "name": "固定单价（不分时不分阶梯）",
@@ -195,9 +181,6 @@ PROFILES = {
         #    前端据此把整张档位价目表隐藏掉（否则会显示「第1档 0–null」）。
         "has_tiers": False,
         "carry_over_since": None,
-        # 固定单价无阶梯概念 → 无地方政策加成
-        "supports_multi_person": False,
-        "supports_meter_cycle": False,
     },
 }
 
@@ -209,7 +192,27 @@ DEFAULT_REGION = "sichuan"
 DEFAULT_FIXED_RATE = 0.6
 
 # ---------------------------------------------------------------------------
-# 「一户多人口」阶梯电量加成（v1.1.59）
+# 「预计电费单价」默认值（v1.1.62）
+#
+# 用途：「本月预计电费」格子的估算单价。
+# ⚠️ 老板决定：**不按阶梯算、不区分地区**，统一用成都（四川）最低档
+#    的第一档峰价，再让用户按自己的实际电价手动改。
+#
+# 为什么不用均价倒推：
+#   旧算法是「预计电量 × 本月实际均价」，而均价是**已经发生的电费**除以
+#   **已发生的电量**得到的 —— 把它乘到「预计的更大电量」上，隐含假设
+#   「剩下的电量和已用的电价结构完全一样」。可一旦预计电量跨过档位门槛
+#   （比如本月已用 170 度 + 预计 30 度 = 200 度跨过 180 进入第二档），
+#   均价倒推就完全不准了，而且数字不会随档位跳变。
+#
+# 为什么默认值取成都最低档：
+#   成都一户一表居民不满 1 千伏第一档高峰平段电价 = 0.5224 元/kWh。
+#   估算是粗口径，用**偏低**的一档价可以避免把估算值抬得过高。
+# ---------------------------------------------------------------------------
+DEFAULT_PROJ_RATE = 0.5224
+
+# ---------------------------------------------------------------------------
+# ⚠️ v1.1.62：「一户多人口」阶梯电量加成 —— **已移除**
 #
 # 依据：川发改价格〔2024〕668号《关于居民阶梯电价"一户多人口"政策
 #       有关事项的通知》（2024-12-31 发布，2025-01-01 起执行）
@@ -217,35 +220,17 @@ DEFAULT_FIXED_RATE = 0.6
 #     增加100度阶梯电量基数。超出5人的家庭，阶梯电量基数按
 #     30度/人·月递增。」
 #
-# 注意：
-#   · 这是**每户每月增加**的阶梯电量基数（加到一档/二档容量上）；
-#   · 官方表注4 明确「执行居民阶梯电价'一户多人口'政策增加的阶梯
-#     电量纳入结转范围」→ 增加的部分同样参与结转；
-#   · 用户需要**主动申请**（在国网营业厅/网上办理），需提供户口簿等
-#     佐证材料 → 所以做成用户手动填「家庭人口数」的可选项。
+# 移除原因（v1.1.62，老板决定）：
+#   ① 这项政策**需要用户主动向供电企业申报**（凭户口簿/居住证，
+#      在国网营业厅或网上办理），并**自申报成功的次月起执行**，
+#      有效期原则上不超过两年 → 光在软件里填个数字**不代表生效**，
+#      填了却没申报 = 门槛凭空多出 100 度 → 电费算高；
+#   ② 自动抄表时代，用户根本无法确认自己是否已申报成功；
+#   ③ 保留两个选项框反而让用户误以为「填了就生效」。
+#
+# 所以这里**彻底删掉**该输入项与相关加成逻辑 —— 需要加成的用户
+# 直接把自家档位门槛按供电企业批件改到「季节参数」里更可控。
 # ---------------------------------------------------------------------------
-
-# 满 5 人可增加的基础额度（度/月）
-MULTI_PERSON_BASE = 100.0
-# 超出 5 人后每人的增量额度（度/人·月）
-MULTI_PERSON_PER_HEAD = 30.0
-# 享受加成的起始人口数
-MULTI_PERSON_MIN_PEOPLE = 5
-
-
-def multi_person_extra(people):
-    """计算「一户多人口」增加的阶梯电量基数（度/月）。
-
-    满 5 人 → +100 度；每超出 1 人 → 再 +30 度。
-    不足 5 人 → 0（政策要求满 5 人且需申请）。
-    """
-    try:
-        n = int(people)
-    except Exception:
-        return 0.0
-    if n < MULTI_PERSON_MIN_PEOPLE:
-        return 0.0
-    return MULTI_PERSON_BASE + (n - MULTI_PERSON_MIN_PEOPLE) * MULTI_PERSON_PER_HEAD
 
 # ---------------------------------------------------------------------------
 # 可被用户覆盖的季节参数
@@ -400,10 +385,10 @@ def default_config():
         "rate_override": None,   # 用户手工指定的单一单价（覆盖一切）
         # 电压等级（不满1kV / 1-10kV / 35-110kV），见各 profile 的 voltage_levels
         "voltage": "",
-        # 「一户多人口」：家庭人口数（0 = 不适用）
-        "household_people": 0,
-        # 抄表周期（月）：1 = 每月抄表；2 = 两个月抄一次（档位门槛 ×2）
-        "meter_months": 1,
+        # 「本月预计电费」的估算单价（元/kWh）
+        # ⚠️ v1.1.62：不按阶梯算、不区分地区，默认取成都最低档一档价
+        #    （0.5224），用户可按自己的实际电价改。
+        "proj_rate": DEFAULT_PROJ_RATE,
         # 各地区的季节参数覆盖（丰枯水期 / 夏季档位），见 OVERRIDABLE_FIELDS
         "overrides": {},
         "updated": 0,
@@ -478,38 +463,31 @@ def save_config(cfg):
         # → 保留原值（切回有 levels 的地区时还会用到），不删。
         cfg["voltage"] = cfg.get("voltage") or old_voltage or ""
 
-    # 「一户多人口」家庭人口数（v1.1.59）
-    # 0 = 不适用；1-4 = 人数不足 5（无加成）；>=5 → 有加成
-    # ⚠️ v1.1.61 修复（真实缺陷）：前端在**不支持该政策的地区**
-    #    （天津 / 合表 / 固定单价）不渲染这两个输入框，
-    #    保存时也不提交 → 这里原来直接 `int(cfg.get(...) or 0)`
-    #    把用户的设置**清零**。
-    #    后果：用户在四川设了「6 人 + 两个月抄表」，
-    #    切到天津点一次保存，再切回四川 → 门槛从 490/690
-    #    掉回 180/280，电费直接算错。
-    #    现在：**前端没提交就继承旧配置**，只有提交了才校验。
-    if cfg.get("household_people") in (None, ""):
-        cfg["household_people"] = old_cfg.get("household_people") or 0
-    try:
-        people = int(cfg.get("household_people") or 0)
-    except Exception:
-        return False, "家庭人口数必须是整数"
-    if people < 0 or people > 30:
-        return False, "家庭人口数必须在 0-30 之间"
-    cfg["household_people"] = people
+    # ⚠️ v1.1.62：「一户多人口」与「抄表周期」两个配置项**已删除**。
+    #   · 「一户多人口」（川发改价格〔2024〕668号）需**主动申报**才生效，
+    #     软件里填个数字不代表供电企业已批准 → 留着反而误导；
+    #   · 「抄表周期」（川发改价格〔2012〕560号）针对两个月抄表的用户，
+    #     现在电表基本都是自动抄表（远程采集），该场景已不适用。
+    #   这里**主动丢弃**旧配置里残留的这两个键（升版后第一次保存时
+    #   自动清理干净），档位门槛回到官方基准值。
+    cfg.pop("household_people", None)
+    cfg.pop("meter_months", None)
 
-    # 抄表周期（月）（v1.1.59）
-    # 1 = 每月；2 = 两个月抄一次（档位门槛 ×2，川发改价格〔2012〕560号）
-    # ⚠️ v1.1.61：同上 —— 前端没提交时继承旧值，别把设置清零。
-    if cfg.get("meter_months") in (None, ""):
-        cfg["meter_months"] = old_cfg.get("meter_months") or 1
+    # 「本月预计电费」的估算单价（v1.1.62）
+    # 不按阶梯算、不区分地区 → 一个全局数值，用户可按自己的实际电价改。
+    # 前端没提交时继承旧配置（与电压等级同样的处理，避免被清零）。
+    if cfg.get("proj_rate") in (None, ""):
+        cfg["proj_rate"] = old_cfg.get("proj_rate")
+        if cfg["proj_rate"] in (None, ""):
+            cfg["proj_rate"] = DEFAULT_PROJ_RATE
     try:
-        mm = int(cfg.get("meter_months") or 1)
+        pr = float(cfg.get("proj_rate"))
     except Exception:
-        return False, "抄表周期必须是整数"
-    if mm not in (1, 2):
-        return False, "抄表周期只能是 1 或 2 个月"
-    cfg["meter_months"] = mm
+        return False, "预计电费单价必须是数字"
+    if pr < 0 or pr > 10:
+        return False, "预计电费单价必须在 0-10 之间"
+    cfg["proj_rate"] = round(pr, 6)
+
     cfg["updated"] = int(time.time())
     ro = cfg.get("rate_override")
     if ro is not None:
@@ -635,12 +613,14 @@ def _prev_month_key(mk):
     return "%04d-%02d" % (y, m)
 
 
-def _effective_caps(tiers, carry1=0.0, carry2=0.0, extra1=0.0):
+def _effective_caps(tiers, carry1=0.0, carry2=0.0):
     """算出**本月实际生效**的每档增量容量。
 
     ⚠️ v1.1.59 关键：结转额度必须加在**增量容量**上，
        不能加在累计上限上 —— 否则一档上限会超过二档上限，
        `_tier_caps` 里 max(0, up - prev) 会把二档增量压成 0。
+
+    ⚠️ v1.1.62：原先的 `extra1`（一户多人口加成）参数已删除。
 
     这个模型等价于「年度额度 + 月度结算」：
       年度一档额度 = 12 × 180 = 2160 度
@@ -653,8 +633,6 @@ def _effective_caps(tiers, carry1=0.0, carry2=0.0, extra1=0.0):
         caps[0] = caps[0] + max(0.0, float(carry1))
     if carry2 and len(caps) > 1:
         caps[1] = caps[1] + max(0.0, float(carry2))
-    if extra1:
-        caps[0] = caps[0] + max(0.0, float(extra1))
     return caps
 
 
@@ -709,19 +687,13 @@ def update_tier_ledger(flat_kwh, valley_kwh, ts=None):
         mk = _month_key(ts)
         if mk < since:
             return False
-        # 抄表周期为两个月时按双月结算，档位与结转口径都不再按月走
-        # → 停用台账，避免与月度模型混用产生自相矛盾的数据。
-        if _meter_months_of(cfg, prof) > 1:
-            return False
 
         lt = time.localtime(ts if ts is not None else time.time())
         month = lt.tm_mon
         tiers = (prof["tiers_summer"] if month in (prof.get("summer_months") or [])
                  else prof["tiers_other"])
         carry1, carry2 = carry_in_for(mk, prof)
-        mp_extra = (multi_person_extra(cfg.get("household_people"))
-                    if prof.get("supports_multi_person") else 0.0)
-        caps = _effective_caps(tiers, carry1, carry2, mp_extra)
+        caps = _effective_caps(tiers, carry1, carry2)
 
         # ⚠️ 档位按**月总电量**判定（官方口径，v1.1.59）
         flat = max(0.0, float(flat_kwh or 0.0))
@@ -744,16 +716,6 @@ def update_tier_ledger(flat_kwh, valley_kwh, ts=None):
         return True
     except Exception:
         return False
-
-
-def _meter_months_of(cfg, prof):
-    """取抄表周期（月）。仅在 supports_meter_cycle 的地区生效。"""
-    if not prof.get("supports_meter_cycle"):
-        return 1
-    try:
-        return max(1, int(cfg.get("meter_months") or 1))
-    except Exception:
-        return 1
 
 
 def resolve_voltage(region, cfg=None, prof=None):
@@ -875,8 +837,7 @@ def _tier_caps(tiers):
     return caps
 
 
-def _split_kwh_by_tier(flat_kwh, valley_kwh, tiers, carry1=0.0, carry2=0.0,
-                       extra1=0.0):
+def _split_kwh_by_tier(flat_kwh, valley_kwh, tiers, carry1=0.0, carry2=0.0):
     """把电量按阶梯拆成三档的电量。
 
     ⚠️ v1.1.59 修正档位判定口径（依据《四川省电网居民生活电价表》
@@ -905,9 +866,8 @@ def _split_kwh_by_tier(flat_kwh, valley_kwh, tiers, carry1=0.0, carry2=0.0,
       tiers       累计上限形式：[180, 280, None] 表示 0-180 / 181-280 / 280+
       carry1      一档结转额度（加到一档**增量容量**上）
       carry2      二档结转额度（加到二档**增量容量**上）
-      extra1      「一户多人口」增加的阶梯电量基数（加到一档**增量容量**上）
 
-    ⚠️ 结转/人口加成必须加在**增量容量**上，不能加在累计上限上 ——
+    ⚠️ 结转必须加在**增量容量**上，不能加在累计上限上 ——
        否则一档扩容后可能超过二档累计上限，破坏阶梯的单调性，
        导致二档容量被压成 0（实测 bug）。
 
@@ -921,7 +881,7 @@ def _split_kwh_by_tier(flat_kwh, valley_kwh, tiers, carry1=0.0, carry2=0.0,
     if total <= 1e-12:
         return 0.0, 0.0, 0.0, [(0.0, 0.0), (0.0, 0.0), (0.0, 0.0)]
 
-    caps = _effective_caps(tiers, carry1, carry2, extra1)
+    caps = _effective_caps(tiers, carry1, carry2)
 
     # ① 按**总电量**切三档
     out = [0.0, 0.0, 0.0]
@@ -1072,8 +1032,6 @@ def compute_bill(flat_kwh, valley_kwh, cfg=None, ts=None):
             "carry_in": 0.0,
             "voltage": voltage,
             "voltage_name": voltage_name,
-            "multi_person_extra": 0.0,
-            "meter_months": 1,
         }
 
     tiers = prof["tiers_summer"] if month in (prof.get("summer_months") or []) \
@@ -1099,31 +1057,14 @@ def compute_bill(flat_kwh, valley_kwh, cfg=None, ts=None):
     carry1, carry2 = carry_in_for(mk, prof)
     carry = carry1 + carry2
 
-    # 「一户多人口」增加的阶梯电量基数（v1.1.59）
-    # 依据 川发改价格〔2024〕668号：满 5 人 +100 度，超出每人再 +30 度。
-    # 官方表注4：增加的阶梯电量**纳入结转范围** → 与结转同样加在容量上。
-    # ⚠️ 这是**四川**地方政策 —— 只有 supports_multi_person 的地区才生效，
-    #    天津/合表/固定单价不能套用（否则凭空多出 100 度）。
-    people = cfg.get("household_people")
-    if prof.get("supports_multi_person"):
-        mp_extra = multi_person_extra(people)
-    else:
-        mp_extra = 0.0
+    # ⚠️ v1.1.62：「一户多人口」加成与「抄表周期 ×2」**已移除**
+    #   （见文件上方说明：前者需主动申报才生效，后者是两个月抄表场景，
+    #    自动抄表时代已不适用）。档位门槛只受**跨月结转**影响。
 
-    # 抄表周期（v1.1.59）
-    # 依据 川发改价格〔2012〕560号（五）：「抄表周期为两个月的居民用户，
-    # 其分档电量按同档次月用电量的 2 倍确定」
-    # → 抄表周期两个月时，一档/二档的档位门槛 ×2（本月按双月结算）。
-    # ⚠️ 同上，这是四川地方政策 → 只在 supports_meter_cycle 的地区生效。
-    meter_months = _meter_months_of(cfg, prof)
-    if meter_months > 1:
-        tiers = [None if t is None else float(t) * meter_months for t in tiers]
-
-    # 扩容后的阶梯：结转额度 + 人口加成 叠加到对应档位的**增量容量**上
+    # 扩容后的阶梯：结转额度叠加到对应档位的**增量容量**上
     # ⚠️ v1.1.59：档位门槛按**月总电量**判定（官方表原文口径）。
     t1, t2, t3, split = _split_kwh_by_tier(
-        flat_kwh, valley_kwh, tiers, carry1, carry2,
-        mp_extra if mp_extra else 0.0)
+        flat_kwh, valley_kwh, tiers, carry1, carry2)
     tier_kwh = [t1, t2, t3]
 
     # 逐档计价（每档内的平段/谷段按电量占比分摊到该档单价）
@@ -1151,6 +1092,23 @@ def compute_bill(flat_kwh, valley_kwh, cfg=None, ts=None):
     eff = (yuan / total) if total > 0 else 0.0
     vs = int(cfg.get("valley_start", 23)) % 24
     ve = int(cfg.get("valley_end", 7)) % 24
+
+    # ⚠️ v1.1.62：当前落在第几档 + 该档区间。
+    #   老板的原话：「我没有输入电量，你怎么知道是按那个阶段进行计费呢？」
+    #   → 判档依据是**本机自测的月总电量**（不是用户输入的数），
+    #     所以必须让用户在界面上直接看到「本月 X 度 → 第 N 档」。
+    #   档位归属按**月总电量**（峰+平+谷）判定，与官方口径一致。
+    cur_tier = 0
+    for i, k in enumerate(tier_kwh):
+        if k > 1e-9:
+            cur_tier = i + 1
+    tier_limits = None
+    try:
+        lim, _c = effective_tier_limits(region, cfg, ts)
+        tier_limits = lim
+    except Exception:
+        tier_limits = None
+
     return {
         "yuan": round(yuan, 4),
         "flat_kwh": round(flat_kwh, 4),
@@ -1159,6 +1117,9 @@ def compute_bill(flat_kwh, valley_kwh, cfg=None, ts=None):
         "valley_yuan": round(valley_yuan, 4),
         "tier_kwh": [round(v, 4) for v in tier_kwh],
         "tier_rates": peak_rates,
+        # ⚠️ v1.1.62：当前判档结果（供界面显示判档依据）
+        "current_tier": cur_tier,
+        "tier_limits": tier_limits,
         "eff_rate": round(eff, 4),
         "mode": "tiered",
         "region": region,
@@ -1170,10 +1131,6 @@ def compute_bill(flat_kwh, valley_kwh, cfg=None, ts=None):
         # 电压等级（v1.1.59）
         "voltage": voltage,
         "voltage_name": voltage_name,
-        # 「一户多人口」增加的阶梯电量基数（度/月）
-        "multi_person_extra": round(mp_extra, 2),
-        # 抄表周期（月）
-        "meter_months": meter_months,
     }
 
 
@@ -1183,11 +1140,11 @@ def profile_list(cfg=None):
     out = []
     for key in PROFILES:
         p = effective_profile(key, cfg)
-        # ⚠️ v1.1.59：给出该地区在**当前全局配置**（抄表周期 / 家庭人口）
-        #    下的生效档位，前端切换地区时直接用这个，
-        #    避免前端自己复制一份 ×2 / 加成 的算法（迟早会漂移）。
+        # ⚠️ v1.1.59：给出该地区在**当前全局配置**下的生效档位，
+        #    前端切换地区时直接用这个，
+        #    避免前端自己复制一份加成/结转算法（迟早会漂移）。
         try:
-            eff_limits, _, _ = effective_tier_limits(key, cfg)
+            eff_limits, _ = effective_tier_limits(key, cfg)
         except Exception:
             eff_limits = None
         # ⚠️ v1.1.60：推导明细也按地区给一份 ——
@@ -1232,10 +1189,6 @@ def profile_list(cfg=None):
             # 电压等级（v1.1.59）
             "voltage_levels": p.get("voltage_levels") or [],
             "default_voltage": p.get("default_voltage") or "",
-            # 地方政策开关（v1.1.59）：前端据此决定是否显示
-            # 「家庭人口」「抄表周期」两个输入项
-            "supports_multi_person": bool(p.get("supports_multi_person")),
-            "supports_meter_cycle": bool(p.get("supports_meter_cycle")),
         })
     return out
 
@@ -1243,19 +1196,14 @@ def profile_list(cfg=None):
 def tier_derivation(region=None, cfg=None, ts=None):
     """算出本月生效档位的**推导明细**（前端解释行用）。
 
-    ⚠️ v1.1.60：价目表上方的表格显示的是「本月实际生效门槛」，
-       但它由好几层规则叠加而成（抄表周期倍数、一户多人口加成、
-       跨月结转），用户看到 490/690 根本不知道是怎么来的。
-       这里把**推导链**显式算出来，让前端能渲染一行解释。
+    ⚠️ v1.1.62：推导链只剩两环 —— **基准档位 + 跨月结转**。
+       「抄表周期倍数」与「一户多人口加成」两项已移除（见文件上方说明）。
 
     返回 dict：
-      base_tiers   本月对应的**基准**档位（未乘倍数、未加加成）
+      base_tiers   本月对应的**基准**档位
       base_label   基准档位名称（夏季档位 / 其他月档位）
-      meter_months 抄表周期（月），1 表示不放大
-      mp_extra     一户多人口加出的一档容量（度）
       carry1/2     跨月结转额度（度）
-      base_after_cycle 乘完抄表周期后的档位
-      limits       最终生效的累计上限 [490, 690, None]
+      limits       最终生效的累计上限 [180, 280, None]
     """
     cfg = cfg if cfg is not None else load_config()
     region = region or cfg.get("region") or DEFAULT_REGION
@@ -1266,23 +1214,14 @@ def tier_derivation(region=None, cfg=None, ts=None):
     base = list(prof["tiers_summer"] if is_summer else prof["tiers_other"])
     base_label = "夏季档位" if is_summer else "其他月档位"
 
-    mm = _meter_months_of(cfg, prof)
-    after_cycle = ([None if t is None else float(t) * mm for t in base]
-                   if mm > 1 else [None if t is None else float(t) for t in base])
-
     carry1, carry2 = carry_in_for(_month_key(ts), prof)
-    mp_extra = (multi_person_extra(cfg.get("household_people"))
-                if prof.get("supports_multi_person") else 0.0)
-    limits, _caps, _extra = effective_tier_limits(region, cfg, ts)
+    limits, _caps = effective_tier_limits(region, cfg, ts)
     return {
         "base_tiers": base,
         "base_label": base_label,
         "is_summer": is_summer,
-        "meter_months": mm,
-        "mp_extra": round(float(mp_extra or 0.0), 2),
         "carry1": round(float(carry1 or 0.0), 2),
         "carry2": round(float(carry2 or 0.0), 2),
-        "base_after_cycle": after_cycle,
         "limits": limits,
     }
 
@@ -1299,10 +1238,9 @@ def effective_tier_limits(region=None, cfg=None, ts=None):
        结果：用户看到的价目表（0–180 / 181–280）和**实际计费口径**
        （0–360 / 361–560 …）对不上 → 按表估电费会算错。
 
-    返回 (tiers, caps, extra)：
+    返回 (tiers, caps)：
       tiers  累计上限形式 [180, 280, None]（与内置表同构）
       caps   每档**增量容量** [180, 100, inf]
-      extra  本月因人口/结转额外扩出的一档容量
     """
     cfg = cfg if cfg is not None else load_config()
     region = region or cfg.get("region") or DEFAULT_REGION
@@ -1312,16 +1250,11 @@ def effective_tier_limits(region=None, cfg=None, ts=None):
     tiers = list(prof["tiers_summer"] if month in (prof.get("summer_months") or [])
                  else prof["tiers_other"])
 
-    # 抄表周期 2 个月 → 档位门槛 ×2
-    mm = _meter_months_of(cfg, prof)
-    if mm > 1:
-        tiers = [None if t is None else float(t) * mm for t in tiers]
-
-    # 结转额度（读上月台账）+ 一户多人口加成
+    # 结转额度（读上月台账）
+    # ⚠️ v1.1.62：抄表周期 ×2 与一户多人口加成已移除，
+    #    现在门槛只受**跨月结转**影响。
     carry1, carry2 = carry_in_for(_month_key(ts), prof)
-    mp_extra = (multi_person_extra(cfg.get("household_people"))
-                if prof.get("supports_multi_person") else 0.0)
-    caps = _effective_caps(tiers, carry1, carry2, mp_extra)
+    caps = _effective_caps(tiers, carry1, carry2)
 
     # 把「增量容量」还原成「累计上限」，供前端显示区间
     limits = []
@@ -1335,7 +1268,7 @@ def effective_tier_limits(region=None, cfg=None, ts=None):
         limits.append(prev)
     while len(limits) < 3:
         limits.append(None)
-    return limits, caps, mp_extra
+    return limits, caps
 
 
 def describe():
@@ -1354,16 +1287,13 @@ def describe():
     #    下拉显示 lv2、表格却是 lv1 的峰价。
     voltage, voltage_name, cur_peak = resolve_voltage(region, cfg, prof)
     # ⚠️ v1.1.59 修复：active_tiers 必须是**本月实际生效**的门槛
-    #    （含抄表周期 ×2 / 一户多人口加成 / 跨月结转），
-    #    否则前端价目表与真实计费口径对不上。
+    #    （含跨月结转），否则前端价目表与真实计费口径对不上。
     try:
-        active_limits, active_caps, mp_extra_now = effective_tier_limits(
-            region, cfg)
+        active_limits, active_caps = effective_tier_limits(region, cfg)
     except Exception:
         active_limits = (prof["tiers_summer"] if is_summer
                          else prof["tiers_other"])
         active_caps = []
-        mp_extra_now = 0.0
     # ⚠️ v1.1.59 修复（致命）：三档容量是 float("inf")，
     #    而 **Infinity 不是合法 JSON**（json.dumps 默认写成 Infinity，
     #    浏览器 JSON.parse 会直接抛 SyntaxError）→
@@ -1388,10 +1318,8 @@ def describe():
                                 else prof["valley_rates_dry"]),
         "is_summer_tier": is_summer,
         "is_wet_season": is_wet,
-        # 推导明细：基准档位 → ×抄表周期 → +人口/结转 → 生效门槛
+        # 推导明细：基准档位 → +跨月结转 → 生效门槛
         "tier_derivation": derivation,
-        # 本月因「一户多人口」额外扩出的一档容量（度/月）
-        "multi_person_extra": round(float(mp_extra_now or 0.0), 2),
         # 用户对当前地区做的季节参数覆盖（前端「季节参数」区块回填用）
         "overrides": (cfg.get("overrides") or {}).get(region) or {},
         "profile": {
@@ -1415,9 +1343,6 @@ def describe():
             "voltage_levels": prof.get("voltage_levels") or [],
             "voltage": voltage,
             "voltage_name": voltage_name,
-            # 地方政策开关（v1.1.59）
-            "supports_multi_person": bool(prof.get("supports_multi_person")),
-            "supports_meter_cycle": bool(prof.get("supports_meter_cycle")),
         },
         "profiles": profile_list(cfg),
     }

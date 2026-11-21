@@ -26,10 +26,9 @@
   ③ 档位按**月总电量**判定（官方账单算例）
   ④ 低谷价不受电压等级影响
   ⑤ 合表居民单一电价
-  ⑥ 「一户多人口」阶梯电量加成（100/130/160 度）
-  ⑦ 抄表周期 2 个月 → 档位门槛 ×2
-  ⑧ 结转：读上月台账 / 年末清零 / 台账写入口径
-  ⑨ 地方政策不外溢到天津（supports_* 开关）
+  ⑥ 结转：读上月台账 / 年末清零 / 台账写入口径
+  ⑦ v1.1.62：「一户多人口」与「抄表周期」两个配置项**已删除**
+     → 档位门槛只剩「基准档位 + 跨月结转」两环
 """
 
 import os
@@ -193,35 +192,30 @@ check('合表 has_time_of_use=False',
       bb.get('has_time_of_use') is False, bb.get('has_time_of_use'))
 
 # ---------------------------------------------------------------------------
-print('\n=== 6. 「一户多人口」阶梯电量加成（川发改价格〔2024〕668号） ===')
-check('4 人 → 无加成', approx(pt.multi_person_extra(4), 0.0), pt.multi_person_extra(4))
-check('5 人 → +100 度', approx(pt.multi_person_extra(5), 100.0), pt.multi_person_extra(5))
-check('6 人 → +130 度', approx(pt.multi_person_extra(6), 130.0), pt.multi_person_extra(6))
-check('7 人 → +160 度', approx(pt.multi_person_extra(7), 160.0), pt.multi_person_extra(7))
-check('0 人（不适用）→ 0', approx(pt.multi_person_extra(0), 0.0), pt.multi_person_extra(0))
-# 5 人 → 一档可用 180+100=280
-c = cfg_of(household_people=5)
-b = pt.compute_bill(250.0, 100.0, c, ts=ts_mon)   # 350 度
-check('5 人时一档可用 280 度（350 度 → 一档280 二档70）',
-      approx(b['tier_kwh'][0], 280.0) and approx(b['tier_kwh'][1], 70.0),
-      b['tier_kwh'])
-check('返回体带 multi_person_extra = 100',
-      approx(b.get('multi_person_extra'), 100.0), b.get('multi_person_extra'))
-
-# ---------------------------------------------------------------------------
-print('\n=== 7. 抄表周期 2 个月 → 档位门槛 ×2（川发改价格〔2012〕560号五） ===')
-c = cfg_of(meter_months=2)
+print('\n=== 6. v1.1.62：「一户多人口」「抄表周期」已移除 ===')
+check('multi_person_extra 函数已删除',
+      not hasattr(pt, 'multi_person_extra'))
+check('_meter_months_of 函数已删除',
+      not hasattr(pt, '_meter_months_of'))
+check('PROFILES 不再有 supports_multi_person 开关',
+      not any('supports_multi_person' in p for p in pt.PROFILES.values()))
+check('PROFILES 不再有 supports_meter_cycle 开关',
+      not any('supports_meter_cycle' in p for p in pt.PROFILES.values()))
+# 旧配置里残留的键不再影响门槛
+c = cfg_of(household_people=5, meter_months=2)
 b = pt.compute_bill(400.0, 0.0, c, ts=ts_mon)
-check('双月周期一档门槛 360（400 度 → 一档360 二档40）',
-      approx(b['tier_kwh'][0], 360.0) and approx(b['tier_kwh'][1], 40.0),
-      b['tier_kwh'])
-check('返回体带 meter_months = 2',
-      b.get('meter_months') == 2, b.get('meter_months'))
-c = cfg_of(meter_months=1)
-b = pt.compute_bill(400.0, 0.0, c, ts=ts_mon)
-check('单月周期一档门槛 180（400 度 → 一档180 二档100 三档120）',
+check('残留的 household_people/meter_months 不再放大门槛'
+      '（400 度 → 一档180 二档100 三档120）',
       approx(b['tier_kwh'][0], 180.0) and approx(b['tier_kwh'][1], 100.0) and
       approx(b['tier_kwh'][2], 120.0), b['tier_kwh'])
+check('返回体不再带 multi_person_extra',
+      'multi_person_extra' not in b, sorted(b.keys()))
+check('返回体不再带 meter_months',
+      'meter_months' not in b, sorted(b.keys()))
+# 门槛回到官方基准（无结转时）
+lim, caps = pt.effective_tier_limits('sichuan', c, ts_mon)
+check('生效门槛回到官方基准 180/280/不限',
+      tier_list_eq(lim, [180.0, 280.0, None]), lim)
 
 # ---------------------------------------------------------------------------
 print('\n=== 8. 结转（官方注4：年内滚动、年末清零） ===')
@@ -270,26 +264,13 @@ check('台账写入幂等（重复调用结果一致）',
       approx(led2['tier2_remaining'], led['tier2_remaining']), led2)
 
 # ---------------------------------------------------------------------------
-print('\n=== 9. 地方政策不外溢（supports_* 开关） ===')
-check('四川 supports_multi_person=True',
-      pt.PROFILES['sichuan'].get('supports_multi_person') is True)
-check('天津 supports_multi_person=False',
-      pt.PROFILES['tianjin'].get('supports_multi_person') is False)
-check('天津 supports_meter_cycle=False',
-      pt.PROFILES['tianjin'].get('supports_meter_cycle') is False)
-check('合表 supports_multi_person=False',
-      pt.PROFILES['sichuan_shared'].get('supports_multi_person') is False)
-# 天津即使配了人口数也不得生效
+print('\n=== 9. 天津档位不受残留配置影响 ===')
+# 天津按**年**周期阶梯 0-220 / 221-400 / 400+ → 增量 220 / 180 / ∞
 c = cfg_of(region='tianjin', household_people=5, meter_months=2)
 b = pt.compute_bill(400.0, 0.0, c, ts=ts_mon)
-# 天津按**年**周期阶梯 0-220 / 221-400 / 400+ → 增量 220 / 180 / ∞
 check('天津配了5人/双月也不生效（仍按 0-220/221-400）',
       approx(b['tier_kwh'][0], 220.0) and approx(b['tier_kwh'][1], 180.0),
       b['tier_kwh'])
-check('天津 multi_person_extra = 0',
-      approx(b.get('multi_person_extra'), 0.0), b.get('multi_person_extra'))
-check('天津 meter_months 回落为 1',
-      b.get('meter_months') == 1, b.get('meter_months'))
 
 # ---------------------------------------------------------------------------
 print('\n=== 10. 配置保存校验 ===')
@@ -302,14 +283,16 @@ ok, msg = pt.save_config({
 check('合法配置保存成功', ok is True, msg)
 c = pt.load_config()
 check('读回 voltage = lv2', c.get('voltage') == 'lv2', c.get('voltage'))
-check('读回 household_people = 5', c.get('household_people') == 5, c.get('household_people'))
-check('读回 meter_months = 2', c.get('meter_months') == 2, c.get('meter_months'))
+check('旧配置里的 household_people 已被丢弃',
+      'household_people' not in c, c.get('household_people'))
+check('旧配置里的 meter_months 已被丢弃',
+      'meter_months' not in c, c.get('meter_months'))
 ok, msg = pt.save_config({'region': 'sichuan', 'valley_start': 23, 'valley_end': 7,
                           'household_people': 99})
-check('人口数超范围被拒绝', ok is False, msg)
+check('人口数不再校验（直接忽略）', ok is True, msg)
 ok, msg = pt.save_config({'region': 'sichuan', 'valley_start': 23, 'valley_end': 7,
                           'meter_months': 3})
-check('抄表周期非法值被拒绝', ok is False, msg)
+check('抄表周期不再校验（直接忽略）', ok is True, msg)
 ok, msg = pt.save_config({'region': 'sichuan', 'valley_start': 23, 'valley_end': 7,
                           'voltage': 'lv9'})
 c = pt.load_config()
@@ -338,10 +321,10 @@ pt.save_config(cfg_of(region='sichuan', voltage='lv2'))
 d = pt.describe()
 check('profile.voltage_levels 非空', len(d['profile'].get('voltage_levels') or []) > 0)
 check('profile.voltage 有值', bool(d['profile'].get('voltage')), d['profile'].get('voltage'))
-check('profile.supports_multi_person 有值',
-      'supports_multi_person' in d['profile'])
-check('profile.supports_meter_cycle 有值',
-      'supports_meter_cycle' in d['profile'])
+check('profile 不再有 supports_multi_person（v1.1.62 已移除）',
+      'supports_multi_person' not in d['profile'])
+check('profile 不再有 supports_meter_cycle（v1.1.62 已移除）',
+      'supports_meter_cycle' not in d['profile'])
 byid = {x['id']: x for x in d['profiles']}
 check('profiles 里 sichuan 有三个电压等级',
       len(byid['sichuan'].get('voltage_levels') or []) == 3)
@@ -360,39 +343,22 @@ check('默认（1人/每月）active_tiers = [180, 280, None]',
       tier_list_eq(d['active_tiers'], [180.0, 280.0, None]),
       d['active_tiers'])
 
-# 抄表周期 2 个月 → 门槛 ×2
+# ⚠️ v1.1.62：抄表周期 ×2 与一户多人口加成**已移除**
+#    → active_tiers 只受「基准档位 + 跨月结转」影响
 os.environ['FNSTYLE_DATA_DIR'] = tempfile.mkdtemp()
-pt.save_config(cfg_of(region='sichuan', meter_months=2))
+pt.save_config(cfg_of(region='sichuan', meter_months=2, household_people=6))
 d = pt.describe()
-check('抄表周期2个月 → active_tiers = [360, 560, None]',
-      tier_list_eq(d['active_tiers'], [360.0, 560.0, None]),
+check('残留的抄表周期/人口数不再影响 active_tiers（仍为 [180, 280, None]）',
+      tier_list_eq(d['active_tiers'], [180.0, 280.0, None]),
       d['active_tiers'])
+check('describe 不再返回 multi_person_extra',
+      'multi_person_extra' not in d, sorted(d.keys()))
 
-# 一户多人口 6 人 → 一档 +130 度（268? 不，是 180+130=310；二档累计 280+130=410）
-os.environ['FNSTYLE_DATA_DIR'] = tempfile.mkdtemp()
-pt.save_config(cfg_of(region='sichuan', household_people=6))
-d = pt.describe()
-check('6人 → 一档容量 180+130=310',
-      approx(d['active_tiers'][0], 310.0), d['active_tiers'][0])
-check('6人 → 二档累计 280+130=410',
-      approx(d['active_tiers'][1], 410.0), d['active_tiers'][1])
-check('6人 → describe.multi_person_extra = 130',
-      approx(d.get('multi_person_extra'), 130.0), d.get('multi_person_extra'))
-
-# 人口 + 抄表周期叠加：180×2 + 130 = 490
-os.environ['FNSTYLE_DATA_DIR'] = tempfile.mkdtemp()
-pt.save_config(cfg_of(region='sichuan', household_people=6, meter_months=2))
-d = pt.describe()
-check('6人 + 双月 → 一档 360+130=490',
-      approx(d['active_tiers'][0], 490.0), d['active_tiers'][0])
-check('6人 + 双月 → 二档累计 560+130=690',
-      approx(d['active_tiers'][1], 690.0), d['active_tiers'][1])
-
-# 天津不支持这两项 → active_tiers 保持原值（220/400）
+# 天津的 active_tiers 保持 220/400
 os.environ['FNSTYLE_DATA_DIR'] = tempfile.mkdtemp()
 pt.save_config(cfg_of(region='tianjin', household_people=6, meter_months=2))
 d = pt.describe()
-check('天津（不支持这两项）active_tiers 仍为 [220, 400, None]',
+check('天津 active_tiers 仍为 [220, 400, None]',
       tier_list_eq(d['active_tiers'], [220.0, 400.0, None]),
       d['active_tiers'])
 
@@ -404,9 +370,8 @@ byid = {x['id']: x for x in d['profiles']}
 check('profiles.sichuan.effective_tiers 非空',
       bool(byid['sichuan'].get('effective_tiers')),
       byid['sichuan'].get('effective_tiers'))
-# 双月 ×2 → 360；5 人 → 一档 +100 → 460（= 360+100）
-check('profiles.sichuan.effective_tiers 反映双月+5人（460/560+100）',
-      tier_list_eq(byid['sichuan']['effective_tiers'], [460.0, 660.0, None]),
+check('profiles.sichuan.effective_tiers 回到官方基准 [180, 280, None]',
+      tier_list_eq(byid['sichuan']['effective_tiers'], [180.0, 280.0, None]),
       byid['sichuan']['effective_tiers'])
 check('profiles.tianjin.effective_tiers 存在',
       'effective_tiers' in byid['tianjin'])
@@ -415,14 +380,14 @@ check('profiles.tianjin.effective_tiers 存在',
 os.environ['FNSTYLE_DATA_DIR'] = tempfile.mkdtemp()
 pt.save_config(cfg_of(region='sichuan', household_people=6, meter_months=2))
 c = pt.load_config()
-limits, caps, extra = pt.effective_tier_limits('sichuan', c)
+limits, caps = pt.effective_tier_limits('sichuan', c)
 b = pt.compute_bill(600.0, 0.0, c, ts=ts_mon)
-check('effective_tier_limits 的 caps[0] = 490',
-      approx(caps[0], 490.0), caps)
-check('compute_bill 一档电量 = 490（与 limits 口径一致）',
-      approx(b['tier_kwh'][0], 490.0), b['tier_kwh'])
-check('compute_bill 二档电量 = 110（600-490）',
-      approx(b['tier_kwh'][1], 110.0), b['tier_kwh'])
+check('effective_tier_limits 的 caps[0] = 180',
+      approx(caps[0], 180.0), caps)
+check('compute_bill 一档电量 = 180（与 limits 口径一致）',
+      approx(b['tier_kwh'][0], 180.0), b['tier_kwh'])
+check('compute_bill 二档电量 = 100（280-180）',
+      approx(b['tier_kwh'][1], 100.0), b['tier_kwh'])
 
 # ---------------------------------------------------------------------------
 print('\n=== 13. API 返回必须是**合法 JSON**（不能含 Infinity/NaN） ===')

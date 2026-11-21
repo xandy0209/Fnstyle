@@ -186,12 +186,16 @@ def main():
 
         # 三处电费同源：month_proj_yuan 必须由 month_proj_kwh 推出
         if s.get('month_proj_yuan') is not None:
-            check('本月预计电费 = 本月预计用电量 × 有效电价',
+            # ⚠️ v1.1.62：预计电费的单价改用 **proj_rate_yuan_per_kwh**
+            #   （老板决定：不按阶梯算、不区分地区，默认成都最低档
+            #     0.5224，用户可手动调整），
+            #   不再用 eff_rate_yuan_per_kwh（本月实际均价）倒推。
+            pr = s.get('proj_rate_yuan_per_kwh', 0.5224)
+            check('本月预计电费 = 本月预计用电量 × 预计电费单价',
                   abs(s['month_proj_yuan'] -
-                      s['month_proj_kwh'] * s.get('eff_rate_yuan_per_kwh', 0.6)) < 0.02,
+                      s['month_proj_kwh'] * pr) < 0.02,
                   '%.2f vs %.4f' % (s['month_proj_yuan'],
-                                    s['month_proj_kwh'] *
-                                    s.get('eff_rate_yuan_per_kwh', 0.6)))
+                                    s['month_proj_kwh'] * pr))
             check('本月预计电费 ≠ 本月已用电费（修复前两者几乎相等）',
                   abs(s['month_proj_yuan'] - s['month_yuan']) > 0.5,
                   '预计 %.2f vs 已用 %.2f' % (s['month_proj_yuan'], s['month_yuan']))
