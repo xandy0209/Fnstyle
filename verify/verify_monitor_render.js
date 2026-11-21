@@ -2101,8 +2101,23 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
       /chartsHtml\('mem'\)/.test(cmp3)],
     ['内存抽屉图表位置在堆叠条之后、进程列表之前',
       /mon-cmp-note[\s\S]{0,300}chartsHtml\('mem'\)[\s\S]{0,200}内存占用较多的进程/.test(cmp3)],
+    /* ⚠️ v1.1.65：这条断言原来锁的是**字面量**
+       `requestAnimationFrame(function () { initCharts(body); });`，
+       v1.1.65 改成「幂等守卫 + rAF/setTimeout 双路兜底」后字面量变了，
+       但**语义没变**（仍然初始化、仍然覆盖 mem 抽屉）。
+       → 改成断言新写法，并**另外**加两条语义断言：
+         ① 初始化路径覆盖所有抽屉（body 里有 [data-charts] 就初始化，不限 cpu）
+         ② 有 setTimeout 兜底（后台标签页 rAF 被冻结时图表仍能建出来）
+       （这两条正是老板本轮报的「内存抽屉趋势图没实时更新」的根因防线） */
     ['内存抽屉也初始化图表（不再只限 cpu）',
-      /requestAnimationFrame\(function \(\) \{ initCharts\(body\); \}\);/.test(cmp3)],
+      /initChartsOnce\s*=\s*function\s*\(\)\s*\{[\s\S]{0,200}initCharts\(body\)/.test(cmp3)],
+    ['图表初始化按抽屉内的 data-charts 取组（不限 cpu）',
+      /body\.querySelector\('\[data-charts\]'\)/.test(cmp3)
+        && /groupKey\s*=\s*wrap\.getAttribute\('data-charts'\)/.test(cmp3)],
+    ['图表初始化有 setTimeout 兜底（后台标签页 rAF 被冻结时仍能建出）',
+      /setTimeout\(initChartsOnce,\s*\d+\)/.test(cmp3)],
+    ['图表初始化是幂等的（rAF 与 setTimeout 只会跑一次）',
+      /if \(chartsInited\) return;/.test(cmp3)],
     ['drawCharts 按当前图表组定义绘制',
       /chartState\.defs\.forEach/.test(cmp3)],
     ['loadCharts 按当前图表组指标拉取',

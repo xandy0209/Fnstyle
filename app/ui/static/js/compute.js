@@ -1243,10 +1243,25 @@
       if (host && pc.length) setDetailCores(host, pc);
     }
     /* 抽屉里的趋势图（处理器 2 张 + 内存 1 张 + 温度 2 张 + 能耗 2 张）
-       等抽屉滑入后才有实际宽度，所以延后两帧再初始化。 */
+       等抽屉滑入后才有实际宽度，所以延后两帧再初始化。
+       ⚠️ v1.1.65：**不能只靠 requestAnimationFrame**。
+          标签页切到后台时 Chrome 会冻结 rAF（实测 document.hidden=true 时
+          2 秒内 rAF 只触发 1 次就停住，Page.bringToFront 也救不回来），
+          → 双层 rAF 回调不执行 → initCharts 永远不跑 →
+          抽屉里的趋势图**整块空白**（连 SVG 都没有）。
+          典型触发场景：用户切走标签页 → 切回来 → 打开抽屉。
+          → 加 setTimeout 兜底：rAF 不触发时由定时器初始化。 */
+    var chartsInited = false;
+    var initChartsOnce = function () {
+      if (chartsInited) return;
+      chartsInited = true;
+      initCharts(body);
+    };
     requestAnimationFrame(function () {
-      requestAnimationFrame(function () { initCharts(body); });
+      requestAnimationFrame(function () { initChartsOnce(); });
     });
+    /* 兜底：rAF 被冻结时由定时器接手（60ms ≈ 3~4 帧，滑入动画已接近完成） */
+    setTimeout(initChartsOnce, 60);
     /* 能耗抽屉的用电与电费异步回填 */
     if (kind === 'power' && window.FnStyleMonitor && window.FnStyleMonitor.loadPowerEnergy) {
       window.FnStyleMonitor.loadPowerEnergy(body);

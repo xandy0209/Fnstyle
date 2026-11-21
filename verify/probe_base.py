@@ -117,6 +117,18 @@ def connect(host="192.168.5.8", port=9222):
     c.send("Emulation.setDeviceMetricsOverride",
            {"width": 1440, "height": 1400, "deviceScaleFactor": 2,
             "mobile": False})
+    # ⚠️ v1.1.65：必须把页面置为**可见且活跃**。
+    #    CDP 连的这个 Chrome 没有可见窗口，页面默认 document.hidden=true
+    #    → Chrome 冻结 requestAnimationFrame（实测 2 秒只触发 1 次）→
+    #    依赖 rAF 初始化的图表（抽屉趋势图 / 硬盘抽屉 spark）
+    #    永远建不出来 → 探针误判成「图表没渲染」。
+    #    Page.bringToFront 对无窗口 Chrome 无效，
+    #    要用 Page.setWebLifecycleState(active) + Emulation.setFocusEmulationEnabled。
+    try:
+        c.send("Emulation.setFocusEmulationEnabled", {"enabled": True})
+        c.send("Page.setWebLifecycleState", {"state": "active"})
+    except Exception:
+        pass
     return c
 
 

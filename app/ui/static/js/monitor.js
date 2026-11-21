@@ -1038,9 +1038,21 @@
     drawerDev = dev;
     showDrawer();
     // 抽屉滑入后再画 spark：此时容器已有实际宽度，画出来的曲线才准
+    // ⚠️ v1.1.65：**不能只靠 requestAnimationFrame**。
+    //    标签页切到后台时 Chrome 冻结 rAF（实测 document.hidden=true 时
+    //    2 秒内只触发 1 次，Page.bringToFront 也救不回来）→
+    //    双层 rAF 不执行 → 硬盘抽屉的读写曲线永远空白。
+    //    → 加 setTimeout 兜底。
+    var sparkInited = false;
+    var drawSparkOnce = function () {
+      if (sparkInited) return;
+      sparkInited = true;
+      drawDrawerSpark();
+    };
     requestAnimationFrame(function () {
-      requestAnimationFrame(function () { drawDrawerSpark(); });
+      requestAnimationFrame(function () { drawSparkOnce(); });
     });
+    setTimeout(drawSparkOnce, 60);
   }
 
   /* 绘制抽屉内的读写趋势图（数据来自 diskBuf 滑动缓冲）
@@ -2619,11 +2631,18 @@
       if (!host) return;
       if (!host.querySelector('[data-pcharts="' + g.key + '"]')) {
         host.innerHTML = window.FnStyleCompute.panelChartsHtml(g.key, g.only);
+        /* ⚠️ v1.1.65：rAF 兜底 —— 标签页切后台时 Chrome 冻结 rAF，
+           双层 rAF 不执行 → 板块趋势图永远空白。 */
+        var panelInited = false;
+        var initPanelOnce = function () {
+          if (panelInited) return;
+          panelInited = true;
+          window.FnStyleCompute.initPanelCharts(host, g.key);
+        };
         requestAnimationFrame(function () {
-          requestAnimationFrame(function () {
-            window.FnStyleCompute.initPanelCharts(host, g.key);
-          });
+          requestAnimationFrame(function () { initPanelOnce(); });
         });
+        setTimeout(initPanelOnce, 60);
       } else if (window.FnStyleCompute.refreshPanelCharts) {
         window.FnStyleCompute.refreshPanelCharts(g.key);
       }
