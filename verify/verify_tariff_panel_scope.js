@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /* ===========================================================================
-   v1.1.57 回归测试：电价面板不得覆盖能耗抽屉的原有内容
+   v1.1.63 回归测试：电价面板不得覆盖能耗抽屉的原有内容
 
    ⚠️ v1.1.57 初版 bug：
       loadTariff(body) 里直接执行 box.innerHTML = tariffPanelHtml(...)，
@@ -99,30 +99,17 @@ function makeSandbox(src) {
 }
 
 /* ================= 假数据 ================= */
+/* ⚠️ v1.1.63：电价模型退化为**单一单价** —— 响应里没有 profile / profiles /
+   地区 / 电压 / 档位 / 季节，只有 rate + note。 */
 const TARIFF_RESPONSE = () => ({
   success: true,
-  config: {
-    region: 'sichuan', enabled: true,
-    valley_start: 23, valley_end: 7, rate_override: null
-  },
-  profile: {
-    id: 'sichuan', name: '四川省居民（成都）',
-    peak_rates: [0.5224, 0.6224, 0.8224],
-    valley_rates_wet: [0.175, 0.275, 0.475],
-    valley_rates_dry: [0.2535, 0.3535, 0.5535],
-    tiers_summer: [260, 460, null],
-    tiers_other: [180, 280, null],
-    summer_months: [7, 8, 9], wet_months: [6, 7, 8, 9, 10],
-    has_time_of_use: true
-  },
-  profiles: [
-    { id: 'sichuan', name: '四川省居民（成都）' },
-    { id: 'tianjin', name: '天津市居民' }
-  ],
-  current_month: 11,
-  is_summer_tier: false, is_wet_season: false,
-  active_tiers: [180, 280, null],
-  active_valley_rates: [0.2535, 0.3535, 0.5535]
+  config: { rate: 0.5224, updated: 0 },
+  rate: 0.5224,
+  default_rate: 0.5224,
+  unit: '元/kWh',
+  note: '电费按「用电量 × 电费单价」估算，不区分阶梯档位、不区分峰谷时段、不区分地区。'
+      + '默认单价 0.5224 元/kWh，取成都（四川）一户一表居民不满 1 千伏第一档高峰平段电价'
+      + '（成都居民电价的最低档），可按你家的实际电价自行调整。'
 });
 
 const POWER_DATA = {
@@ -177,7 +164,7 @@ function runChain(src) {
 }
 
 (async function main() {
-  console.log('\n========== v1.1.57 回归：电价面板不得覆盖抽屉内容 ==========');
+  console.log('\n========== v1.1.63 回归：电价面板不得覆盖抽屉内容 ==========');
 
   /* ---------- ① 正常链路 ---------- */
   section('① 正常链路：loadTariff(body)');
@@ -203,14 +190,19 @@ function runChain(src) {
       r.tariffBox.innerHTML.indexOf('tariff-field') > -1 &&
       r.tariffBox.innerHTML.indexOf('data-tariff-save') > -1,
       r.tariffBox.innerHTML.slice(0, 120));
-    check('电价面板含地区/谷时段/自定义单价/价目表',
-      r.tariffBox.innerHTML.indexOf('data-tariff-region') > -1 &&
-      r.tariffBox.innerHTML.indexOf('data-tariff-vstart') > -1 &&
+    /* v1.1.63：面板只剩「单价输入框 + 口径说明」 */
+    check('电价面板含单价输入框与口径说明',
       r.tariffBox.innerHTML.indexOf('data-tariff-rate') > -1 &&
-      r.tariffBox.innerHTML.indexOf('tariff-tb-row') > -1);
-    check('价目表显示当前生效档位（非夏季 0–180）',
-      r.tariffBox.innerHTML.indexOf('0–180') > -1,
-      '未找到 0–180');
+      r.tariffBox.innerHTML.indexOf('data-tariff-note') > -1 &&
+      r.tariffBox.innerHTML.indexOf('tariff-field') > -1);
+    check('电价面板不含地区/电压/谷时段/档位表',
+      r.tariffBox.innerHTML.indexOf('data-tariff-region') === -1 &&
+      r.tariffBox.innerHTML.indexOf('data-tariff-voltage') === -1 &&
+      r.tariffBox.innerHTML.indexOf('data-tariff-vstart') === -1 &&
+      r.tariffBox.innerHTML.indexOf('tariff-table') === -1);
+    check('电价面板只有一个输入框',
+      (r.tariffBox.innerHTML.match(/<input/g) || []).length === 1,
+      '实际 ' + (r.tariffBox.innerHTML.match(/<input/g) || []).length);
     check('body 上未出现电价面板内容（面板只写在子容器）',
       r.body.innerHTML.indexOf('tariff-field') === -1);
   }

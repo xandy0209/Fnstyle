@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 /* ===========================================================================
-   v1.1.58 回归测试：电价设置面板的两个用户反馈 bug
+   v1.1.63 回归测试：电价单价输入不被清空
 
-   用户反馈（截图）：
+   历史沿革
+   --------
+   v1.1.58 用户反馈（截图）：
      ① 「选择固定单价时自定义单价输入后会被清空」
      ② 「都固定单价了为什么还有档位信息？」（截图显示「第1档 0–null」）
 
@@ -18,18 +20,16 @@
        - monitor.js loadTariff：面板已渲染过就**不重绘**
          （只后台刷新缓存），保住用户编辑与焦点；
        - monitor.js applyTariff：重绘前捕获表单状态、重绘后回填
-         （兜底，覆盖切地区 / 主动保存等确实需要重绘的场景）。
+         （兜底，覆盖主动保存等确实需要重绘的场景）。
 
-   ② 的根因：flat 地区 tiers_* 全是 [None,None,None]，前端仍渲染三行
-     档位表，bandLabel 把 None 拼成「不限 / null」。
-     修法：profile 增加 has_tiers 标记，前端据此整块隐藏价目表。
+   ② v1.1.63 已彻底消失 —— 整个模型只剩一个单价输入框，没有档位信息。
 
    本测试做两件事：
      · 源码级断言：确认上述修法确实写进了源码（防回退）
      · 逻辑级验证：用极简 DOM stub 跑真实的 captureTariffForm /
        restoreTariffForm，验证「输入值能原样恢复」
 
-   真正的浏览器端到端验证在 verify/probe_tariff_input.js（CDP 探针）。
+   真正的浏览器端到端验证在 verify/probe_tariff_input.py（CDP 探针）。
    =========================================================================== */
 const fs = require('fs');
 const path = require('path');
@@ -47,7 +47,7 @@ function check(label, ok, extra) {
 function section(t) { console.log('\n--- ' + t + ' ---'); }
 
 /* ============ ① 源码级断言 ============ */
-section('源码级：自定义单价输入不被清空');
+section('源码级：电费单价输入不被清空');
 
 check('monitor.js 存在 captureTariffForm',
   /function\s+captureTariffForm\s*\(/.test(MON));
@@ -69,21 +69,18 @@ check('compute.js updateLive 保留旧电价面板节点',
 check('compute.js updateLive 把旧电价面板放回原位',
   /tslot\.parentNode\.replaceChild\(tariffNode,\s*tslot\)/.test(CMP));
 
-section('源码级：固定单价不显示档位表');
+section('源码级：档位/地区等控件已删除（v1.1.63）');
 
-check('monitor.js 判断 prof.has_tiers',
-  /has_tiers\s*!==\s*false/.test(MON));
-check('has_tiers 为 false 时不渲染 .tariff-table',
-  /if\s*\(prof\.has_tiers\s*!==\s*false\)\s*\{[\s\S]{0,900}tariff-table/.test(MON));
-/* ⚠️ v1.1.61：固定单价地区（合表）的单价**也分电压等级**
-   （lv1=0.5464 / lv2=lv3=0.5364），所以单价不能再是死文本 ——
-   要放进一个 data-tariff-flat-rate 的 span，切电压时就地更新。
-   断言相应改为检查「单价在 span 里 + span 在说明行里」。 */
-check('has_tiers 为 false 时把单价并入说明行（不重复渲染两行说明）',
-  /data-tariff-flat-rate/.test(MON) &&
-  /元\/kWh/.test(MON));
-check('固定单价说明行用 data-tariff-flat-rate span 承载单价',
-  /flatRate\s*!==\s*null[\s\S]{0,200}data-tariff-flat-rate/.test(MON));
+/* v1.1.63：单一单价模型 —— 面板只剩一个输入框，
+   「固定单价不显示档位表」这个老问题从根上消失。 */
+const gone = [
+  'has_tiers', 'data-tariff-flat-rate', 'tariff-table', 'tariff-tb-',
+  'tariffTableHtml', 'tariffDerivationHtml', 'tariffSeasonHtml',
+  'data-tariff-enabled', 'data-tariff-region', 'data-tariff-voltage',
+  'data-tariff-vstart', 'data-tariff-vend', 'data-tariff-proj-rate',
+  'data-tariff-season'
+];
+gone.forEach(w => check('monitor.js 不含 ' + w, MON.indexOf(w) < 0));
 
 /* ============ ② 逻辑级：真实跑 capture/restore ============ */
 section('逻辑级：capture / restore 往返');
@@ -177,54 +174,53 @@ try {
 }
 
 if (sandbox.captureTariffForm && sandbox.restoreTariffForm) {
-  /* --- 构造一个「用户正在编辑」的固定单价面板 --- */
+  /* --- 构造一个「用户正在编辑」的单价面板 --- */
   const box = makeEl('div');
-  box.setAttribute('data-tariff-prof', 'flat');
   box.setAttribute('data-tariff-rendered', '1');
 
-  const en = makeEl('input'); en.setAttribute('data-tariff-enabled', '');
-  en.checked = true;
-  const rg = makeEl('select'); rg.setAttribute('data-tariff-region', '');
-  rg.value = 'flat';
   const rt = makeEl('input'); rt.setAttribute('data-tariff-rate', '');
-  rt.value = '0.8888';               /* ← 用户刚输入的自定义单价 */
-  const season = makeEl('div'); season.setAttribute('data-tariff-season', '');
-
-  box.appendChild(en); box.appendChild(rg); box.appendChild(rt); box.appendChild(season);
+  rt.value = '0.8888';               /* ← 用户刚输入的单价 */
+  box.appendChild(rt);
 
   const st = sandbox.captureTariffForm(box);
-  check('captureTariffForm 抓到自定义单价 0.8888',
+  check('captureTariffForm 抓到单价 0.8888',
     st && st.rate === '0.8888', JSON.stringify(st && st.rate));
-  check('captureTariffForm 记录渲染地区 flat',
-    st && st.prof === 'flat');
-  check('captureTariffForm 抓到启用状态 true',
-    st && st.enabled === true);
+  check('captureTariffForm 只采集 rate 一个字段',
+    st && Object.keys(st).length === 1 && st.rate === '0.8888',
+    st ? JSON.stringify(Object.keys(st)) : 'null');
+  check('captureTariffForm 不再采集 prof（无地区）',
+    st && st.prof === undefined);
+  check('captureTariffForm 不再采集 enabled（无开关）',
+    st && st.enabled === undefined);
 
   /* --- 模拟重绘：清空后重建一个新面板 --- */
   const box2 = makeEl('div');
-  box2.setAttribute('data-tariff-prof', 'flat');
   box2.setAttribute('data-tariff-rendered', '1');
-  const en2 = makeEl('input'); en2.setAttribute('data-tariff-enabled', '');
   const rt2 = makeEl('input'); rt2.setAttribute('data-tariff-rate', '');
   rt2.value = '';                     /* 重绘后是空的 */
-  const season2 = makeEl('div'); season2.setAttribute('data-tariff-season', '');
-  box2.appendChild(en2); box2.appendChild(rt2); box2.appendChild(season2);
+  box2.appendChild(rt2);
 
-  sandbox.restoreTariffForm(box2, st, 'flat');
-  check('restoreTariffForm 把自定义单价还原成 0.8888',
+  sandbox.restoreTariffForm(box2, st);
+  check('restoreTariffForm 把单价还原成 0.8888',
     rt2.value === '0.8888', '实际 "' + rt2.value + '"');
-  check('restoreTariffForm 还原启用状态',
-    en2.checked === true);
 
-  /* --- 切地区（flat → tianjin）不应把 flat 的自定义单价带过去 --- */
+  /* --- 空值场景：回填后端给的生效单价 --- */
   const box3 = makeEl('div');
-  box3.setAttribute('data-tariff-prof', 'tianjin');
+  box3.__tariffData = { rate: 0.61, config: { rate: 0.61 } };
   const rt3 = makeEl('input'); rt3.setAttribute('data-tariff-rate', '');
-  rt3.value = '';
   box3.appendChild(rt3);
-  sandbox.restoreTariffForm(box3, st, 'tianjin');
-  check('切地区时自定义单价被清空（不把 flat 的值带到 tianjin）',
-    rt3.value === '', '实际 "' + rt3.value + '"');
+  sandbox.restoreTariffForm(box3, { rate: null });
+  check('无用户输入时回填后端生效单价 0.61',
+    String(rt3.value) === '0.61', '实际 "' + rt3.value + '"');
+
+  /* --- 后端也没给 → 兜底 0.5224 --- */
+  const box4 = makeEl('div');
+  box4.__tariffData = {};
+  const rt4 = makeEl('input'); rt4.setAttribute('data-tariff-rate', '');
+  box4.appendChild(rt4);
+  sandbox.restoreTariffForm(box4, { rate: null });
+  check('后端也没给时兜底 0.5224',
+    String(rt4.value) === '0.5224', '实际 "' + rt4.value + '"');
 }
 
 console.log('\n' + '='.repeat(60));

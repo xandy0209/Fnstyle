@@ -1,26 +1,34 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""v1.1.62 验证：判档依据可见 + 预计电费单价可调（不按阶梯、不分地区）
+"""v1.1.63 验证：单一「电费单价」配置项（可调）+ 口径说明
 
-两条需求（老板原话）：
+历史沿革
+--------
+v1.1.62：老板提出两点 ——
   ① 「我没有输入电量，你怎么知道是按那个阶段进行计费呢？」
-     → 判档靠 **FnStyle 自测的本机月总电量**，界面必须写明这一依据。
-  ② 「本月预计电费」不按阶梯算、不区分地区，统一用成都最低档单价
-     （0.5224 元/kWh），并提供手动调整的能力。
+     → 判档靠 FnStyle 自测的本机月总电量，界面写明这一依据
+  ② 「本月预计电费」不按阶梯、不分地区，统一用成都最低档 0.5224 元/kWh，
+     并提供手动调整能力（当时是两个概念：计费阶梯 + 预计单价 proj_rate）
+
+v1.1.63：两者**合并成一个**「电费单价」配置项 ——
+  「根据成都最低档对应的电价进行计算（并提供可配置能力），
+    删除阶梯计费和档位信息等，也不区分区域，就是一个电费单价的配置，
+    并增加对应的说明即可」
+  ⇒ 没有「阶段」可判 → 判档依据的疑问自然消解
+  ⇒ proj_rate 与 rate_override 统一成一个 rate
+  ⇒ 说明变成「用电量 × 电费单价」的口径说明
 
 验证：
-  A. compute_bill 输出 current_tier（当前第几档）与 tier_limits（各档上限）
-  B. current_tier 与 tier_kwh 的实际落档一致（多档场景逐个验）
-  C. proj_rate 配置：默认 0.5224、可保存、可校验、非法值被拒
-  D. 旧配置残留不影响 proj_rate
-  E. history_collect 用 proj_rate 算预计电费（不是均价倒推）
-  F. 前端源码约束：判档依据说明行 + 预计单价输入项 + 提交
+  A. 默认单价 = 0.5224（成都最低档）
+  B. 单价可保存 / 可校验 / 非法值被拒 / 缺省时继承
+  C. 旧配置里的 proj_rate / rate_override 迁移到 rate
+  D. describe() 透出 rate 与 note
+  E. history_collect 用同一个单价算已计电费与预计电费
+  F. 前端源码约束：只有一个输入框 + 说明 + 提交
 """
-import os
 import sys
+import os
 import json
-import re
-import time
 import tempfile
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -46,124 +54,101 @@ def approx(a, b, tol=1e-6):
     return abs(float(a) - float(b)) <= tol
 
 
-def cfg_of(region='sichuan', **kw):
-    c = pt.default_config()
-    c['region'] = region
-    # ⚠️ 必须 enabled=True，否则 compute_bill 走「单一固定单价」分支，
-    #    根本不会分档（current_tier 自然为 None）。
-    c['enabled'] = True
-    c.update(kw)
-    return c
-
-
-ts_mon = time.mktime((2026, 11, 10, 12, 0, 0, 0, 0, -1))
-
 print('=' * 70)
-print('v1.1.62 验证：判档依据可见 + 预计电费单价可调')
+print('v1.1.63 验证：单一「电费单价」配置项 + 口径说明')
 print('=' * 70)
 
 # ---------------------------------------------------------------------------
-print('\n=== A. compute_bill 输出判档结果 ===')
-c = cfg_of()
-b = pt.compute_bill(50.0, 0.0, c, ts=ts_mon)
-check('返回体带 current_tier', 'current_tier' in b, sorted(b.keys()))
-check('返回体带 tier_limits', 'tier_limits' in b, sorted(b.keys()))
-check('50 度 → 第 1 档', b.get('current_tier') == 1, b.get('current_tier'))
-check('tier_limits = [180, 280, None]',
-      b.get('tier_limits') == [180.0, 280.0, None], b.get('tier_limits'))
-
-# ---------------------------------------------------------------------------
-print('\n=== B. current_tier 与实际落档一致 ===')
-for kwh, exp in ((50.0, 1), (200.0, 2), (500.0, 3)):
-    bb = pt.compute_bill(kwh, 0.0, c, ts=ts_mon)
-    check('%g 度 → 第 %d 档' % (kwh, exp), bb.get('current_tier') == exp,
-          bb.get('current_tier'))
-    tk = bb.get('tier_kwh') or []
-    # 实际有电量的最高档
-    real = 0
-    for i, v in enumerate(tk):
-        if v > 1e-9:
-            real = i + 1
-    check('%g 度的 current_tier 与 tier_kwh 一致' % kwh, real == exp,
-          'current=%s tier_kwh=%s' % (bb.get('current_tier'), tk))
-
-# 谷段电量也占档位（官方口径：按月总电量判档）
-bb = pt.compute_bill(0.0, 400.0, c, ts=ts_mon)
-check('纯谷段 400 度 → 第 3 档（谷段也占档位）',
-      bb.get('current_tier') == 3, bb.get('current_tier'))
-
-# ---------------------------------------------------------------------------
-print('\n=== C. proj_rate 配置 ===')
-check('DEFAULT_PROJ_RATE = 0.5224', approx(pt.DEFAULT_PROJ_RATE, 0.5224),
-      pt.DEFAULT_PROJ_RATE)
+print('\n=== A. 默认单价 = 成都最低档 0.5224 ===')
+check('DEFAULT_RATE = 0.5224', approx(pt.DEFAULT_RATE, 0.5224), pt.DEFAULT_RATE)
 d = pt.default_config()
-check('default_config 带 proj_rate = 0.5224',
-      approx(d.get('proj_rate'), 0.5224), d.get('proj_rate'))
+check('default_config 只有 rate + updated',
+      set(d.keys()) == {'rate', 'updated'}, sorted(d.keys()))
+check('default_config.rate = 0.5224', approx(d.get('rate'), 0.5224), d.get('rate'))
+check('不再有独立的 proj_rate', 'proj_rate' not in d, sorted(d.keys()))
+check('不再有独立的 rate_override', 'rate_override' not in d, sorted(d.keys()))
 
+# ---------------------------------------------------------------------------
+print('\n=== B. 单价可保存 / 可校验 ===')
 os.environ['FNSTYLE_DATA_DIR'] = tempfile.mkdtemp()
-ok, msg = pt.save_config({'region': 'sichuan', 'enabled': True,
-                           'valley_start': 23, 'valley_end': 7,
-                           'proj_rate': 0.61})
-check('保存 proj_rate=0.61 成功', ok is True, msg)
+ok, msg = pt.save_config({'rate': 0.61})
+check('保存 rate=0.61 成功', ok is True, msg)
 c2 = pt.load_config()
-check('读回 proj_rate = 0.61', approx(c2.get('proj_rate'), 0.61),
-      c2.get('proj_rate'))
+check('读回 rate = 0.61', approx(c2.get('rate'), 0.61), c2.get('rate'))
 
-ok, msg = pt.save_config({'region': 'sichuan', 'valley_start': 23,
-                           'valley_end': 7, 'proj_rate': 'abc'})
-check('非法 proj_rate 被拒绝', ok is False, msg)
-ok, msg = pt.save_config({'region': 'sichuan', 'valley_start': 23,
-                           'valley_end': 7, 'proj_rate': 99})
-check('超范围 proj_rate 被拒绝', ok is False, msg)
+ok, msg = pt.save_config({'rate': 'abc'})
+check('非法 rate 被拒绝', ok is False, msg)
+ok, msg = pt.save_config({'rate': 99})
+check('超范围 rate 被拒绝', ok is False, msg)
+ok, msg = pt.save_config({'rate': -0.1})
+check('负 rate 被拒绝', ok is False, msg)
 
-# ---------------------------------------------------------------------------
-print('\n=== D. 缺省时继承旧值（不被清零）===')
+print('\n--- 缺省时继承旧值（不被清零）---')
 os.environ['FNSTYLE_DATA_DIR'] = tempfile.mkdtemp()
-pt.save_config({'region': 'sichuan', 'valley_start': 23, 'valley_end': 7,
-                'proj_rate': 0.7})
-# 模拟前端没提交 proj_rate（老面板 / 其它地区）
-pt.save_config({'region': 'tianjin', 'valley_start': 23, 'valley_end': 7})
+pt.save_config({'rate': 0.7})
+pt.save_config({'updated': 1})  # 模拟前端没提交 rate
 c3 = pt.load_config()
-check('前端未提交时 proj_rate 继承旧值 0.7',
-      approx(c3.get('proj_rate'), 0.7), c3.get('proj_rate'))
+check('前端未提交时 rate 继承旧值 0.7',
+      approx(c3.get('rate'), 0.7), c3.get('rate'))
 
 # ---------------------------------------------------------------------------
-print('\n=== E. describe() 透出 proj_rate ===')
+print('\n=== C. 旧配置迁移 ===')
 os.environ['FNSTYLE_DATA_DIR'] = tempfile.mkdtemp()
-pt.save_config({'region': 'sichuan', 'valley_start': 23, 'valley_end': 7,
-                'proj_rate': 0.55})
+with open(pt._cfg_path(), 'w', encoding='utf-8') as f:
+    json.dump({'proj_rate': 0.55, 'region': 'sichuan', 'enabled': True},
+              f, ensure_ascii=False)
+c4 = pt.load_config()
+check('旧配置只有 proj_rate → 迁移为 rate',
+      approx(c4.get('rate'), 0.55), c4.get('rate'))
+check('旧配置里的 region 被丢弃', 'region' not in c4, sorted(c4.keys()))
+check('旧配置里的 enabled 被丢弃', 'enabled' not in c4, sorted(c4.keys()))
+
+os.environ['FNSTYLE_DATA_DIR'] = tempfile.mkdtemp()
+with open(pt._cfg_path(), 'w', encoding='utf-8') as f:
+    json.dump({'rate': 0.66, 'proj_rate': 0.55}, f, ensure_ascii=False)
+c5 = pt.load_config()
+check('新旧同时存在时以 rate 为准',
+      approx(c5.get('rate'), 0.66), c5.get('rate'))
+
+# ---------------------------------------------------------------------------
+print('\n=== D. describe() 透出 rate 与 note ===')
+os.environ['FNSTYLE_DATA_DIR'] = tempfile.mkdtemp()
+pt.save_config({'rate': 0.5224})
 desc = pt.describe()
-check('describe.config.proj_rate = 0.55',
-      approx((desc.get('config') or {}).get('proj_rate'), 0.55),
-      (desc.get('config') or {}).get('proj_rate'))
+check('describe.config.rate = 0.5224',
+      approx((desc.get('config') or {}).get('rate'), 0.5224),
+      (desc.get('config') or {}).get('rate'))
+check('describe.rate = 0.5224', approx(desc.get('rate'), 0.5224), desc.get('rate'))
+check('describe.default_rate = 0.5224',
+      approx(desc.get('default_rate'), 0.5224), desc.get('default_rate'))
+check('describe.unit = 元/kWh', desc.get('unit') == '元/kWh', desc.get('unit'))
+check('describe.note 非空', bool(desc.get('note')))
 raw = json.dumps(desc, ensure_ascii=False)
 check('describe() 是合法 JSON', 'Infinity' not in raw and 'NaN' not in raw)
+check('describe 不再透出 proj_rate', 'proj_rate' not in desc, sorted(desc.keys()))
 
 # ---------------------------------------------------------------------------
-print('\n=== F. history_collect 用 proj_rate 算预计电费 ===')
+print('\n=== E. history_collect 用同一个单价算电费 ===')
 HC = os.path.join(BASE, 'app', 'ui', 'history_collect.py')
 with open(HC, encoding='utf-8') as f:
     hc = f.read()
-check('history_collect 有 DEFAULT_PROJ_RATE 常量',
-      'DEFAULT_PROJ_RATE = 0.5224' in hc)
-check('history_collect 用 proj_rate 算预计电费',
-      'month_proj_kwh"] * proj_rate' in hc.replace('(', '').replace(')', '')
-      or 'result["month_proj_kwh"] * proj_rate' in hc
-      or 'month_proj_kwh * proj_rate' in hc.replace('"', ''),
-      '未找到 proj_rate 乘算')
+check('history_collect 输出 proj_rate_yuan_per_kwh（兼容字段）',
+      'proj_rate_yuan_per_kwh' in hc)
+check('history_collect 用配置的 rate 算预计电费',
+      'result["month_proj_kwh"] * rate' in hc
+      or 'month_proj_kwh"] * rate' in hc.replace('(', '').replace(')', ''),
+      '未找到 rate 乘算')
 check('history_collect 不再按均价倒推预计电费',
       'month_proj_kwh"] * eff' not in hc
       and 'month_proj_kwh * eff' not in hc.replace('"', ''),
       '仍见 eff 倒推')
-check('history_collect 输出 proj_rate_yuan_per_kwh',
-      'proj_rate_yuan_per_kwh' in hc)
-check('history_collect 输出 current_tier',
-      'result["current_tier"]' in hc)
-check('history_collect 输出 tier_limits',
-      'result["tier_limits"]' in hc)
+check('history_collect 不再输出 current_tier',
+      'result["current_tier"]' not in hc)
+check('history_collect 不再输出 tier_limits',
+      'result["tier_limits"]' not in hc)
 
 # ---------------------------------------------------------------------------
-print('\n=== G. 前端源码约束 ===')
+print('\n=== F. 前端源码约束 ===')
 JS = os.path.join(BASE, 'app', 'ui', 'static', 'js', 'monitor.js')
 with open(JS, encoding='utf-8') as f:
     js = f.read()
@@ -171,36 +156,26 @@ CSS = os.path.join(BASE, 'app', 'ui', 'static', 'css', 'app.css')
 with open(CSS, encoding='utf-8') as f:
     css = f.read()
 
-check('前端有判档依据说明行（sub-tier）', 'sub-tier' in js)
-check('判档说明含「判档」二字', '判档：' in js)
-check('判档说明含「本机」口径', '本机' in js)
-check('判档说明读 current_tier', 'current_tier' in js)
-check('判档说明读 tier_limits', 'tier_limits' in js)
-check('CSS 有 .sub-tier 样式', '.stat-cell .sub-tier' in css)
+check('前端有唯一的单价输入框 data-tariff-rate', 'data-tariff-rate' in js)
+check('输入框是 number 类型', 'type="number"' in js)
+check('输入框有 step=0.0001', 'step="0.0001"' in js)
+check('输入框有 min=0 / max=10', 'min="0"' in js and 'max="10"' in js)
+check('输入框带单位 元/kWh', 'tariff-unit' in js and '元/kWh' in js)
+check('前端有口径说明容器 data-tariff-note', 'data-tariff-note' in js)
+check('说明取自后端 d.note', 'd && d.note' in js or '(d && d.note)' in js)
 
-check('前端有预计电费单价输入项', 'data-tariff-proj-rate' in js)
-check('前端有 sub-proj-rate 说明行', 'sub-proj-rate' in js)
-check('CSS 有 .sub-proj-rate 样式', '.stat-cell .sub-proj-rate' in css)
-check('capture 采集 proj_rate', 'proj_rate:' in js)
-check('restore 回填 proj_rate', 'st.proj_rate !== null' in js)
-check('保存载荷提交 proj_rate', 'payload.proj_rate' in js)
+check('无独立的预计单价输入项 data-tariff-proj-rate',
+      'data-tariff-proj-rate' not in js)
+check('无判档依据行 sub-tier', 'sub-tier' not in js)
+check('capture 只采集 rate', 'rate:' in js and 'proj_rate:' not in js)
+check('restore 只回填 rate', 'st.rate !== null' in js and 'st.proj_rate' not in js)
+check('保存载荷只提交 rate', 'payload.rate' in js and 'payload.proj_rate' not in js)
 check('前端默认单价 0.5224', "'0.5224'" in js)
 
-# ---- 判档区间口径（v1.1.62 bug 修复）----
-# tier_limits 是「各档累计上限」[180, 280, null]
-#   → 第 N 档下界 = 第 N-1 档上限（第 1 档 = 0），上界 = tier_limits[N-1]
-# 原实现把本档上界当下界 → 第 1 档渲染成「181–180 度」
-_seg = None
-for _m in re.finditer(r'var lo = 0;', js):
-    _seg = js[_m.start():_m.start() + 700]
-    if 'tLimits' in _seg:
-        break
-check('判档区间下界循环只到 curTier-1（不含本档）',
-      _seg is not None and 'ti < curTier' in _seg, (_seg or '')[:120])
-check('判档区间不再用「本档上限当下界」的旧写法',
-      _seg is not None and 'ti <= curTier' not in _seg, (_seg or '')[:120])
-check('判档区间第 1 档下界为 0（渲染成 0–180）',
-      _seg is not None and "lo > 0 ? (lo + 1)" in _seg, (_seg or '')[:120])
+check('CSS 有 .tariff-field 样式', '.tariff-field' in css)
+check('CSS 有 .tariff-note 样式', '.tariff-note' in css)
+check('CSS 有 .sub-rate 样式（能耗卡片显示单价）', '.sub-rate' in css)
+check('CSS 有 .sub-proj-rate 样式（预计电费）', '.sub-proj-rate' in css)
 
 print('\n' + '=' * 70)
 print('通过 %d 项，失败 %d 项' % (PASS, FAIL))

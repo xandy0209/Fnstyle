@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""CDP 探针（v1.1.58）：实机验证两个用户反馈 bug
+"""CDP 探针（v1.1.63）：实机验证「电费单价输入不被清空」
 
-① 「选择固定单价时自定义单价输入后会被清空」
-   验证：切到「固定单价」地区 → 输入自定义单价 → 等 8 秒（跨过 2 轮
-   live 重建）→ 断言输入框里的值仍在。
+历史沿革
+--------
+v1.1.58 用户反馈：「选择固定单价时自定义单价输入后会被清空」
+   根因：能耗抽屉每 3 秒 live 重建一次 → body.innerHTML 重置
+        → 用户正在输入的 input 被冲掉；重绘后光标位置也丢了。
 
-② 「都固定单价了为什么还有档位信息？」
-   验证：切到「固定单价」地区 → 断言面板里**没有** .tariff-table，
-        且不含「第 1 档」字样；切回四川 → 断言档位表又回来了。
+   修法（三处同时改）：compute.js updateLive 搬回旧节点 +
+        monitor.js loadTariff 已渲染则跳过重绘 +
+        monitor.js applyTariff 捕获/回填表单状态。
+
+v1.1.63：电价模型退化为**单一单价** —— 面板只剩一个「电费单价」输入框，
+   上述「输入被清空」的修复**依然必须成立**（这是本轮唯一保留的验证点）。
+   「固定单价地区不显示档位表」的老问题随地区概念一起消失。
 
 前置：Chrome 已带 --remote-debugging-port=9222 启动。
 """
@@ -89,64 +95,38 @@ def main():
     c.pump(5)
 
     tb = "document.querySelector('#monComputeBody [data-tariff-box]')"
-    print("--- 初始状态（成都 / 四川） ---")
+    print("--- 初始状态（单一单价面板） ---")
     info = json.loads(c.js("""(function(){
       var tb = %s;
       if (!tb) return '{"err":"NO TARIFF BOX"}';
+      var rt = tb.querySelector('[data-tariff-rate]');
+      var note = tb.querySelector('[data-tariff-note]');
       return JSON.stringify({
-        region: (tb.querySelector('[data-tariff-region]')||{}).value,
+        hasRate: !!rt,
+        rate: rt ? rt.value : null,
+        hasNote: !!note,
+        noteText: note ? note.innerText.replace(/\\s+/g,' ').trim() : null,
         hasTable: !!tb.querySelector('.tariff-table'),
-        tableText: tb.querySelector('.tariff-table')
-          ? tb.querySelector('.tariff-table').innerText.replace(/\\s+/g,' ').trim() : null,
+        inputCount: tb.querySelectorAll('input').length,
+        selectCount: tb.querySelectorAll('select').length,
         rendered: tb.getAttribute('data-tariff-rendered')
       });
     })()""" % tb) or "{}")
-    check("初始为四川地区", info.get("region") == "sichuan", str(info.get("region")))
-    check("四川地区显示档位价目表", info.get("hasTable") is True)
-    check("四川档位表显示第一档区间",
-          "第 1 档" in (info.get("tableText") or ""), (info.get("tableText") or "")[:60])
+    check("面板已渲染", "err" not in info, str(info)[:200])
+    check("有单价输入框", info.get("hasRate") is True)
+    check("单价默认值 = 0.5224", str(info.get("rate")) == "0.5224",
+          str(info.get("rate")))
+    check("有口径说明", info.get("hasNote") is True)
+    check("口径说明含默认单价出处",
+          "0.5224" in (info.get("noteText") or "") and
+          "成都" in (info.get("noteText") or ""),
+          (info.get("noteText") or "")[:120])
+    check("没有档位价目表", info.get("hasTable") is False)
+    check("只有 1 个输入框", info.get("inputCount") == 1, str(info.get("inputCount")))
+    check("没有 <select> 下拉", info.get("selectCount") == 0, str(info.get("selectCount")))
 
-    # ---------- 切到「固定单价」 ----------
-    print("\n--- 切到固定单价地区 ---")
-    c.js("""(function(){
-      var tb = %s;
-      var rg = tb.querySelector('[data-tariff-region]');
-      rg.value = 'flat';
-      rg.dispatchEvent(new Event('change', {bubbles:true}));
-      return 'ok';
-    })()""" % tb)
-    c.pump(3)
-
-    info2 = json.loads(c.js("""(function(){
-      var tb = %s;
-      return JSON.stringify({
-        region: (tb.querySelector('[data-tariff-region]')||{}).value,
-        hasTable: !!tb.querySelector('.tariff-table'),
-        text: tb.innerText.replace(/\\s+/g,' ').trim(),
-        rate: (tb.querySelector('[data-tariff-rate]')||{}).value,
-        rendered: tb.getAttribute('data-tariff-rendered')
-      });
-    })()""" % tb) or "{}")
-    check("地区已切到 flat（固定单价）",
-          info2.get("region") == "flat", str(info2.get("region")))
-    check("② 固定单价地区**没有**档位价目表",
-          info2.get("hasTable") is False,
-          "panel text: " + (info2.get("text") or "")[:120])
-    check("② 面板不含「第 1 档」字样",
-          "第 1 档" not in (info2.get("text") or ""),
-          (info2.get("text") or "")[:120])
-    check("② 面板含「不区分时段与阶梯」说明",
-          "不区分时段与阶梯" in (info2.get("text") or ""),
-          (info2.get("text") or "")[:160])
-    check("② 固定单价数值出现在说明里（0.6 元/kWh）",
-          "0.6 元/kWh" in (info2.get("text") or ""),
-          (info2.get("text") or "")[:160])
-    check("② 说明只出现一次（不重复渲染两行）",
-          (info2.get("text") or "").count("按单一固定单价计费") == 1,
-          "出现 %d 次" % (info2.get("text") or "").count("按单一固定单价计费"))
-
-    # ---------- ① 输入自定义单价，等 live 重建 ----------
-    print("\n--- ① 输入自定义单价，等待 live 重建 ---")
+    # ---------- 输入自定义单价，等 live 重建 ----------
+    print("\n--- 输入自定义单价，等待 live 重建 ---")
     c.js("""(function(){
       var tb = %s;
       var rt = tb.querySelector('[data-tariff-rate]');
@@ -162,7 +142,7 @@ def main():
     })()""" % tb)
     check("输入后立刻读到 0.8888", v0 == "0.8888", str(v0))
 
-    print("  …等待 9 秒（跨过 3 轮 live 重建）…")
+    print("  ...等待 9 秒（跨过 3 轮 live 重建）...")
     c.pump(9)
     v1 = c.js("""(function(){
       var tb = %s;
@@ -170,14 +150,13 @@ def main():
       return JSON.stringify({
         value: rt ? rt.value : null,
         focused: document.activeElement === rt,
-        rendered: tb.getAttribute('data-tariff-rendered'),
-        hasTable: !!tb.querySelector('.tariff-table')
+        rendered: tb.getAttribute('data-tariff-rendered')
       });
     })()""" % tb)
     st = json.loads(v1 or "{}")
-    check("① 9 秒后自定义单价仍是 0.8888（没被清空）",
+    check("9 秒后自定义单价仍是 0.8888（没被清空）",
           st.get("value") == "0.8888", str(st.get("value")))
-    check("① 输入框仍持有焦点（重绘没有踢掉焦点）",
+    check("输入框仍持有焦点（重绘没有踢掉焦点）",
           st.get("focused") is True)
 
     # 再等一轮
@@ -187,7 +166,7 @@ def main():
       var rt = tb.querySelector('[data-tariff-rate]');
       return rt ? rt.value : null;
     })()""" % tb)
-    check("① 再等 4 秒后仍是 0.8888", v2 == "0.8888", str(v2))
+    check("再等 4 秒后仍是 0.8888", v2 == "0.8888", str(v2))
 
     # ---------- 截图 ----------
     c.js("""(function(){
@@ -197,32 +176,9 @@ def main():
     })()""" % tb)
     c.pump(1.5)
     shot = c.send("Page.captureScreenshot", {"format": "png"})
-    with open("/tmp/fnstyle_v1158_flat.png", "wb") as f:
+    with open("/tmp/fnstyle_v1163_tariff.png", "wb") as f:
         f.write(base64.b64decode(shot["data"]))
-    print("\nscreenshot -> /tmp/fnstyle_v1158_flat.png")
-
-    # ---------- 切回四川，确认档位表恢复 ----------
-    print("\n--- 切回四川（档位表应恢复） ---")
-    c.js("""(function(){
-      var tb = %s;
-      var rg = tb.querySelector('[data-tariff-region]');
-      rg.value = 'sichuan';
-      rg.dispatchEvent(new Event('change', {bubbles:true}));
-      return 'ok';
-    })()""" % tb)
-    c.pump(3)
-    info3 = json.loads(c.js("""(function(){
-      var tb = %s;
-      return JSON.stringify({
-        region: (tb.querySelector('[data-tariff-region]')||{}).value,
-        hasTable: !!tb.querySelector('.tariff-table'),
-        rate: (tb.querySelector('[data-tariff-rate]')||{}).value
-      });
-    })()""" % tb) or "{}")
-    check("切回四川成功", info3.get("region") == "sichuan", str(info3.get("region")))
-    check("切回四川后档位表恢复", info3.get("hasTable") is True)
-    check("切地区后自定义单价被清空（不带 flat 的值过去）",
-          (info3.get("rate") or "") == "", repr(info3.get("rate")))
+    print("\nscreenshot -> /tmp/fnstyle_v1163_tariff.png")
 
     print("\n--- 错误检查 ---")
     errs = 0

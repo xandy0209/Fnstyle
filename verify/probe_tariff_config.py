@@ -1,23 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""CDP 探针（v1.1.62）：实机验证电价面板只剩「电压等级」一个新增配置项
+"""CDP 探针（v1.1.63）：实机验证电价面板 = 单一「电费单价」配置项
 
-⚠️ v1.1.62 变更：「家庭人口」「抄表周期」两个输入项**已删除**
-   · 「一户多人口」（川发改价格〔2024〕668号）需用户**主动申报**才生效，
-     软件里填个数字不代表供电企业已批准 → 留着反而误导；
-   · 「抄表周期」（川发改价格〔2012〕560号）是两个月抄表场景，
-     自动抄表时代已不适用。
-   → 档位门槛回到官方基准（四川其他月 180/280）。
+⚠️ v1.1.63 变更：整个电价模型退化为**单一单价**
+   「删除阶梯计费和档位信息等，也不区分区域，就是一个电费单价的配置，
+     并增加对应的说明即可」
+   ⇒ 面板里只剩：电费单价输入框 + 口径说明 + 保存按钮
 
 逐项验证：
-  A. 四川地区 → 只出现电压等级下拉，**没有**人口/抄表控件
-  B. 天津/固定单价地区 → 电压下拉也不出现
-  C. 切电压等级 → 价目表峰价随之变化（0.5224 → 0.5124）
-  D. 保存后后端配置持久化（voltage 生效）
-  E. 生效门槛回到官方基准 180/280
-  F. live 重建（9 秒）不丢电压等级的值
+  A. 面板只有一个「电费单价」输入框，没有其它任何配置控件
+  B. 面板没有地区/电压/谷时段/档位表/季节参数
+  C. 口径说明文案正确（含默认单价出处）
+  D. 后端 /api/power/tariff 的 config 只含 rate + updated（废弃键无残留）
+  E. 改单价 → 保存 → 后端持久化 → 前端立即生效
+  F. live 重建（9 秒）不丢用户正在输入的单价
   G. 重载页面后仍在
-  H. 切地区后电压正确回落（不留旧地区残留）
+  H. 旧配置（阶梯残留）升级后被清理干净
 
 前置：Chrome 已带 --remote-debugging-port=9222 启动。
 """
@@ -95,28 +93,38 @@ TB = ("document.querySelector('#monComputeBody [data-tariff-box]')"
 
 
 def snapshot(c):
-    """抓取抽屉电价面板当前控件 + 价目表文本。"""
+    """抓取抽屉电价面板当前控件。"""
     expr = """(function(){
       var tb = %s;
       if (!tb) return '{"err":"NO TARIFF BOX"}';
       function v(sel){ var e = tb.querySelector(sel); return e ? e.value : null; }
-      var tt = tb.querySelector('.tariff-table');
-      var opts = [];
-      var vo = tb.querySelector('[data-tariff-voltage]');
-      if (vo) {
-        for (var i=0;i<vo.options.length;i++){
-          opts.push(vo.options[i].value+'|'+vo.options[i].textContent.trim());
-        }
-      }
+      var inputs = tb.querySelectorAll('input');
+      var selects = tb.querySelectorAll('select');
+      var rt = tb.querySelector('[data-tariff-rate]');
+      var note = tb.querySelector('[data-tariff-note]');
       return JSON.stringify({
-        region: v('[data-tariff-region]'),
-        hasVoltage: !!vo,
+        hasRate: !!rt,
+        rate: rt ? rt.value : null,
+        rateType: rt ? rt.getAttribute('type') : null,
+        rateMin: rt ? rt.getAttribute('min') : null,
+        rateMax: rt ? rt.getAttribute('max') : null,
+        rateStep: rt ? rt.getAttribute('step') : null,
+        hasNote: !!note,
+        noteText: note ? note.innerText.replace(/\\s+/g,' ').trim() : null,
+        inputCount: inputs.length,
+        selectCount: selects.length,
+        hasRegion: !!tb.querySelector('[data-tariff-region]'),
+        hasVoltage: !!tb.querySelector('[data-tariff-voltage]'),
+        hasVstart: !!tb.querySelector('[data-tariff-vstart]'),
+        hasVend: !!tb.querySelector('[data-tariff-vend]'),
+        hasEnabled: !!tb.querySelector('[data-tariff-enabled]'),
         hasPeople: !!tb.querySelector('[data-tariff-people]'),
         hasMeter: !!tb.querySelector('[data-tariff-meter]'),
-        voltage: v('[data-tariff-voltage]'),
-        voltageOptions: opts,
-        hasTable: !!tt,
-        tableText: tt ? tt.innerText.replace(/\\s+/g,' ').trim() : null,
+        hasProjRate: !!tb.querySelector('[data-tariff-proj-rate]'),
+        hasSeason: !!tb.querySelector('[data-tariff-season]'),
+        hasTable: !!tb.querySelector('.tariff-table'),
+        hasTierRow: tb.innerHTML.indexOf('tariff-tb-row') > -1,
+        hasSave: !!tb.querySelector('[data-tariff-save]'),
         panelText: tb.innerText.replace(/\\s+/g,' ').trim()
       });
     })()""" % TB
@@ -127,7 +135,7 @@ def snapshot(c):
         return {"err": "PARSE_FAIL", "raw": str(raw)[:200]}
 
 
-def set_field(c, sel, value, evt="change"):
+def set_field(c, sel, value, evt="input"):
     return c.js("""(function(){
       var tb = %s;
       var e = tb.querySelector('%s');
@@ -158,18 +166,35 @@ def main():
     c.js("window.FnStyleCompute.open('power', window.FnStyleMonitor.lastData());'ok'")
     c.pump(5)
 
-    # 干净起点：把配置复位成四川 + 默认值
-    # ⚠️ 后端 save_config 强制校验 valley_start/valley_end 必须是 0-23 的整数，
-    #    缺这两个字段会直接 400（前端保存时是带上的，这里补齐）。
-    print("--- 复位配置到四川/默认 ---")
-    # ⚠️ v1.1.62：必须显式给 "lv1"，不能给 ""。
-    #    后端 save_config 对空电压是「继承旧值」语义（v1.1.59 起），
-    #    给 "" 会拿到上一轮跑测残留的电压等级 → C 项起点不确定。
+    # ---------- H0. 旧配置残留：模拟阶梯时代的脏配置 ----------
+    print("--- H0. 注入旧版脏配置（阶梯/地区/电压残留）---")
     api("/api/power/tariff", "POST", {
+        "rate": 0.6666,
         "region": "sichuan", "enabled": True,
         "valley_start": 23, "valley_end": 7,
-        "voltage": "lv1",
+        "voltage": "lv2",
     })
+    # 用 raw 文件写脏配置（POST 只接受 rate，废弃键会被丢弃）
+    # → 直接读一次接口看废弃键有没有残留
+    j0 = api("/api/power/tariff")
+    cfg0 = j0.get("config") or {}
+    leaked = [k for k in ("region", "enabled", "voltage", "valley_start",
+                          "valley_end", "overrides", "household_people",
+                          "meter_months", "rate_override", "proj_rate")
+              if k in cfg0]
+    check("H0 废弃键无残留（读出来就是干净的）", leaked == [], str(leaked))
+    check("H0 config 只含 rate + updated",
+          set(cfg0.keys()) == {"rate", "updated"}, str(sorted(cfg0.keys())))
+    check("H0 生效单价 = 0.6666", abs(float(cfg0.get("rate")) - 0.6666) < 1e-9,
+          cfg0.get("rate"))
+    check("H0 describe 含 note 口径说明", bool(j0.get("note")))
+    check("H0 describe 含 unit", j0.get("unit") == "元/kWh", j0.get("unit"))
+    check("H0 describe 含 default_rate",
+          abs(float(j0.get("default_rate")) - 0.5224) < 1e-9,
+          j0.get("default_rate"))
+
+    # 复位到默认单价 0.5224
+    api("/api/power/tariff", "POST", {"rate": 0.5224})
     c.send("Page.navigate", {"url": URL})
     c.pump(7)
     c.js("var b=document.querySelector('[data-tab=monitor]');if(b)b.click();'ok'")
@@ -177,188 +202,135 @@ def main():
     c.js("window.FnStyleCompute.open('power', window.FnStyleMonitor.lastData());'ok'")
     c.pump(4)
 
-    # ---------- A. 四川地区只剩电压下拉 ----------
-    print("\n--- A. 四川地区：只剩电压等级下拉 ---")
+    # ---------- A. 面板只有一个单价输入框 ----------
+    print("\n--- A. 面板结构：只有电费单价输入框 ---")
     st = snapshot(c)
-    check("A 四川地区显示电压等级下拉", st.get("hasVoltage") is True)
-    check("A 四川地区**不**显示一户多人口输入", st.get("hasPeople") is False)
-    check("A 四川地区**不**显示抄表周期下拉", st.get("hasMeter") is False)
-    check("A 面板文本不含「家庭人口」", "家庭人口" not in (st.get("panelText") or ""),
-          (st.get("panelText") or "")[:120])
-    check("A 面板文本不含「抄表周期」", "抄表周期" not in (st.get("panelText") or ""),
-          (st.get("panelText") or "")[:120])
-    check("A 电压等级下拉有 3 个选项",
-          len(st.get("voltageOptions") or []) == 3,
-          str(st.get("voltageOptions")))
-    for opt in (st.get("voltageOptions") or []):
-        if "35-110" in opt:
-            check("A 电压选项含「35-110 千伏」", True, opt)
-        if "不满 1 千伏" in opt:
-            check("A 电压选项含「不满 1 千伏」", True, opt)
+    check("A 面板已渲染", "err" not in st, str(st)[:200])
+    check("A 有单价输入框 data-tariff-rate", st.get("hasRate") is True)
+    check("A 输入框是 number 类型", st.get("rateType") == "number", st.get("rateType"))
+    check("A 输入框 min=0", st.get("rateMin") == "0", st.get("rateMin"))
+    check("A 输入框 max=10", st.get("rateMax") == "10", st.get("rateMax"))
+    check("A 输入框 step=0.0001", st.get("rateStep") == "0.0001", st.get("rateStep"))
+    check("A 只有 1 个输入框", st.get("inputCount") == 1, st.get("inputCount"))
+    check("A 没有 <select> 下拉", st.get("selectCount") == 0, st.get("selectCount"))
+    check("A 默认值 = 0.5224", str(st.get("rate")) == "0.5224", st.get("rate"))
+    check("A 有保存按钮", st.get("hasSave") is True)
 
-    # ---------- B. 其它地区不应出现 ----------
-    print("\n--- B. 天津 / 固定单价：电压下拉也不出现 ---")
-    set_field(c, "[data-tariff-region]", "tianjin")
-    c.pump(3)
-    st2 = snapshot(c)
-    check("B 天津地区不显示电压等级", st2.get("hasVoltage") is False)
-    check("B 天津地区不显示一户多人口", st2.get("hasPeople") is False)
-    check("B 天津地区不显示抄表周期", st2.get("hasMeter") is False)
+    # ---------- B. 已删除的控件都不存在 ----------
+    print("\n--- B. 已删除的控件全部不存在 ---")
+    for key, label in (("hasRegion", "地区下拉"), ("hasVoltage", "电压下拉"),
+                       ("hasVstart", "谷段起"), ("hasVend", "谷段止"),
+                       ("hasEnabled", "阶梯开关"), ("hasPeople", "家庭人口"),
+                       ("hasMeter", "抄表周期"), ("hasProjRate", "预计单价"),
+                       ("hasSeason", "季节参数"), ("hasTable", "档位价目表")):
+        check("B 无%s" % label, st.get(key) is False)
+    check("B 无档位行", st.get("hasTierRow") is False)
+    txt = st.get("panelText") or ""
+    # ⚠️ 口径说明**本身**就要提到「阶梯档位」「峰谷时段」「地区」——
+    #    是在「**不区分**…」的否定语境里说明模型边界。
+    #    所以这里不能查「文本里有这个词」，只能查这些概念**没���作为配置项**出现。
+    for kw in ("家庭人口", "抄表周期", "丰水期", "夏季档", "电压等级"):
+        check("B 面板文本不含「%s」" % kw, kw not in txt, txt[:150])
+    # 否定语境的口径说明（这些词应当以「不区分…」的形式出现）
+    for kw in ("不区分阶梯档位", "不区分峰谷时段", "不区分地区"):
+        check("B 说明含否定语境「%s」" % kw, kw in txt, txt[:200])
 
-    set_field(c, "[data-tariff-region]", "flat")
-    c.pump(3)
-    st3 = snapshot(c)
-    check("B 固定单价地区不显示电压等级", st3.get("hasVoltage") is False)
-    check("B 固定单价地区不显示一户多人口", st3.get("hasPeople") is False)
-    check("B 固定单价地区不显示抄表周期", st3.get("hasMeter") is False)
+    # ---------- C. 口径说明 ----------
+    print("\n--- C. 口径说明文案 ---")
+    note = st.get("noteText") or ""
+    check("C 有说明", bool(note), note[:80])
+    for kw in ("用电量", "电费单价", "0.5224", "成都", "不区分阶梯档位",
+               "不区分峰谷时段", "不区分地区"):
+        check("C 说明含「%s」" % kw, kw in note, note[:200])
 
-    # 切回四川
-    set_field(c, "[data-tariff-region]", "sichuan")
-    c.pump(3)
-    st4 = snapshot(c)
-    check("B 切回四川后电压控件恢复", st4.get("hasVoltage") is True)
-
-    # ---------- C. 电压等级切换 → 峰价变化 ----------
-    print("\n--- C. 电压等级切换应改变峰价 ---")
-    t_before = st4.get("tableText") or ""
-    check("C 默认（不满1千伏）峰价 0.5224 出现", "0.5224" in t_before,
-          t_before[:90])
-    set_field(c, "[data-tariff-voltage]", "lv2")
-    c.pump(3)
-    st5 = snapshot(c)
-    t_after = st5.get("tableText") or ""
-    check("C 切到 1-10 千伏后峰价变为 0.5124", "0.5124" in t_after,
-          t_after[:90])
-    check("C 切换后不再显示 0.5224", "0.5224" not in t_after,
-          t_after[:90])
-    check("C 电压下拉值已回显 lv2", st5.get("voltage") == "lv2",
-          str(st5.get("voltage")))
-
-    # 切到第三档
-    set_field(c, "[data-tariff-voltage]", "lv3")
-    c.pump(3)
-    st6 = snapshot(c)
-    check("C 切到 35-110 千伏后仍是 0.5124（同 1-10 千伏）",
-          "0.5124" in (st6.get("tableText") or ""),
-          (st6.get("tableText") or "")[:90])
-
-    # ---------- F. live 重建不丢值 ----------
-    print("\n--- F. live 重建（9 秒）后电压等级的值不丢 ---")
-    set_field(c, "[data-tariff-voltage]", "lv1")
-    c.pump(2)
-    pre = snapshot(c)
-    check("F 设置后：电压 lv1", pre.get("voltage") == "lv1", str(pre.get("voltage")))
-
-    print("  …等待 9 秒（跨过 3 轮 live 重建）…")
-    c.pump(9)
-    post = snapshot(c)
-    check("F 9 秒后电压仍是 lv1", post.get("voltage") == "lv1", str(post.get("voltage")))
-
-    # ---------- D/E. 保存并核验后端 ----------
-    print("\n--- D/E. 保存后后端配置与生效门槛应正确 ---")
-    saved = c.js("""(function(){
-      var btn = document.querySelector('#monComputeBody [data-tariff-save]')
-             || document.querySelector('#monComputeBody .tariff-save');
-      if (!btn) return 'NO_SAVE_BTN';
-      btn.click();
+    # ---------- D. 保存 → 后端持久化 ----------
+    print("\n--- D. 改单价 → 保存 → 后端持久化 ---")
+    set_field(c, "[data-tariff-rate]", "0.7777")
+    c.js("""(function(){
+      var tb = %s;
+      var b = tb.querySelector('[data-tariff-save]');
+      if (b) b.click();
       return 'clicked';
-    })()""")
-    check("找到并点击了保存按钮", saved == "clicked", str(saved))
-    c.pump(4)
+    })()""" % TB)
+    c.pump(3)
+    j1 = api("/api/power/tariff")
+    check("D 后端单价 = 0.7777",
+          abs(float((j1.get("config") or {}).get("rate")) - 0.7777) < 1e-9,
+          (j1.get("config") or {}).get("rate"))
+    st2 = snapshot(c)
+    check("D 面板回显 0.7777", str(st2.get("rate")) == "0.7777", st2.get("rate"))
+    # ⚠️ 「已保存」提示 2.5 秒后自动清除 —— 探针 pump(3) 时可能已过期，
+    #    所以这里只验证**保存确实生效**（后端持久化 + 面板回显），
+    #    提示文案的正确性由前端单测覆盖。
+    btn_state = c.js(
+        "(function(){var tb = %s;"
+        "var b = tb.querySelector('[data-tariff-save]');"
+        "return b ? (b.disabled ? 'disabled' : 'enabled') : 'NO_BTN';})()"
+        % TB)
+    check("D 保存后按钮恢复可用（不再是 disabled）",
+          btn_state == "enabled", btn_state)
 
-    cfg = api("/api/power/tariff")
-    conf = cfg.get("config", {})
-    check("D 后端 region=sichuan", conf.get("region") == "sichuan",
-          str(conf.get("region")))
-    check("D 后端 voltage=lv1", conf.get("voltage") == "lv1",
-          str(conf.get("voltage")))
-    check("D 后端已无 household_people 键（v1.1.62）",
-          "household_people" not in conf, sorted(conf.keys()))
-    check("D 后端已无 meter_months 键（v1.1.62）",
-          "meter_months" not in conf, sorted(conf.keys()))
+    # ---------- E. 能耗卡片显示新单价 ----------
+    print("\n--- E. 能耗卡片按新单价显示 ---")
+    st3 = api("/api/power/stats")
+    check("E 后端 rate_yuan_per_kwh = 0.7777",
+          abs(float(st3.get("rate_yuan_per_kwh")) - 0.7777) < 1e-6,
+          st3.get("rate_yuan_per_kwh"))
+    check("E tariff_mode = fixed", st3.get("tariff_mode") == "fixed",
+          st3.get("tariff_mode"))
+    check("E 无阶梯字段 current_tier", "current_tier" not in st3,
+          str([k for k in st3 if 'tier' in k]))
+    check("E 无阶梯字段 tier_kwh", "tier_kwh" not in st3)
+    check("E 无谷段字段 valley_kwh", "valley_kwh" not in st3)
+    check("E eff_rate = 生效单价（不再反推均价）",
+          abs(float(st3.get("eff_rate_yuan_per_kwh")) - 0.7777) < 1e-4,
+          st3.get("eff_rate_yuan_per_kwh"))
+    check("E proj_rate = 同一单价",
+          abs(float(st3.get("proj_rate_yuan_per_kwh")) - 0.7777) < 1e-4,
+          st3.get("proj_rate_yuan_per_kwh"))
+    if st3.get("month_kwh"):
+        expect = round(float(st3["month_kwh"]) * 0.7777, 2)
+        check("E month_yuan = month_kwh × 0.7777",
+              abs(float(st3.get("month_yuan")) - expect) < 0.02,
+              "%.4f vs %.4f" % (st3.get("month_yuan"), expect))
 
-    # ⚠️ v1.1.62：生效门槛回到官方基准（无人口加成、无抄表周期放大）
-    tiers = cfg.get("active_tiers") or []
-    check("E 一档生效门槛 180（官方基准）",
-          abs((tiers[0] if tiers else 0) - 180.0) < 0.01, str(tiers))
-    check("E 二档生效门槛 280（官方基准）",
-          abs((tiers[1] if len(tiers) > 1 else 0) - 280.0) < 0.01, str(tiers))
-    check("E describe 不再返回 multi_person_extra",
-          "multi_person_extra" not in cfg, sorted(cfg.keys()))
+    # ---------- F. live 重建不丢用户输入 ----------
+    print("\n--- F. live 重建（9 秒）不丢正在输入的单价 ---")
+    set_field(c, "[data-tariff-rate]", "0.9999")
+    c.pump(9)
+    st4 = snapshot(c)
+    check("F live 重建后仍保留 0.9999", str(st4.get("rate")) == "0.9999",
+          st4.get("rate"))
 
-    # 峰价按电压等级（lv1 = 不满1千伏）
-    peak = cfg.get("profile", {}).get("peak_rates")
-    check("D 保存后峰价仍为不满1千伏 0.5224",
-          peak is not None and abs(peak[0] - 0.5224) < 0.0001, str(peak))
-
-    # ---------- G. 重载后仍在 ----------
-    print("\n--- G. 重载页面后配置应持久化 ---")
+    # ---------- G. 重载页面后仍在 ----------
+    print("\n--- G. 重载页面后仍是已保存的值 ---")
     c.send("Page.navigate", {"url": URL})
     c.pump(7)
     c.js("var b=document.querySelector('[data-tab=monitor]');if(b)b.click();'ok'")
     c.pump(3)
     c.js("window.FnStyleCompute.open('power', window.FnStyleMonitor.lastData());'ok'")
     c.pump(4)
-    st7 = snapshot(c)
-    check("G 重载后电压仍为 lv1", st7.get("voltage") == "lv1", str(st7.get("voltage")))
-    check("G 重载后仍无人口控件", st7.get("hasPeople") is False)
-    check("G 重载后仍无抄表周期控件", st7.get("hasMeter") is False)
+    st5 = snapshot(c)
+    check("G 重载后单价 = 0.7777（后端持久化）",
+          str(st5.get("rate")) == "0.7777", st5.get("rate"))
 
-    # ---------- H2. 切地区后回落 ----------
-    print("\n--- H2. 切到天津后电压控件应消失且不留残值 ---")
-    set_field(c, "[data-tariff-region]", "tianjin")
-    c.pump(3)
-    st8 = snapshot(c)
-    check("H2 切天津后电压控件消失", st8.get("hasVoltage") is False)
-    check("H2 切天津后面板文本不含「千伏」",
-          "千伏" not in (st8.get("panelText") or ""),
-          (st8.get("panelText") or "")[:120])
+    # ---------- 收尾：还原默认单价 ----------
+    print("\n--- 收尾：还原默认单价 0.5224 ---")
+    api("/api/power/tariff", "POST", {"rate": 0.5224})
+    jf = api("/api/power/tariff")
+    check("收尾：单价已还原 0.5224",
+          abs(float((jf.get("config") or {}).get("rate")) - 0.5224) < 1e-9,
+          (jf.get("config") or {}).get("rate"))
 
-    set_field(c, "[data-tariff-region]", "sichuan")
-    c.pump(3)
-    st9 = snapshot(c)
-    # ⚠️ 口径说明：voltage 是**全局配置**（不是按地区存），
-    #    所以切回四川应**恢复已保存的值**，而不是清空。
-    check("H2 切回四川后电压恢复为已保存的 lv1",
-          st9.get("voltage") == "lv1", repr(st9.get("voltage")))
-
-    # ---------- 截图 ----------
-    set_field(c, "[data-tariff-voltage]", "lv2")
-    c.pump(2)
-    c.js("""(function(){ var tb = %s;
-      if (tb) tb.scrollIntoView({block:'center'}); return 'ok'; })()""" % TB)
-    c.pump(1.5)
-    shot = c.send("Page.captureScreenshot", {"format": "png"})
-    import base64
-    with open("/tmp/fnstyle_v1162_tariff_cfg.png", "wb") as f:
-        f.write(base64.b64decode(shot["data"]))
-    print("\n  截图已保存：/tmp/fnstyle_v1162_tariff_cfg.png")
-
-    # ---------- 还原配置 ----------
-    print("\n--- 还原配置 ---")
-    # ⚠️ 同样要显式给 "lv1"：空串是「继承旧值」语义，
-    #    跑测结束时电压可能已被改成 lv2 → 空串会把 lv2 留下来。
-    api("/api/power/tariff", "POST", {
-        "region": "sichuan", "enabled": True,
-        "valley_start": 23, "valley_end": 7,
-        "voltage": "lv1",
-    })
-    rc = api("/api/power/tariff").get("config", {})
-    check("还原成功（voltage=lv1 默认档）",
-          rc.get("voltage") == "lv1"
-          and "household_people" not in rc
-          and "meter_months" not in rc, str(rc))
-
-    print("\n" + "=" * 56)
+    print("\n" + "=" * 60)
     print("通过 %d 项，失败 %d 项" % (PASSN[0], len(FAIL)))
+    print("=" * 60)
     if FAIL:
         for f in FAIL:
-            print("  ✗ " + f)
-        print("实机验证未通过")
-        return 1
-    print("实机验证全部通过")
-    return 0
+            print("  ✗ %s" % f)
+        raise SystemExit(1)
+    print("🎉 全部通过")
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()

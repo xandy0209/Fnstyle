@@ -43,8 +43,9 @@ RANGE_SECONDS = {
 HISTORY_INTERVAL = 60
 
 # 「本月预计电费」的默认估算单价（元/kWh）
-# ⚠️ v1.1.62：成都（四川）一户一表居民不满 1 千伏**第一档**高峰平段电价。
-#    实际取值从电价配置 proj_rate 读（用户可改），这里只是兜底常量。
+# ⚠️ v1.1.63：已随电价模型简化而废弃 —— 现在「电费单价」只有一个，
+#    实际计费与预计电费共用它。权威值在 power_tariff.DEFAULT_RATE，
+#    这里只是给旧调用点留一个同名兜底常量。
 DEFAULT_PROJ_RATE = 0.5224
 
 
@@ -291,71 +292,38 @@ def _integrate_points(pts, default_dt=60.0, since_ts=None):
             tail_by_hour[hh] = tail_by_hour.get(hh, 0.0) + e
             out["by_hour"][hh] = out["by_hour"].get(hh, 0.0) + e
 
-    # ---- 3) 按谷时段拆成平段 / 谷段 ----
-    try:
-        import power_tariff as pt
-        cfg = pt.load_config()
-        vs = int(cfg.get("valley_start", 23)) % 24
-        ve = int(cfg.get("valley_end", 7)) % 24
-    except Exception:
-        vs, ve = 23, 7
-
-    # ⚠️ v1.1.61 修复（真实缺陷）：原来这里是「从 vs 逐小时数到 ve」
-    #   的循环，**vs == ve 时会数满 24 小时** → 谷段覆盖全天，
-    #   全部电量按低谷价计费。
-    #   用户在面板上把「低谷时段 起」和「止」设成同一个点时，
-    #   语义上应该是**空区间**（谷段时长为 0），而不是全天。
-    #   现在与 power_tariff._in_hours 的语义对齐：
-    #     · vs == ve → 空区间（除非 vs == 0，那才是真正的 0-24）
-    #     · vs > ve  → 跨零点（23→7 这类）
-    #     · vs < ve  → 普通区间
-    valley_hours = set()
-    if vs == ve:
-        if vs == 0:
-            valley_hours = set(range(24))
-    elif vs < ve:
-        valley_hours = set(range(vs, ve))
-    else:
-        valley_hours = set(list(range(vs, 24)) + list(range(0, ve)))
-
-    for hh, v in out["by_hour"].items():
-        if hh in valley_hours:
-            out["valley"] += v
-        else:
-            out["flat"] += v
+    # ---- 3) ⚠️ v1.1.63：不再按谷时段拆分 ----
+    #   电价模型已简化为「总量 × 单一单价」，不区分峰谷时段。
+    #   这里的 flat/valley 拆分（以及谷时段起止配置）随之废弃，
+    #   全部电量一律计入 flat（= 总量）。
+    #   保留 by_hour 分桶 —— 每日柱状图与前端其它展示仍要用。
+    out["flat"] = 0.0
+    out["valley"] = 0.0
+    for _hh, _v in out["by_hour"].items():
+        out["flat"] += _v
     out["total"] = out["flat"] + out["valley"]
     return out
 
 
 def split_energy_by_period(cfg=None, months=1):
-    """把**计费周期**已用电量拆成谷段 / 平段。
+    """把**计费周期**已用电量统计出来。
 
-    参数：
-      months  计费周期月数（1 = 本月；2 = 两个月抄一次的双月周期）。
-              ⚠️ 抄表周期为两个月时，电价表按双月结算 → 档位门槛 ×2
-                 （川发改价格〔2012〕560号五），用电量口径也必须取**双月**，
-                 否则门槛翻倍而电量不翻倍 → 严重低估电费。
+    ⚠️ v1.1.63：电价模型已简化为「总量 × 单一单价」，不再按谷时段拆分，
+       也不再区分计费周期月数（抄表周期配置项 v1.1.62 已删）。
+       months 参数保留只为兼容旧调用点，实际一律按当月统计。
 
     返回 {"total", "flat", "valley", "by_hour"}（kWh）。
+       flat = total（全部电量），valley 恒为 0（不再分谷段）。
     """
     now = time.time()
     lt = time.localtime(now)
-    try:
-        m = max(1, int(months or 1))
-    except Exception:
-        m = 1
-    if m <= 1:
-        y, mo = lt.tm_year, lt.tm_mon
-    else:
-        # 回退 m-1 个月（跨年自动处理）
-        total_m = lt.tm_year * 12 + (lt.tm_mon - 1) - (m - 1)
-        y, mo = total_m // 12, total_m % 12 + 1
+    y, mo = lt.tm_year, lt.tm_mon
     month_start = time.mktime((y, mo, 1, 0, 0, 0, 0, 0, -1))
     return _integrate_points(None, since_ts=month_start)
 
 
 def tariff_bill(flat_kwh, valley_kwh, cfg=None):
-    """按当前电价配置计算电费（阶梯 + 分时）。"""
+    """按当前电价配置计算电费（单一单价 × 总电量）。"""
     try:
         import power_tariff as pt
     except Exception:
@@ -367,23 +335,11 @@ def tariff_bill(flat_kwh, valley_kwh, cfg=None):
 
 
 def update_tier_ledger(flat_kwh, valley_kwh):
-    """把本月**未使用完的阶梯电量**写进台账（供下月结转用）。
+    """阶梯台账 —— ⚠️ v1.1.63 已随阶梯模型一起废弃。
 
-    ⚠️ v1.1.59 重写：原来这里**另写了一份**分档逻辑，
-       与 power_tariff.compute_bill 的口径**不一致**
-       （没算结转额度、没算「一户多人口」加成），
-       导致台账数据自相矛盾，且同月内重复调用会自我污染。
-       现在统一委托给 power_tariff.update_tier_ledger，
-       保证「算出来的账」与「记下来的账」严格一致。
+    保留这个空实现是为了兼容旧调用点（返回 False = 「没写台账」）。
     """
-    try:
-        import power_tariff as pt
-    except Exception:
-        return False
-    try:
-        return bool(pt.update_tier_ledger(flat_kwh, valley_kwh))
-    except Exception:
-        return False
+    return False
 
 
 def daily_energy(rate_yuan_per_kwh=0.6, max_days=30, fill_days=0, eff_rate=None):
@@ -512,25 +468,24 @@ def energy_stats(rate_yuan_per_kwh=0.6, uptime_seconds=None):
         "avg_w": None, "avg_basis": "",
     }
 
-    # ⚠️ v1.1.57：电价模型。
-    #   启用了阶梯+分时后，month_yuan 不再是「月电量 × 单一单价」，
-    #   而要按谷/平拆开 + 阶梯判定来算，与国网账单口径一致。
-    #   未启用时保持原样（单一固定单价），确保向后兼容。
+    # ⚠️ v1.1.63：电价模型简化为**单一单价**。
+    #   电费 = 用电量 × 单价，不分阶梯、不分时段、不分地区。
+    #   rate 参数（来自 /api/power/stats 的调用方）已由服务端改为
+    #   「配置里的 rate」，这里的 rate 只是兜底。
     tariff = None
     split = None
-    bill_months = 1
     try:
         import power_tariff as pt
         tcfg = pt.load_config()
-        if tcfg.get("enabled"):
-            # ⚠️ v1.1.62：抄表周期配置项已删除（自动抄表时代不适用），
-            #   计费窗口固定按**当月**统计。
-            split = split_energy_by_period(tcfg, months=1)
-            tariff = pt.compute_bill(split.get("flat", 0.0), split.get("valley", 0.0), tcfg)
+        split = split_energy_by_period(tcfg, months=1)
+        tariff = pt.compute_bill(split.get("total", 0.0), 0.0, tcfg)
+        # ⚠️ 单一单价下，配置里的 rate 才是权威值 —— 覆盖入口参数
+        if tariff.get("rate") is not None:
+            rate = float(tariff["rate"])
+            result["rate_yuan_per_kwh"] = rate
     except Exception:
         tariff = None
         split = None
-        bill_months = 1
 
     now = time.time()
     lt = time.localtime(now)
@@ -565,35 +520,22 @@ def energy_stats(rate_yuan_per_kwh=0.6, uptime_seconds=None):
         result["today_yuan"] = round(today_kwh * rate, 2)
         result["month_yuan"] = round(month_kwh * rate, 2)
 
-    # ---- 阶梯+分时：覆盖上面的固定单价电费 ----
+    # ---- 单一单价：用配置的单价重算本月电费 ----
     if tariff is not None and split is not None:
         result["month_kwh"] = round(float(split.get("total") or 0.0), 4)
         result["month_yuan"] = round(float(tariff.get("yuan") or 0.0), 2)
+        # 单一单价下「今日已计电费」也按同一单价重算，
+        # 保证界面上的今日/本月电费口径一致。
+        result["today_yuan"] = round(
+            float(result.get("today_kwh") or 0.0) * rate, 2)
         result["tariff_mode"] = tariff.get("mode")
-        result["tariff_region"] = tariff.get("region")
-        result["tariff_region_name"] = tariff.get("region_name")
-        result["valley_kwh"] = round(float(split.get("valley") or 0.0), 4)
-        result["flat_kwh"] = round(float(split.get("flat") or 0.0), 4)
-        result["valley_yuan"] = round(float(tariff.get("valley_yuan") or 0.0), 4)
-        result["flat_yuan"] = round(float(tariff.get("flat_yuan") or 0.0), 4)
-        result["tier_kwh"] = tariff.get("tier_kwh")
-        result["tier_rates"] = tariff.get("tier_rates")
-        # ⚠️ v1.1.62：当前判档结果 —— 界面据此显示「判档依据」
-        #   （判档靠本机自测的月总电量，不是用户输入的数）
-        result["current_tier"] = tariff.get("current_tier")
-        result["tier_limits"] = tariff.get("tier_limits")
-        result["tariff_detail"] = tariff.get("detail")
-        result["valley_label"] = tariff.get("valley_label")
-        result["tariff_carry_in"] = tariff.get("carry_in")
-        # 计费周期月数（v1.1.59）：2 = 两个月抄一次（档位门槛 ×2）
-        result["bill_months"] = int(bill_months or 1)
-        result["tariff_voltage"] = tariff.get("voltage")
-        result["tariff_voltage_name"] = tariff.get("voltage_name")
-        # 本月用电量写进阶梯台账（供下月结转）
-        try:
-            update_tier_ledger(split.get("flat", 0.0), split.get("valley", 0.0))
-        except Exception:
-            pass
+        result["tariff_rate"] = tariff.get("rate")
+        # ⚠️ v1.1.63：阶梯/分时相关字段全部不再输出
+        #   （tier_kwh / tier_rates / current_tier / tier_limits /
+        #    tariff_detail / valley_kwh / valley_label / carry_in /
+        #    tariff_region / tariff_voltage …）
+        #   前端已同步删掉对应的渲染，这里保持后端也不吐，
+        #   避免「接口说有、前端不认」的悬空字段。
 
     # 开机累计：按当前功率 × 开机时长估算
     if uptime_seconds and uptime_seconds > 0:
@@ -644,48 +586,29 @@ def energy_stats(rate_yuan_per_kwh=0.6, uptime_seconds=None):
             result["month_proj_remain_days"] = round(remain_secs / 86400.0, 2)
         # 全年估算：平均功率 × 8.76（8760 小时 / 1000）
         result["year_proj_kwh"] = round(w * 8.76, 1)
-        # 折算成电费（fnmonitor 的 eff = 本月电费 / 本月用电，没数据时用费率）
-        if result["month_kwh"] > 0 and result["month_yuan"] > 0:
-            eff = result["month_yuan"] / result["month_kwh"]
-        else:
-            eff = rate
+        # ⚠️ v1.1.63：单一单价下**不存在「综合均价」这回事** ——
+        #   原来 eff = month_yuan / month_kwh 是反推出来的，
+        #   而 month_yuan 已经被 round(..., 2) 截断到「分」，
+        #   反推回去会与真实单价对不上（实测 0.521 ≠ 0.5224）。
+        #   用户看到「电价 0.521」却填的是 0.5224 → 困惑。
+        #   现在 eff_rate 恒等于生效单价。
+        eff = rate
         result["eff_rate_yuan_per_kwh"] = round(eff, 4)
-        # ⚠️ v1.1.62：「本月预计电费」不再用**均价倒推**。
-        #   旧算法：预计电量 × 本月均价（均价 = 已发生电费 / 已发生电量）。
-        #   问题：这个乘积隐含假设「剩余电量的电价结构与已用部分完全相同」，
-        #   一旦预计电量跨过档位门槛就完全不准，且数字不会随档位跳变。
-        #   老板决定：**不按阶梯算、不区分地区**，统一用成都最低档
-        #   （一户一表居民不满1千伏第一档高峰平段 0.5224 元/kWh），
-        #   并提供手动调整的能力。
-        #   → 这里取配置里的 proj_rate；未启用电价模型时退回默认价。
-        proj_rate = DEFAULT_PROJ_RATE
-        try:
-            import power_tariff as _pt
-            proj_rate = float(_pt.load_config().get("proj_rate")
-                              or DEFAULT_PROJ_RATE)
-        except Exception:
-            pass
-        result["proj_rate_yuan_per_kwh"] = round(proj_rate, 4)
+        # ⚠️ v1.1.63：「本月预计电费」用**同一个单价**。
+        #   原来有两个价：rate（实际计费）与 proj_rate（预计电费估算价），
+        #   两者可能不一致 → 界面上「已计电费」和「预计电费」单价不同，
+        #   用户会困惑。现在电价只有一个「电费单价」，两边都用它。
+        result["proj_rate_yuan_per_kwh"] = round(rate, 4)
         if result["month_proj_kwh"] is not None:
             result["month_proj_yuan"] = round(
-                result["month_proj_kwh"] * proj_rate, 2)
+                result["month_proj_kwh"] * rate, 2)
         if result["year_proj_kwh"] is not None:
-            result["year_proj_yuan"] = round(result["year_proj_kwh"] * proj_rate, 2)
+            result["year_proj_yuan"] = round(result["year_proj_kwh"] * rate, 2)
 
-    # ---- 阶梯模式：补上电费构成明细，供前端展示 ----
+    # ---- 单一单价模式：补上生效单价，供前端展示 ----
     if tariff is not None:
         result.setdefault("tariff_mode", tariff.get("mode"))
-        result.setdefault("tariff_region", tariff.get("region"))
-        result.setdefault("tariff_region_name", tariff.get("region_name"))
-        result.setdefault("valley_kwh", round(float(split.get("valley") or 0.0), 4))
-        result.setdefault("flat_kwh", round(float(split.get("flat") or 0.0), 4))
-        result.setdefault("valley_yuan", round(float(tariff.get("valley_yuan") or 0.0), 4))
-        result.setdefault("flat_yuan", round(float(tariff.get("flat_yuan") or 0.0), 4))
-        result.setdefault("tier_kwh", tariff.get("tier_kwh"))
-        result.setdefault("tier_rates", tariff.get("tier_rates"))
-        result.setdefault("tariff_detail", tariff.get("detail"))
-        result.setdefault("valley_label", tariff.get("valley_label"))
-        result.setdefault("tariff_carry_in", tariff.get("carry_in"))
+        result.setdefault("tariff_rate", tariff.get("rate"))
 
     return result
 

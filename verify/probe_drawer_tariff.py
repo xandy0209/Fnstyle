@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""CDP 探针 v1.1.57：打开实机能耗抽屉，断言抽屉原有内容 + 电价面板同时存在，并截图。"""
+"""CDP 探针 v1.1.63：打开实机能耗抽屉，断言抽屉原有内容 + 电价面板同时存在，并截图。
+
+v1.1.63：电价面板简化为单一「电费单价」输入框 + 口径说明，
+探针断言随之调整（无地区/电压/谷时段/档位表控件）。
+"""
 import base64
 import json
 import time
@@ -49,22 +53,30 @@ PROBE = r"""
     out.tariffBoxDisplay = st.display;
     out.tariffBoxVisibility = st.visibility;
   }
-  /* 面板里的关键控件 */
+  /* 面板里的关键控件（v1.1.63：只剩单价输入框 + 说明 + 保存） */
   if (tb) {
+    var rt = tb.querySelector('[data-tariff-rate]');
+    var note = tb.querySelector('[data-tariff-note]');
     out.panelControls = {
+      rate: !!rt,
+      note: !!note,
+      save: !!tb.querySelector('[data-tariff-save]'),
+      /* 以下应全部为 false */
       switch: !!tb.querySelector('[data-tariff-enabled]'),
       region: !!tb.querySelector('[data-tariff-region]'),
       valleyStart: !!tb.querySelector('[data-tariff-vstart]'),
       valleyEnd: !!tb.querySelector('[data-tariff-vend]'),
-      rate: !!tb.querySelector('[data-tariff-rate]'),
-      save: !!tb.querySelector('[data-tariff-save]')
+      voltage: !!tb.querySelector('[data-tariff-voltage]'),
+      people: !!tb.querySelector('[data-tariff-people]'),
+      meter: !!tb.querySelector('[data-tariff-meter]'),
+      projRate: !!tb.querySelector('[data-tariff-proj-rate]'),
+      season: !!tb.querySelector('[data-tariff-season]'),
+      table: !!tb.querySelector('.tariff-table')
     };
-    var reg = tb.querySelector('[data-tariff-region]');
-    out.regionValue = reg ? reg.value : null;
-    out.regionOptions = reg ? Array.prototype.map.call(reg.options, function (o) {
-      return o.value + '=' + o.textContent; }) : [];
-    var tbl = tb.querySelector('.tariff-table');
-    out.tableText = tbl ? tbl.innerText.replace(/\s+/g, ' ').trim() : null;
+    out.rateValue = rt ? rt.value : null;
+    out.noteText = note ? note.innerText.replace(/\s+/g, ' ').trim() : null;
+    out.inputCount = tb.querySelectorAll('input').length;
+    out.selectCount = tb.querySelectorAll('select').length;
   }
   /* 用电与电费区是否已异步回填 */
   var en = body.querySelector('[data-pwr-energy]');
@@ -185,9 +197,9 @@ def main():
                           "if(b) b.scrollTop=0;} 'ok'"})
     c.pump(1)
     shot = c.send("Page.captureScreenshot", {"format": "png"})
-    with open("/tmp/fnstyle_drawer_v1157.png", "wb") as f:
+    with open("/tmp/fnstyle_drawer_v1163.png", "wb") as f:
         f.write(base64.b64decode(shot["data"]))
-    print("\nscreenshot -> /tmp/fnstyle_drawer_v1157.png")
+    print("\nscreenshot -> /tmp/fnstyle_drawer_v1163.png")
     ws.close()
 
 

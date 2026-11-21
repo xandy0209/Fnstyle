@@ -1854,83 +1854,26 @@
        ⚠️ v1.1.56：标题栏两个徽标（来源 / 本月预估电费）与摘要行
           （#monPowerDek）已按用户要求删除 —— 电价与口径说明
           下沉到「本月预计电费」格里，避免同一屏出现 3 处电费数字。 */
-    /* 电价文案：优先用后端算出的「本月实际均价 eff_rate_yuan_per_kwh」
-       （无数据时回落到配置的 rate_yuan_per_kwh）。
-       fnmonitor 用 eff = 本月电费 / 本月用电，没有分时电价时
-       它与基础电价相同，这里保持同一口径。
-       ⚠️ v1.1.57：启用阶梯+分时后，eff 已包含谷段优惠，
-          单纯的「电价 0.6 元/kWh」会误导（用户会以为是统一单价）。
-          此时改成展示「谷/平构成 + 综合单价」。 */
+    /* ⚠️ v1.1.63：电价模型简化为**单一单价**。
+       电费 = 用电量 × 单价，不分阶梯、不分时段、不分地区。
+       所以这里不再有「谷/平构成胶囊」与「判档依据行」——
+       老板决定：全部删掉，只留单价说明。 */
     var effRate = (pstats && pstats.eff_rate_yuan_per_kwh)
       ? Number(pstats.eff_rate_yuan_per_kwh)
       : Number(rate);
-    var rateTxt = String(Math.round(effRate * 1000) / 1000);
-    /* 阶梯模式：后端会返回 tariff_mode / valley_kwh / flat_kwh 等字段 */
-    var tiered = pstats && pstats.tariff_mode === 'tiered';
-    var hasValley = tiered && pstats.valley_kwh !== null &&
-      pstats.valley_kwh !== undefined && pstats.valley_kwh > 0;
-    var rateBlock;
-    if (tiered && hasValley) {
-      /* 谷/平构成：两个胶囊并排 */
-      var vKwh = fnKwh(pstats.valley_kwh);
-      var fKwh = fnKwh(pstats.flat_kwh);
-      var vRate = pstats.tariff_detail && pstats.tariff_detail.length
-        ? Number(pstats.tariff_detail[0].valley_rate) : null;
-      var fRate = pstats.tariff_detail && pstats.tariff_detail.length
-        ? Number(pstats.tariff_detail[0].peak_rate) : null;
-      var vRateTxt = (vRate !== null && !isNaN(vRate))
-        ? String(Math.round(vRate * 1000) / 1000) : '—';
-      var fRateTxt = (fRate !== null && !isNaN(fRate))
-        ? String(Math.round(fRate * 1000) / 1000) : '—';
-      rateBlock =
-        '<div class="sub sub-rate" title="本月实际均价 ' + esc(rateTxt) +
-          ' 元/kWh（谷段与平段按各自单价计费后加权）">' +
-          '<span class="rate-lbl">均价</span>' + esc(rateTxt) + ' 元/kWh</div>' +
-        '<div class="sub sub-split" title="谷段 ' + esc(pstats.valley_label || '') +
-          '，' + esc(vKwh) + ' kWh × ' + esc(vRateTxt) + ' 元/kWh；' +
-          '平段 ' + esc(fKwh) + ' kWh × ' + esc(fRateTxt) + ' 元/kWh">' +
-          '<span class="rate-tag rate-tag-v">谷</span>' + esc(vKwh) + ' kWh' +
-          '<span class="rate-tag rate-tag-f">平</span>' + esc(fKwh) + ' kWh</div>';
-    } else {
-      rateBlock =
-        '<div class="sub sub-rate" title="电价（本月实际均价）：' + esc(rateTxt) +
-          ' 元/kWh"><span class="rate-lbl">电价</span>' + esc(rateTxt) +
-          ' 元/kWh</div>';
-    }
-    /* ⚠️ v1.1.62：判档依据说明
-       老板的原话：「我没有输入电量，你怎么知道是按那个阶段进行计费呢？」
-       → 判档靠的是 **FnStyle 自测的本机月总电量**（不是用户输入的数），
-         所以必须把这句话直接写在界面上，让用户知道按什么判的档。
-       后端给的是：current_tier（当前第几档）+ tier_limits（各档累计上限）。 */
-    var tierHint = '';
-    var curTier = Number((pstats && pstats.current_tier) || 0);
-    var tLimits = (pstats && pstats.tier_limits) || null;
-    if (curTier > 0 && tLimits) {
-      /* ⚠️ tier_limits 是**各档累计上限**：[180, 280, null]
-         → 第 N 档的下界 = 第 N-1 档的上限（第 1 档下界 = 0），
-           上界 = tier_limits[N-1]。
-         ⚠️ v1.1.62 修 bug：原实现把 tier_limits[N-1]（本档**上界**）
-            当成了下界 lo，再算 lo+1–hi → 第 1 档显示成「181–180 度」。
-         现在与电价面板档位表的 bandLabel() 口径完全一致。 */
-      var lo = 0;
-      for (var ti = 1; ti < curTier; ti++) {
-        var pv = tLimits[ti - 1];
-        if (pv !== null && pv !== undefined) { lo = Number(pv); }
-      }
-      var lim2 = tLimits[curTier - 1];
-      var hi = (lim2 === null || lim2 === undefined) ? null : Number(lim2);
-      var rangeTxt = hi === null
-        ? (lo > 0 ? (lo + 1) + ' 度以上' : '不限')
-        : (lo > 0 ? (lo + 1) + '–' + hi + ' 度' : '0–' + hi + ' 度');
-      tierHint = '<div class="sub sub-tier" title="FnStyle 按本机实测的月总电量（峰+平+谷）' +
-        '判定档位，不是按手工输入的电量。本月共 ' +
-        esc(fnKwh(pstats && pstats.month_kwh)) + ' kWh → 第 ' + curTier + ' 档">' +
-        '判档：本月 ' + esc(fnKwh(pstats && pstats.month_kwh)) +
-        ' kWh → 第 ' + curTier + ' 档（' + esc(rangeTxt) + '）</div>';
-    }
+    /* ⚠️ v1.1.63：单价统一显示 **4 位小数**。
+       原来这里取 3 位（Math.round(effRate*1000)/1000）→ 0.5224 被截成
+       0.522，而同一张卡片里的 .sub-proj-rate 用 4 位显示 0.5224，
+       结果**同屏两个胶囊显示不同精度的同一个单价**（实机截图确认）。
+       现在两处都用 4 位，且与电价面板输入框的 step（0.0001）一致。 */
+    var rateTxt = String(Math.round(effRate * 10000) / 10000);
+    var rateBlock =
+      '<div class="sub sub-rate" title="电费单价：' + esc(rateTxt) +
+        ' 元/kWh（按用电量 × 单价估算，不分阶梯档位、不分峰谷时段、不分地区）">' +
+        '<span class="rate-lbl">电价</span>' + esc(rateTxt) +
+        ' 元/kWh</div>';
 
-    /* ⚠️ v1.1.62：「本月预计电费」改为「预计电量 × 估算单价」，
-       单价默认取成都最低档（0.5224），可在电价面板里手改，不再按阶梯算。 */
+    /* ⚠️ v1.1.63：「本月预计电费」用**同一个单价**（与已计电费一致）。 */
     var projRate = Number((pstats && pstats.proj_rate_yuan_per_kwh) || 0);
     var projRateTxt = projRate > 0
       ? (Math.round(projRate * 10000) / 10000) + ' 元/kWh'
@@ -1951,15 +1894,15 @@
           esc(fnKwh(pstats && pstats.month_kwh)) + ' kWh × ' +
           esc(String(rate)) + ' 元/kWh">已计电费 ' +
           fnYuan(pstats && pstats.month_yuan) + '</div>' +
-        tierHint + '</div>' +
+        '</div>' +
       '<div class="stat-cell"><div class="eyebrow">本月预计电费</div>' +
         '<div class="dnum"><span class="dm">' + esc(fnYuan(pstats && pstats.month_proj_yuan)) + '</span></div>' +
         '<div class="sub" title="本月已用 + 剩余天数按平均功耗推算">约 ' +
           fnKwh(pstats && pstats.month_proj_kwh) + ' kWh · 剩余天数按' +
           esc(pstats && pstats.avg_basis || '平均') + ' ' +
           fnD1(pstats && pstats.avg_w) + ' W</div>' +
-        '<div class="sub sub-proj-rate" title="预计电费 = 预计电量 × 估算单价。' +
-          '估算单价默认取成都最低档（0.5224 元/kWh），可在电价面板里手动调整">' +
+        '<div class="sub sub-proj-rate" title="预计电费 = 预计电量 × 电费单价。' +
+          '单价默认取成都最低档（0.5224 元/kWh），可在电价面板里手动调整">' +
           '按 ' + esc(projRateTxt) + ' 估算</div>' +
         rateBlock + '</div>' +
       '<div class="stat-cell"><div class="eyebrow">全年估算<span class="pill est-pill">估算</span></div>' +
@@ -2600,8 +2543,9 @@
       '<span class="k">今日</span><span class="v">统计加载中…</span></div></div>';
 
     /* --- ⑤-b 电价设置（v1.1.57）---
-       阶梯 + 分时电价的开关与参数。放在「用电与电费」正下方，
-       因为它决定上面那些电费数字怎么算出来的 —— 紧邻才合乎阅读顺序。 */
+       ⚠️ v1.1.63：面板已简化为**单一电费单价**（不分阶梯/分时/地区）。
+       放在「用电与电费」正下方，因为它决定上面那些电费数字怎么算出来的
+       —— 紧邻才合乎阅读顺序。 */
     html += '<div class="mon-cmp-sec"><span>电价设置</span>' +
       '<span class="faint">影响本页电费计算</span></div>';
     html += '<div class="tariff-box" data-tariff-box>' +
@@ -2762,14 +2706,10 @@
   var pwrEnergyCache = null, pwrEnergyAt = 0, PWR_ENERGY_TTL = 60000;
   function applyPowerEnergy(box, j) {
     if (!box || !j) return;
-    var tiered = j.tariff_mode === 'tiered';
+    /* ⚠️ v1.1.63：单一单价，不再区分「阶梯/固定」两种模式。 */
     var rateEl = box.querySelector('[data-pwr-rate]');
     if (rateEl) {
-      if (tiered) {
-        rateEl.textContent = j.tariff_region_name || '阶梯电价';
-      } else {
-        rateEl.textContent = '电价 ' + (j.rate_yuan_per_kwh || 0.6) + ' 元/kWh';
-      }
+      rateEl.textContent = '电价 ' + (j.rate_yuan_per_kwh || 0.5224) + ' 元/kWh';
     }
     var host = box.querySelector('[data-pwr-energy]');
     if (!host) return;
@@ -2778,33 +2718,8 @@
         fmtKwh(j.today_kwh) + ' kWh · ' + fmtYuan(j.today_yuan) + ' 元</span></div>' +
       '<div class="mon-dkv-row"><span class="k">本月</span><span class="v">' +
         fmtKwh(j.month_kwh) + ' kWh · ' + fmtYuan(j.month_yuan) + ' 元</span></div>';
-    /* ⚠️ v1.1.57：阶梯模式下补谷/平构成，否则「本月 xx 元」无从解释 */
-    if (tiered && j.valley_kwh !== null && j.valley_kwh !== undefined) {
-      var det = j.tariff_detail || [];
-      var vr = det.length ? det[0].valley_rate : null;
-      var pr = det.length ? det[0].peak_rate : null;
-      var vrTxt = (vr === null || vr === undefined) ? '—' : vr;
-      var prTxt = (pr === null || pr === undefined) ? '—' : pr;
-      rows += '<div class="mon-dkv-row"><span class="k">谷段' +
-        (j.valley_label ? '（' + j.valley_label + '）' : '') +
-        '</span><span class="v">' + fmtKwh(j.valley_kwh) + ' kWh · ' +
-        vrTxt + ' 元/kWh · ' + fmtYuan(j.valley_yuan) + ' 元</span></div>';
-      rows += '<div class="mon-dkv-row"><span class="k">平段</span><span class="v">' +
-        fmtKwh(j.flat_kwh) + ' kWh · ' + prTxt + ' 元/kWh · ' +
-        fmtYuan(j.flat_yuan) + ' 元</span></div>';
-      rows += '<div class="mon-dkv-row"><span class="k">本月均价</span><span class="v">' +
-        (j.eff_rate_yuan_per_kwh !== undefined && j.eff_rate_yuan_per_kwh !== null
-          ? j.eff_rate_yuan_per_kwh : '—') + ' 元/kWh</span></div>';
-      if (j.tier_kwh && j.tier_kwh.length === 3) {
-        var names = ['一档', '二档', '三档'];
-        for (var ti = 0; ti < 3; ti++) {
-          if (!j.tier_kwh[ti]) continue;
-          rows += '<div class="mon-dkv-row"><span class="k">' + names[ti] +
-            '电量</span><span class="v">' + fmtKwh(j.tier_kwh[ti]) +
-            ' kWh</span></div>';
-        }
-      }
-    }
+    /* ⚠️ v1.1.63：谷/平构成行、逐档电量行全部删除 ——
+       电价模型已简化为「总量 × 单一单价」，没有分段也没有档位。 */
     rows += '<div class="mon-dkv-row"><span class="k">开机以来（按当前功率估）</span><span class="v">' +
       fmtKwh(j.boot_kwh) + ' kWh</span></div>';
     host.innerHTML = rows;
@@ -2831,160 +2746,32 @@
      -------------------------------------------------------------------------- */
   var tariffCache = null, tariffAt = 0, TARIFF_TTL = 60000;
 
+  /* 电价面板（v1.1.63 简化版）
+     ------------------------------------------------------------
+     老板决定：「不使用阶梯电价计费方式，根据成都最低档对应的电价进行计算
+     （并提供可配置能力），删除阶梯计费和档位信息等，也不区分区域，
+     就是一个电费单价的配置，并增加对应的说明即可。」
+
+     → 面板里**只剩一个输入框**：电费单价（元/kWh）
+     → 删掉：启用开关 / 地区下拉 / 低谷时段 / 电压等级 /
+             档位价目表 / 季节参数 / 自定义单价 / 预计电费单价
+     → 下面配一段**口径说明**（后端给的 note），讲清楚这个单价怎么用。 */
   function tariffPanelHtml(d) {
     var cfg = (d && d.config) || {};
-    var prof = (d && d.profile) || {};
-    var list = (d && d.profiles) || [];
     var html = '';
 
-    /* 开关 */
-    html += '<label class="tariff-switch">' +
-      '<input type="checkbox" data-tariff-enabled' +
-      (cfg.enabled ? ' checked' : '') + '>' +
-      '<span class="tariff-switch-text">启用阶梯电价与分时电价</span></label>';
-
-    /* 地区选择 */
-    html += '<div class="tariff-field"><span class="tariff-lbl">地区</span>' +
-      '<select class="tariff-select" data-tariff-region>';
-    list.forEach(function (p) {
-      html += '<option value="' + esc(p.id) + '"' +
-        (p.id === cfg.region ? ' selected' : '') + '>' + esc(p.name) + '</option>';
-    });
-    html += '</select></div>';
-
-    /* 谷时段（仅在执行分时的地区显示） */
-    if (prof.has_time_of_use !== false) {
-      html += '<div class="tariff-field"><span class="tariff-lbl">低谷时段</span>' +
-        '<select class="tariff-select tariff-h" data-tariff-vstart>';
-      for (var h = 0; h < 24; h++) {
-        html += '<option value="' + h + '"' +
-          (Number(cfg.valley_start) === h ? ' selected' : '') + '>' +
-          (h < 10 ? '0' : '') + h + ':00</option>';
-      }
-      html += '</select><span class="tariff-sep">至</span>' +
-        '<select class="tariff-select tariff-h" data-tariff-vend>';
-      for (var h2 = 0; h2 < 24; h2++) {
-        html += '<option value="' + h2 + '"' +
-          (Number(cfg.valley_end) === h2 ? ' selected' : '') + '>' +
-          (h2 < 10 ? '0' : '') + h2 + ':00</option>';
-      }
-      html += '</select></div>';
-    }
-
-    /* 电压等级（v1.1.59）
-       官方表分三列：不满1千伏 / 1-10千伏 / 35-110千伏。
-       高峰平段价按电压等级不同；低谷价三档三等级完全相同。 */
-    var levels = prof.voltage_levels || [];
-    if (levels.length) {
-      /* ⚠️ v1.1.61 修复：选中值必须用**该地区生效的电压**（prof.voltage），
-         而不是全局的 cfg.voltage。
-         以前写的是 `cfg.voltage || prof.default_voltage` ——
-         cfg.voltage 是**跨地区共享的全局配置**，切地区后它仍指向
-         旧地区的等级；若该等级在新地区不存在，select 会显示**空白**。
-         现在后端已按「唯一回落规则」算好每个地区的生效电压，
-         这里直接用，规则与后端完全一致。 */
-      var curV = prof.voltage || prof.default_voltage
-        || (levels[0] && levels[0].id) || '';
-      /* 兜底：万一 curV 不在 options 里，选第一项，别留空白 */
-      var curOk = false;
-      for (var ci = 0; ci < levels.length; ci++) {
-        if (levels[ci].id === curV) { curOk = true; break; }
-      }
-      if (!curOk) curV = (levels[0] && levels[0].id) || '';
-      html += '<div class="tariff-field"><span class="tariff-lbl">电压等级</span>' +
-        '<select class="tariff-select" data-tariff-voltage>';
-      levels.forEach(function (lv) {
-        html += '<option value="' + esc(lv.id) + '"' +
-          (lv.id === curV ? ' selected' : '') + '>' + esc(lv.name) + '</option>';
-      });
-      html += '</select></div>';
-    }
-
-    /* ⚠️ v1.1.62：「家庭人口数」与「抄表周期」两个输入项**已删除**。
-       · 「一户多人口」（川发改价格〔2024〕668号）需用户**主动向供电
-         企业申报**才生效（凭户口簿/居住证，自申报成功次月起执行，
-         有效期不超过两年）。软件里填个数字**不代表已获批**，
-         填了却没申报 → 门槛凭空多 100 度 → 电费算高。
-       · 「抄表周期」（川发改价格〔2012〕560号）针对两个月抄表的用户，
-         现在电表基本是自动抄表（远程采集），该场景已不适用。
-       需要这两项的用户，改用「季节参数」里的档位自定义更可控。 */
-
-    /* 手工单价（可留空 = 用地区标准价） */
-    html += '<div class="tariff-field"><span class="tariff-lbl">自定义单价</span>' +
-      '<input class="tariff-input" type="number" step="0.0001" min="0" ' +
-      'data-tariff-rate placeholder="留空则用地区标准价" value="' +
-      (cfg.rate_override === null || cfg.rate_override === undefined
-        ? '' : esc(String(cfg.rate_override))) + '"><span class="tariff-unit">元/kWh</span></div>';
-
-    /* ⚠️ v1.1.62：预计电费单价
-       「本月预计电费」= 预计电量 × 这个单价。
-       老板决定：**不按阶梯算、不区分地区**，统一默认取成都最低档
-       （一户一表居民不满1千伏第一档高峰平段 0.5224 元/kWh），
-       用户按自己的实际电价改一下就行，避免搞得太复杂。 */
-    var projRateVal = (cfg.proj_rate === null || cfg.proj_rate === undefined)
-      ? '0.5224' : String(cfg.proj_rate);
-    html += '<div class="tariff-field"><span class="tariff-lbl">预计电费单价</span>' +
+    /* 电费单价（唯一配置项） */
+    var rateVal = (d && d.rate !== undefined && d.rate !== null)
+      ? d.rate : (cfg.rate === undefined || cfg.rate === null ? 0.5224 : cfg.rate);
+    html += '<div class="tariff-field"><span class="tariff-lbl">电费单价</span>' +
       '<input class="tariff-input" type="number" step="0.0001" min="0" max="10" ' +
-      'data-tariff-proj-rate value="' + esc(projRateVal) + '">' +
-      '<span class="tariff-unit">元/kWh（默认成都最低档 0.5224，不分地区）</span></div>';
+      'data-tariff-rate value="' + esc(String(rateVal)) + '">' +
+      '<span class="tariff-unit">元/kWh</span></div>';
 
-    /* 当前生效的价目表
-       ⚠️ v1.1.58 修复：固定单价地区（has_tiers=false）没有阶梯概念，
-       之前仍渲染三行档位表，第一档显示成「第1档 0–null」——
-       用户反馈「都固定单价了为什么还有档位信息」。
-       现在：**不分阶梯的地区整块不显示价目表**，
-       单价数值并入下面的说明行，不额外加一行（避免同一句话说两遍）。 */
-    var flatRate = null;
-    if (prof.id) {
-      if (prof.has_tiers !== false) {
-        /* ⚠️ v1.1.59：把当前选中的电压等级带进表格，
-           峰价要按该等级取（不满1千伏 / 1-10千伏 / 35-110千伏 三档价不同）。
-           ⚠️ v1.1.61 修复：以前这里用
-             `document.querySelector('#monComputeBody [data-tariff-voltage]')`
-             去 DOM 里捞**上一个面板**的下拉值 —— 但本函数正是在
-             innerHTML 赋值**之前**调用的，此刻 DOM 里还是**旧面板**，
-             捞到的是**旧地区**的电压等级 → 切地区后表格峰价
-             跟着旧地区走。现在统一用 prof.voltage（后端算好的
-             该地区生效电压）；用户**未保存**的选择由
-             restoreTariffForm + syncTariffVoltageTable 处理。 */
-        var tbAct = {};
-        for (var k in d) {
-          if (Object.prototype.hasOwnProperty.call(d, k)) tbAct[k] = d[k];
-        }
-        tbAct.voltage = prof.voltage || '';
-        html += '<div class="tariff-table' +
-          (prof.has_time_of_use !== false ? ' tariff-tb-tou' : '') + '">' +
-          tariffTableHtml(prof, tbAct) + '</div>';
-      } else {
-        /* ⚠️ v1.1.61 修复：固定单价地区的单价也要按**电压等级**取。
-           合表：lv1=0.5464，lv2/lv3=0.5364 —— 以前直接用档案默认
-           peak_rates[0]，用户选了「1-10 千伏」却仍显示 0.5464，
-           同样属于「下拉与显示不一致」。 */
-        var flatPeaks = null;
-        var flatLv = prof.voltage_levels || [];
-        for (var fi = 0; fi < flatLv.length; fi++) {
-          if (flatLv[fi].id === prof.voltage && flatLv[fi].peak_rates) {
-            flatPeaks = flatLv[fi].peak_rates;
-            break;
-          }
-        }
-        if (!flatPeaks) flatPeaks = prof.peak_rates;
-        flatRate = (flatPeaks && flatPeaks[0] !== undefined)
-          ? flatPeaks[0] : null;
-      }
-    }
-
-    /* 季节参数（v1.1.57）：丰水期/枯平期 + 夏季/非夏季 */
-    html += tariffSeasonHtml(prof, d);
-
-    if (prof.note) {
-      /* ⚠️ v1.1.61：固定单价地区的单价随电压等级变（合表 lv1=0.5464，
-         lv2/lv3=0.5364）→ 单价单独放一个 span，便于切换电压时
-         就地更新，不必整块重绘（重绘会丢用户输入）。 */
-      html += '<div class="tariff-note">' + esc(prof.note) +
-        (flatRate !== null
-          ? '（<span data-tariff-flat-rate>' + flatRate + '</span> 元/kWh）'
-          : '') + '</div>';
+    /* 口径说明（后端给的权威文案，避免前后端各写一遍） */
+    var note = (d && d.note) || '';
+    if (note) {
+      html += '<div class="tariff-note" data-tariff-note>' + esc(note) + '</div>';
     }
 
     /* 保存按钮 */
@@ -2994,691 +2781,69 @@
     return html;
   }
 
-  /* 季节参数区块（v1.1.57）
-     ------------------------------------------------------------
-     成都电价有两个季节维度，用户反馈「设置里为什么没有」：
-       · 丰水期(6-10月) / 枯平期(11月-次年5月) → 低谷价不同
-       · 夏季(7-9月) / 其他月                    → 阶梯档位电量不同
-     默认值已按官方口径内置，这里提供**可覆盖**入口：
-       · 地方电网丰枯水期划分可能与国网四川不同
-       · 政策调整后档位会变（如 2026-07 夏季档扩到 260 度）
-     只在有季节维度的地区显示（四川）；天津/固定单价没有 → 整块不出现。 */
-  function tariffSeasonHtml(prof, d) {
-    var wet = prof.wet_months || [];
-    var summer = prof.summer_months || [];
-    /* 两个维度都没有 → 该地区不区分季节，不显示 */
-    if (!wet.length && !summer.length) return '';
-
-    var curMonth = (d && d.current_month) || (new Date().getMonth() + 1);
-    var isWet = !!(d && d.is_wet_season);
-    var isSummer = !!(d && d.is_summer_tier);
-
-    function monthBtns(kind, list) {
-      var html = '<div class="tariff-months" data-tariff-months="' + kind + '">';
-      for (var m = 1; m <= 12; m++) {
-        var on = list.indexOf(m) > -1;
-        html += '<button type="button" class="tariff-month' +
-          (on ? ' on' : '') + '" data-m="' + m + '">' + m + '</button>';
-      }
-      return html + '</div>';
-    }
-
-    function priceInputs(kind, rates, labels) {
-      var html = '<div class="tariff-season-prices">';
-      for (var i = 0; i < 3; i++) {
-        /* 标签在**前**：读作「一档 0.175」比「0.175 一档」自然 */
-        html += '<span class="tariff-season-tag">' + (labels[i] || '') + '</span>' +
-          '<input class="tariff-season-price" type="number" step="0.0001" min="0" ' +
-          'data-tariff-season-price="' + kind + '" data-i="' + i + '" value="' +
-          (rates && rates[i] !== undefined ? rates[i] : '') + '">';
-      }
-      return html + '</div>';
-    }
-
-    function tierInputs(kind, tiers) {
-      var html = '<div class="tariff-season-tier">';
-      for (var i = 0; i < 3; i++) {
-        var v = (tiers && tiers[i] !== undefined && tiers[i] !== null) ? tiers[i] : '';
-        html += '<span class="tariff-season-tag">第' + (i + 1) + '档</span>' +
-          '<input class="tariff-season-price" type="number" step="1" min="0" ' +
-          'placeholder="不限" data-tariff-season-tier="' + kind + '" data-i="' + i +
-          '" value="' + v + '">';
-      }
-      return html + '</div>';
-    }
-
-    /* ⚠️ v1.1.60：季节参数默认**折叠**。
-       这些都是「地方电网口径差异 / 政策调整」才需要改的项，
-       默认值已按官方口径内置，绝大多数用户根本不用动，
-       之前一直平铺着把真正要看的价目表挤到下面去了。
-       头部保留一行摘要（当前季节 + 生效档位），折叠后仍能一眼看到。 */
-    var html = '<div class="tariff-season" data-tariff-season>' +
-      '<button type="button" class="tariff-season-head" data-tariff-season-toggle>' +
-      '<span class="tariff-season-caret" aria-hidden="true"></span>' +
-      '<span>季节参数</span>' +
-      '<span style="flex:1"></span>' +
-      '<span class="tariff-season-sum">当前：' + (isWet ? '丰水期' : '枯平期') +
-      ' · ' + (isSummer ? '夏季档' : '非夏季档') + '</span></button>' +
-      '<div class="tariff-season-body">';
-
-    /* 丰枯水期 */
-    if (wet.length) {
-      html += '<div class="tariff-season-row"><span class="tariff-season-lbl">丰水期月份</span>' +
-        monthBtns('wet', wet) + '</div>';
-      html += '<div class="tariff-season-row"><span class="tariff-season-lbl">丰水期谷价</span>' +
-        priceInputs('wet', prof.valley_rates_wet, ['一档', '二档', '三档']) + '</div>';
-      html += '<div class="tariff-season-row"><span class="tariff-season-lbl">枯平期谷价</span>' +
-        priceInputs('dry', prof.valley_rates_dry, ['一档', '二档', '三档']) + '</div>';
-    }
-
-    /* 夏季档位 */
-    if (summer.length) {
-      html += '<div class="tariff-season-row"><span class="tariff-season-lbl">夏季月份</span>' +
-        monthBtns('summer', summer) + '</div>';
-      html += '<div class="tariff-season-row"><span class="tariff-season-lbl">夏季档位</span>' +
-        tierInputs('summer', prof.tiers_summer) + '</div>';
-      html += '<div class="tariff-season-row"><span class="tariff-season-lbl">其他月档位</span>' +
-        tierInputs('other', prof.tiers_other) + '</div>';
-    }
-
-    html += '</div>';
-
-    /* 当前生效说明 */
-    var notes = [];
-    notes.push(isWet ? '当前处于丰水期（低谷价更低）' : '当前处于枯平期');
-    notes.push(isSummer ? '夏季阶梯档位电量更宽' : '按非夏季档位');
-    html += '<div class="tariff-season-cur">' + esc(notes.join('，')) +
-      '。当前 ' + curMonth + ' 月。修改后需点「保存电价设置」生效。</div>';
-    return html + '</div>';
-  }
-
-  /* 当前地区生效的价目表（阶梯 × 峰谷）
-     ⚠️ v1.1.59：峰价按**当前电压等级**取（不满1千伏 / 1-10千伏 / 35-110千伏
-     三档价不同），否则用户在面板上切了电压等级、表格还是旧的峰价，
-     用户会照着错的价估电费。 */
-  function tariffTableHtml(prof, active) {
-    var peaks = prof.peak_rates || [];
-    /* ⚠️ v1.1.59：按当前选中的电压等级取峰价。
-       active.voltage 为空时回落到 prof.peak_rates（地区默认）。 */
-    if (active && active.voltage) {
-      var lvList = prof.voltage_levels || [];
-      for (var li = 0; li < lvList.length; li++) {
-        if (lvList[li].id === active.voltage && lvList[li].peak_rates) {
-          peaks = lvList[li].peak_rates;
-          break;
-        }
-      }
-    }
-    /* ⚠️ v1.1.60：原来这里的 vw / ts / isSummer / isWet 只服务于
-       下方那段重复说明文字，说明文字改成推导行后它们就没用了，
-       一并删掉，避免留下误导性的死变量。 */
-    var vd = prof.valley_rates_dry || [];
-    var to = prof.tiers_other || [];
-    var hasTou = prof.has_time_of_use !== false;
-
-    /* ⚠️ v1.1.57：阶梯档位**随月份变**（四川 7-9 月是 260/460，
-       其他月是 180/280）。表格必须显示**当前生效**的那套，
-       否则用户会照着错的档位估电费。 */
-    var cur = (active && active.active_tiers) ? active.active_tiers : to;
-    var curV = (active && active.active_valley_rates)
-      ? active.active_valley_rates : (hasTou ? vd : peaks);
-
-    function bandLabel(tiers, i) {
-      var prev = 0;
-      for (var k = 0; k < i; k++) {
-        if (tiers[k] === null || tiers[k] === undefined) return '不限';
-        prev = tiers[k];
-      }
-      var up = tiers[i];
-      if (up === null || up === undefined) return prev + '+';
-      return (prev + 1) + '–' + up;
-    }
-
-    var html = '<div class="tariff-tb-row tariff-tb-head">' +
-      '<span>档位</span><span>电量 (kWh)</span><span>峰/平</span>' +
-      (hasTou ? '<span>低谷</span>' : '') + '</div>';
-    for (var i = 0; i < 3; i++) {
-      html += '<div class="tariff-tb-row">' +
-        '<span>第 ' + (i + 1) + ' 档</span>' +
-        '<span>' + (i === 0 ? '0–' + cur[0] : bandLabel(cur, i)) + '</span>' +
-        '<span>' + (peaks[i] !== undefined ? peaks[i] : '—') + '</span>' +
-        (hasTou
-          ? '<span>' + (curV[i] !== undefined ? curV[i] : '—') + '</span>'
-          : '') +
-        '</div>';
-    }
-    /* ⚠️ v1.1.60：这里原来是一段「7–9 月档位 0–260 / 261–460 / 460+；
-       6–10 月低谷价 0.175，其余月份 0.2535」的说明 ——
-       但这些数字**全是下方季节参数输入框里已经有的**，
-       属于纯重复，且真正该说的「本月生效门槛 490/690 怎么来的」反而没说。
-       现在换成**推导解释行**：讲清楚本月生效档位是怎么算出来的。 */
-    html += tariffDerivationHtml(active);
-
-    return html;
-  }
-
-  /* 推导解释行（v1.1.60）
-     ------------------------------------------------------------
-     表格上方显示的是「本月实际生效门槛」，它 = 基准档位 × 抄表周期
-     + 一户多人口加成 + 跨月结转。用户看到 490/690 不知道来源，
-     这里把推导链写出来。没有放大因素时（如单月抄表、无人口加成），
-     只说明当前用的是哪套基准，不啰嗦。 */
-  /* 推导行：说明「本月生效门槛」是怎么来的
-     ⚠️ v1.1.62：抄表周期 ×2 与一户多人口加成两项已移除，
-        现在只剩「基准档位 + 跨月结转」两环。 */
-  function tariffDerivationHtml(active) {
-    var dv = active && active.tier_derivation;
-    if (!dv || !dv.base_tiers) return '';
-
-    function num(v) {
-      if (v === null || v === undefined) return '';
-      var n = Number(v);
-      if (!isFinite(n)) return '';
-      return (Math.round(n * 100) / 100).toString();
-    }
-    function tierText(tiers) {
-      var out = [];
-      for (var i = 0; i < 3; i++) {
-        var t = tiers && tiers[i];
-        if (t === null || t === undefined) {
-          out.push('不限');
-          break;
-        }
-        out.push(String(num(t)));
-      }
-      return out.join(' / ');
-    }
-
-    var c1 = Number(dv.carry1 || 0);
-    var c2 = Number(dv.carry2 || 0);
-    var limits = dv.limits || [];
-    var parts = [];
-
-    /* ① 基准档位：哪一套在生效 */
-    parts.push('本月生效档位 ' + tierText(limits) + '（' +
-      (dv.base_label || '其他月档位') + '基准 ' + tierText(dv.base_tiers) +
-      '）');
-
-    /* ② 跨月结转 */
-    if (c1 > 0 || c2 > 0) {
-      parts.push('上月结转 +' + num(c1) + (c2 > 0 ? ' / +' + num(c2) : '') + ' 度');
-    }
-
-    /* ③ 当前季节（峰谷价取哪套） */
-    var season = active.is_wet_season ? '丰水期' : '枯平期';
-    parts.push('当前 ' + season + '，低谷价取' + season + '标准');
-
-    return '<div class="tariff-tb-note tariff-tb-derive">生效口径：' +
-      esc(parts.join('；')) + '。</div>';
-  }
-
   /* 采集电价面板的当前表单状态
-     ⚠️ v1.1.58 修复：抽屉每 3 秒 live 重建一次 → body.innerHTML 重置
-     → 电价面板被整体重绘 → 用户**正在输入**的「自定义单价」被清空。
-     现在重绘前先抓一份状态，重绘后回填，用户编辑不丢。
-
-     注意 st.prof 记的是**上一次渲染用的地区**（写在 data-tariff-prof 上），
-     不是下拉框当前值 —— 切地区时下拉值已经变了，但面板内容还是旧地区的，
-     用下拉值判断会导致把旧地区的季节参数搬到新地区去。 */
+     ⚠️ v1.1.63 简化：面板只剩一个「电费单价」输入框。
+        抽屉每 3 秒 live 重建一次 → body.innerHTML 重置 → 面板被整体重绘
+        → 用户**正在输入**的单价被清空。现在重绘前抓一份状态，重绘后回填。
+        （v1.1.62 及之前还要抓 enabled / valley_start / valley_end /
+          voltage / proj_rate / 季节参数 —— 全部随电价模型简化而废弃。） */
   function captureTariffForm(box) {
     if (!box) return null;
-    var en = box.querySelector('[data-tariff-enabled]');
-    var vs = box.querySelector('[data-tariff-vstart]');
-    var ve = box.querySelector('[data-tariff-vend]');
     var rt = box.querySelector('[data-tariff-rate]');
-    var vt = box.querySelector('[data-tariff-voltage]');
-    /* ⚠️ v1.1.62：预计电费单价（全局配置，不分地区） */
-    var pr = box.querySelector('[data-tariff-proj-rate]');
-    var st = {
-      prof: box.getAttribute('data-tariff-prof') || null,
-      enabled: en ? !!en.checked : null,
-      valley_start: vs ? vs.value : null,
-      valley_end: ve ? ve.value : null,
-      rate: (rt && rt.value !== '') ? rt.value : null,
-      voltage: vt ? vt.value : null,
-      proj_rate: (pr && pr.value !== '') ? pr.value : null,
-      months: null,
-      prices: null,
-      tiers: null
+    return {
+      rate: (rt && rt.value !== '') ? rt.value : null
     };
-    var seasonBox = box.querySelector('[data-tariff-season]');
-    if (seasonBox) {
-      var months = {}, prices = {}, tiers = {};
-      Array.prototype.forEach.call(
-        seasonBox.querySelectorAll('[data-tariff-months]'), function (grp) {
-          var kind = grp.getAttribute('data-tariff-months');
-          months[kind] = Array.prototype.map.call(
-            grp.querySelectorAll('.tariff-month.on'), function (b) {
-              return Number(b.getAttribute('data-m'));
-            });
-        });
-      Array.prototype.forEach.call(
-        seasonBox.querySelectorAll('[data-tariff-season-price]'), function (inp) {
-          var k = inp.getAttribute('data-tariff-season-price');
-          var i = inp.getAttribute('data-i');
-          prices[k] = prices[k] || {};
-          prices[k][i] = inp.value;
-        });
-      Array.prototype.forEach.call(
-        seasonBox.querySelectorAll('[data-tariff-season-tier]'), function (inp) {
-          var k = inp.getAttribute('data-tariff-season-tier');
-          var i = inp.getAttribute('data-i');
-          tiers[k] = tiers[k] || {};
-          tiers[k][i] = inp.value;
-        });
-      st.months = months;
-      st.prices = prices;
-      st.tiers = tiers;
-    }
-    return st;
   }
 
   /* 回填采集到的表单状态
-     ⚠️ 季节参数只在**同一个地区**回填 —— 切地区后档位/月份完全不同，
-     把旧地区的值搬过去会算错电费。
-     「自定义单价」也是**按地区**的 —— 切地区后要清空，
-     否则成都的自定义单价会被带到天津去，电费直接算错。
-     「启用」是全局项，任何时候都回填。 */
-  function restoreTariffForm(box, st, curProf) {
+     ⚠️ v1.1.63：单价是**全局**配置（不分地区），任何时候都回填。 */
+  function restoreTariffForm(box, st) {
     if (!box || !st) return;
-    var en = box.querySelector('[data-tariff-enabled]');
-    if (en && st.enabled !== null) en.checked = st.enabled;
-    var sameProf = !!st.prof && st.prof === curProf;
     var rt = box.querySelector('[data-tariff-rate]');
-    if (rt) {
-      if (sameProf) {
-        rt.value = (st.rate === null || st.rate === undefined) ? '' : st.rate;
-      } else {
-        /* 换地区 → 自定义单价按新地区的配置走 */
-        var cfg = box.__tariffData && box.__tariffData.config;
-        var ro = cfg ? cfg.rate_override : null;
-        rt.value = (ro === null || ro === undefined) ? '' : String(ro);
-      }
+    if (!rt) return;
+    if (st.rate !== null && st.rate !== undefined) {
+      rt.value = st.rate;
+      return;
     }
-    /* 电压等级（v1.1.59）
-       这项是**按地区**的配置 —— 换地区后必须回落到新地区的值，
-       否则会把成都的电压等级带到天津去算错电费。
-       ⚠️ 这段必须在「!sameProf 提前 return」**之前**执行：
-          提前 return 会让这个框保留旧地区的值。 */
-    var cfgv = box.__tariffData && box.__tariffData.config;
-    var profv = box.__tariffData && box.__tariffData.profile;
-    var vt = box.querySelector('[data-tariff-voltage]');
-    if (vt) {
-      if (sameProf && st.voltage !== null && st.voltage !== undefined) {
-        vt.value = st.voltage;
-      } else {
-        /* ⚠️ v1.1.61 修复：换地区后不能直接用 cfgv.voltage ——
-           那是**全局配置**里的旧地区值，在新地区可能压根不存在
-           （天津/固定单价没有电压等级）→ select.value 会被置成
-           一个不存在的 option，下拉显示空白。
-           正确做法：用**新地区档案自带的生效电压**
-           （后端 profile_list 已给出 hit.voltage），并做
-           「option 存在性」校验，兜底回落到该地区默认等级。 */
-        var wantV = (profv && profv.voltage) ? profv.voltage : '';
-        var vtOpts = vt.options || [];
-        var has = false;
-        for (var oi = 0; oi < vtOpts.length; oi++) {
-          if (vtOpts[oi].value === wantV) { has = true; break; }
-        }
-        if (!has) {
-          /* 该地区没有电压等级（或后端没给）→ 交给默认值 */
-          wantV = (profv && profv.default_voltage) ? profv.default_voltage : '';
-          has = false;
-          for (var oj = 0; oj < vtOpts.length; oj++) {
-            if (vtOpts[oj].value === wantV) { has = true; break; }
-          }
-        }
-        vt.value = has ? wantV : (vtOpts.length ? vtOpts[0].value : '');
-      }
-    }
-    /* ⚠️ v1.1.62：预计电费单价是**全局配置**（不分地区），
-       所以切地区时也要回填，不能被同地区判断挡住。 */
-    var pr = box.querySelector('[data-tariff-proj-rate]');
-    if (pr) {
-      if (st.proj_rate !== null && st.proj_rate !== undefined) {
-        pr.value = st.proj_rate;
-      } else {
-        var pv = cfgv ? cfgv.proj_rate : undefined;
-        pr.value = (pv === undefined || pv === null) ? '0.5224' : String(pv);
-      }
-    }
-    if (!sameProf) return;
-    var vs = box.querySelector('[data-tariff-vstart]');
-    var ve = box.querySelector('[data-tariff-vend]');
-    if (vs && st.valley_start !== null) vs.value = st.valley_start;
-    if (ve && st.valley_end !== null) ve.value = st.valley_end;
-    var seasonBox = box.querySelector('[data-tariff-season]');
-    if (!seasonBox || !st.months) return;
-    Array.prototype.forEach.call(
-      seasonBox.querySelectorAll('[data-tariff-months]'), function (grp) {
-        var kind = grp.getAttribute('data-tariff-months');
-        var want = st.months[kind];
-        if (!want) return;
-        Array.prototype.forEach.call(grp.querySelectorAll('.tariff-month'),
-          function (b) {
-            b.classList.toggle('on', want.indexOf(Number(b.getAttribute('data-m'))) > -1);
-          });
-      });
-    Array.prototype.forEach.call(
-      seasonBox.querySelectorAll('[data-tariff-season-price]'), function (inp) {
-        var k = inp.getAttribute('data-tariff-season-price');
-        var i = inp.getAttribute('data-i');
-        var v = st.prices && st.prices[k] && st.prices[k][i];
-        if (v !== undefined) inp.value = v;
-      });
-    Array.prototype.forEach.call(
-      seasonBox.querySelectorAll('[data-tariff-season-tier]'), function (inp) {
-        var k = inp.getAttribute('data-tariff-season-tier');
-        var i = inp.getAttribute('data-i');
-        var v = st.tiers && st.tiers[k] && st.tiers[k][i];
-        if (v !== undefined) inp.value = v;
-      });
+    /* 没有用户输入 → 用后端给的生效单价 */
+    var d = box.__tariffData;
+    var cfg = (d && d.config) || {};
+    var v = (d && d.rate !== undefined && d.rate !== null)
+      ? d.rate : cfg.rate;
+    rt.value = (v === undefined || v === null) ? '0.5224' : String(v);
   }
 
   function applyTariff(tbox, d) {
     if (!tbox) return;
-    /* ⚠️ v1.1.58：重绘前捕获用户未保存的编辑，重绘后回填 */
+    /* 重绘前捕获用户未保存的编辑，重绘后回填 */
     var st = captureTariffForm(tbox);
-    var curProf = (d && d.profile && d.profile.id) || null;
     tbox.innerHTML = tariffPanelHtml(d);
     bindTariffEvents(tbox);
-    /* 记下本次渲染的地区，供下次判断「是不是同一个地区」 */
-    if (curProf) tbox.setAttribute('data-tariff-prof', curProf);
-    /* 挂上本次数据，切地区时按新地区配置回填自定义单价 */
+    /* 挂上本次数据 */
     tbox.__tariffData = d;
     /* 标记已渲染 → 之后 live 重建不再重绘面板（保住用户输入与焦点） */
     tbox.setAttribute('data-tariff-rendered', '1');
-    if (st) restoreTariffForm(tbox, st, curProf);
-    /* ⚠️ v1.1.61：回填之后，电压下拉与价目表必须**再次对齐**。
-       restoreTariffForm 负责把下拉的值改对（用户未保存的选择
-       或新地区的生效值），但表格的峰价是在 tariffPanelHtml
-       渲染时按 prof.voltage 定的 —— 若用户改的是电压，
-       这里必须把表格峰价刷成新值；否则切地区回来后，
-       下拉显示 lv2、表格还是 lv1 的价（老 bug 复发）。 */
-    syncTariffVoltageTable(tbox, d);
-  }
-
-  /* 按当前电压下拉的值，就地刷新价目表峰价（v1.1.61）
-     ------------------------------------------------------------
-     表格的峰价是渲染期按 prof.voltage 写死的；用户在下拉上
-     改了电压、或切地区后下拉回落到新地区等级，都需要在这里
-     把表格刷成与下拉一致的值。低谷价**不受电压影响**
-     （官方表三个电压等级的低谷价完全相同），故不处理。 */
-  function syncTariffVoltageTable(box, d) {
-    if (!box || !d || !d.profile) return;
-    var vt = box.querySelector('[data-tariff-voltage]');
-    var tb = box.querySelector('.tariff-table');
-    if (!vt) return;
-    var vid = vt.value;
-    if (!vid) return;
-    var lvList = d.profile.voltage_levels || [];
-    var peaks = null;
-    for (var i = 0; i < lvList.length; i++) {
-      if (lvList[i].id === vid && lvList[i].peak_rates) {
-        peaks = lvList[i].peak_rates;
-        break;
-      }
-    }
-    /* ⚠️ v1.1.61 修复：内存里的生效电压**必须先**跟着下拉走。
-       原来固定单价地区（无档位表）走的是「提前 return」分支，
-       d.profile.voltage 一直停在旧值 → syncTariffFlatRate 按旧
-       电压取价 → 用户切「1-10 千伏」，合表单价还是 0.5464
-       （实际应为 0.5364）。 */
-    d.profile.voltage = vid;
-    for (var j = 0; j < lvList.length; j++) {
-      if (lvList[j].id === vid) {
-        d.profile.voltage_name = lvList[j].name || '';
-        break;
-      }
-    }
-    /* 固定单价地区没有表格 → 只更新单价说明行 */
-    if (!tb) {
-      syncTariffFlatRate(box, d);
-      return;
-    }
-    if (!peaks) return;
-    var rows = tb.querySelectorAll('.tariff-tb-row');
-    for (var r = 1; r < rows.length; r++) {
-      var cells = rows[r].querySelectorAll('span');
-      if (cells.length < 3) continue;
-      var pi = r - 1;
-      if (peaks[pi] !== undefined) cells[2].textContent = String(peaks[pi]);
-    }
-  }
-
-  /* 固定单价地区的单价说明行就地更新（v1.1.61）
-     ------------------------------------------------------------
-     合表 / 固定单价地区没有档位表，但**单价仍然分电压等级**
-     （合表：不满1千伏 0.5464，1-10千伏 与 35-110千伏 0.5364）。
-     用户切电压时若不同步，说明行会一直显示旧等级的价。 */
-  function syncTariffFlatRate(box, d) {
-    if (!box || !d || !d.profile) return;
-    var el = box.querySelector('[data-tariff-flat-rate]');
-    if (!el) return;
-    var prof = d.profile;
-    var vid = d.profile.voltage;
-    var peaks = null;
-    var lvList = prof.voltage_levels || [];
-    for (var i = 0; i < lvList.length; i++) {
-      if (lvList[i].id === vid && lvList[i].peak_rates) {
-        peaks = lvList[i].peak_rates;
-        break;
-      }
-    }
-    if (!peaks) peaks = prof.peak_rates;
-    if (peaks && peaks[0] !== undefined) el.textContent = String(peaks[0]);
+    restoreTariffForm(tbox, st);
   }
 
   function bindTariffEvents(box) {
-    var cb = box.querySelector('[data-tariff-enabled]');
-    if (cb) {
-      cb.addEventListener('change', function () { /* 立即保存 */ });
-    }
-    /* ⚠️ v1.1.60：季节参数折叠开关。
-       折叠状态存在 DOM 属性上，重绘（live 重建 / 切地区）后仍保持。 */
-    var seasonToggle = box.querySelector('[data-tariff-season-toggle]');
-    if (seasonToggle) {
-      var seasonBox = seasonToggle.closest('[data-tariff-season]');
-      if (seasonBox) {
-        /* 首次渲染默认折叠；用户手动展开过则记住 */
-        if (seasonBox.getAttribute('data-season-open') !== '1') {
-          seasonBox.classList.add('collapsed');
-        }
-        seasonToggle.addEventListener('click', function () {
-          var open = seasonBox.classList.toggle('collapsed') ? '0' : '1';
-          seasonBox.setAttribute('data-season-open', open);
-        });
-      }
-    }
-    /* 电压等级（v1.1.59）：切换后**即时**重画价目表。
-       ⚠️ 真实缺陷修复：之前电压下拉没有 change 监听，
-          用户切了「1-10 千伏」，表格里的峰价还是「不满 1 千伏」的
-          0.5224 —— 用户会照着错的价估电费。
-       ⚠️ v1.1.61：统一走 syncTariffVoltageTable ——
-          它同时负责刷表格峰价、固定单价地区的单价说明行，
-          以及同步内存里的 d.profile.voltage（后续重绘按它取价）。 */
-    var vtSel = box.querySelector('[data-tariff-voltage]');
-    if (vtSel) {
-      vtSel.addEventListener('change', function () {
-        syncTariffVoltageTable(box, box.__tariffData);
-      });
-    }
-    /* 季节参数：月份按钮点选（v1.1.57） */
-    Array.prototype.forEach.call(
-      box.querySelectorAll('[data-tariff-months]'), function (grp) {
-        var kind = grp.getAttribute('data-tariff-months');
-        Array.prototype.forEach.call(grp.querySelectorAll('.tariff-month'),
-          function (btn) {
-            btn.addEventListener('click', function () {
-              btn.classList.toggle('on');
-            });
-          });
-      });
-    var region = box.querySelector('[data-tariff-region]');
-    if (region) {
-      region.addEventListener('change', function () {
-        /* ⚠️ v1.1.57 修复：切换地区后下拉总是弹回成都。
-           原因：这里只改了**内存对象** j.config.region，但没更新
-           模块级 tariffCache；而抽屉每 3 秒 live 重建一次，
-           loadTariff 命中 60 秒缓存 → 用旧缓存（sichuan）重刷面板
-           → <select> 被重建 → 选中项回落。
-           现在：① 更新 tariffCache；② 重渲染后把选中值写回 select。 */
-        fetch(BASE + 'power/tariff').then(function (r) {
-          return r.ok ? r.json() : null;
-        })        .then(function (j) {
-          if (!j || !j.success) return;
-          /* 先在本地把 region 换掉再渲染，价目表立即更新 */
-          j.config = j.config || {};
-          j.config.region = region.value;
-          var hit = (j.profiles || []).filter(function (p) {
-            return p.id === region.value;
-          })[0];
-          if (hit) {
-            j.profile = hit;
-            /* 当前生效档位随地区 + 月份变，需按新地区重算，
-               否则表格会残留上一个地区的档位。 */
-            var mo = j.current_month;
-            var summer = (hit.summer_months || []).indexOf(mo) > -1;
-            var wet = (hit.wet_months || []).indexOf(mo) > -1;
-            j.is_summer_tier = summer;
-            j.is_wet_season = wet;
-            /* ⚠️ v1.1.59：档位必须用后端算好的**生效档位**
-               （含抄表周期 ×2 / 一户多人口加成 / 跨月结转），
-               不能用档案里的原始档位 —— 否则表格显示的门槛
-               与真实计费口径对不上，用户按表估电费会算错。 */
-            j.active_tiers = hit.effective_tiers
-              ? hit.effective_tiers
-              : (summer ? hit.tiers_summer : hit.tiers_other);
-            j.active_valley_rates = wet ? hit.valley_rates_wet : hit.valley_rates_dry;
-            /* ⚠️ v1.1.60：推导明细也要按新地区重算，
-               否则解释行会残留上一个地区的门槛来源。 */
-            j.tier_derivation = hit.effective_derivation || {};
-            /* ⚠️ v1.1.61 关键修复：电压等级必须跟着新地区走。
-               以前 `j.profile = hit` 把 voltage 覆盖成 undefined
-               （profile_list 不给这个字段）→ 价目表回落成
-               lv1 默认峰价 0.5224，而电压下拉仍显示用户的 lv2
-               → 下拉与表格对不上，用户照着错的价估电费。
-               现在后端 profile_list 已给出每个地区的生效电压
-               （v1.1.61），这里同步过来即可。 */
-            if (hit.voltage !== undefined && hit.voltage !== null) {
-              j.profile.voltage = hit.voltage;
-            }
-            j.profile.voltage_name = hit.voltage_name || '';
-            /* 峰价也要按新地区的电压等级取 —— 不能只改 voltage，
-               否则表格仍用上一地区的 peak_rates。 */
-            var newPeaks = null;
-            var newLv = (hit.voltage_levels || []);
-            for (var vi = 0; vi < newLv.length; vi++) {
-              if (newLv[vi].id === hit.voltage && newLv[vi].peak_rates) {
-                newPeaks = newLv[vi].peak_rates;
-                break;
-              }
-            }
-            if (!newPeaks && hit.voltage) {
-              for (var vj = 0; vj < newLv.length; vj++) {
-                if (newLv[vj].id === hit.voltage) {
-                  newPeaks = newLv[vj].peak_rates;
-                  break;
-                }
-              }
-            }
-            if (newPeaks) j.profile.peak_rates = newPeaks;
-          }
-          /* ① 缓存同步更新，否则下一次 loadTariff 会用旧地区刷回来 */
-          tariffCache = j;
-          tariffAt = Date.now();
-          applyTariff(box, j);
-          /* ② 重渲染后把地区选中值写回（applyTariff 重建了 <select>） */
-          var rg = box.querySelector('[data-tariff-region]');
-          if (rg) rg.value = region.value;
-        }).catch(function () { });
-      });
-    }
     var btn = box.querySelector('[data-tariff-save]');
     if (!btn) return;
     btn.addEventListener('click', function () {
       var msg = box.querySelector('[data-tariff-msg]');
-      var en = box.querySelector('[data-tariff-enabled]');
-      var rg = box.querySelector('[data-tariff-region]');
-      var vs = box.querySelector('[data-tariff-vstart]');
-      var ve = box.querySelector('[data-tariff-vend]');
       var rt = box.querySelector('[data-tariff-rate]');
-      var vt = box.querySelector('[data-tariff-voltage]');
-      var pr = box.querySelector('[data-tariff-proj-rate]');
-      var regId = rg ? rg.value : 'sichuan';
-      var payload = {
-        enabled: !!(en && en.checked),
-        region: regId,
-        valley_start: vs ? Number(vs.value) : 23,
-        valley_end: ve ? Number(ve.value) : 7,
-        rate_override: (rt && rt.value !== '') ? Number(rt.value) : null
-      };
-      /* 电压等级（v1.1.59）
-         ⚠️ v1.1.61 修复：电压下拉在**没有电压等级的地区**
-            （天津 / 固定单价）不渲染，querySelector 拿不到。
-            以前这时**完全不提交** voltage，后端收到缺失值就
-            直接清零 → 用户在四川选的「1-10 千伏」
-            被切一次地区就吞掉了。
-            现在：控件不存在时，提交**配置里已有的值**
-            （box.__tariffData.config），让请求自描述完整、
-            不依赖后端的兜底逻辑。
-         ⚠️ v1.1.62：「家庭人口」「抄表周期」两个输入项已删除，
-            不再采集、不再提交。 */
+      /* ⚠️ v1.1.63：只有一个配置项 —— 电费单价。
+         空串要当「未填」处理（Number('') 是 0 而不是 NaN），
+         兜底用后端给的生效单价。 */
+      var payload = {};
       var cfgSave = (box.__tariffData && box.__tariffData.config) || {};
-      if (vt) {
-        payload.voltage = vt.value;
-      } else if (cfgSave.voltage) {
-        payload.voltage = cfgSave.voltage;
-      }
-      /* ⚠️ v1.1.62：预计电费单价（全局配置，不分地区）
-         控件在所有地区都渲染，所以这里一定能拿到；
-         万一拿不到（老面板残留）就用配置里已有的值兜底。 */
-      if (pr) {
-        var prv = Number(pr.value);
-        /* ⚠️ 空串要当「未填」处理 —— Number('') 是 0 而不是 NaN，
-           直接判 isFinite 会把空值当成 0 提交上去。 */
-        payload.proj_rate = (pr.value !== '' && isFinite(prv)
-          && prv >= 0 && prv <= 10) ? prv : 0.5224;
-      } else if (cfgSave.proj_rate !== undefined
-        && cfgSave.proj_rate !== null) {
-        payload.proj_rate = Number(cfgSave.proj_rate) || 0.5224;
-      }
-      /* 季节参数覆盖（v1.1.57）：把面板上的月份选择与电价输入收集起来。
-         只提交**当前地区**的覆盖值，后端按地区分别存。 */
-      var seasonBox = box.querySelector('[data-tariff-season]');
-      if (seasonBox) {
-        var ov = {};
-        Array.prototype.forEach.call(
-          seasonBox.querySelectorAll('[data-tariff-months]'), function (grp) {
-            var kind = grp.getAttribute('data-tariff-months');
-            var months = [];
-            Array.prototype.forEach.call(grp.querySelectorAll('.tariff-month.on'),
-              function (btn) { months.push(Number(btn.getAttribute('data-m'))); });
-            ov[kind === 'wet' ? 'wet_months' : 'summer_months'] = months;
-          });
-        /* 价格输入分丰/枯两组，用 kind 区分 */
-        ['wet', 'dry'].forEach(function (kind) {
-          var vals = [];
-          Array.prototype.forEach.call(
-            seasonBox.querySelectorAll(
-              '[data-tariff-season-price="' + kind + '"]'), function (inp) {
-                var i = Number(inp.getAttribute('data-i'));
-                vals[i] = Number(inp.value);
-              });
-          ov[kind === 'wet' ? 'valley_rates_wet' : 'valley_rates_dry'] = vals;
-        });
-        ['summer', 'other'].forEach(function (kind) {
-          var vals = [];
-          Array.prototype.forEach.call(
-            seasonBox.querySelectorAll(
-              '[data-tariff-season-tier="' + kind + '"]'), function (inp) {
-                var i = Number(inp.getAttribute('data-i'));
-                vals[i] = inp.value === '' ? null : Number(inp.value);
-              });
-          ov[kind === 'summer' ? 'tiers_summer' : 'tiers_other'] = vals;
-        });
-        payload.overrides = {};
-        payload.overrides[regId] = ov;
+      if (rt) {
+        var rv = Number(rt.value);
+        payload.rate = (rt.value !== '' && isFinite(rv)
+          && rv >= 0 && rv <= 10) ? rv
+          : (Number(cfgSave.rate) || 0.5224);
+      } else {
+        payload.rate = Number(cfgSave.rate) || 0.5224;
       }
       btn.disabled = true;
       if (msg) msg.textContent = '保存中…';

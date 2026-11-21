@@ -1109,9 +1109,10 @@
     var chartNode = body.querySelector('[data-charts]');
     /* ①-b 保留旧电价设置面板（v1.1.58）
        能耗抽屉每 3 秒 live 重建一次，body.innerHTML 重置会把
-       [data-tariff-box] 连同用户**正在输入**的「自定义单价」一起冲掉。
+       [data-tariff-box] 连同用户**正在输入**的「电费单价」一起冲掉。
        参照图表节点的思路，把旧面板原样搬回，
-       用户编辑不会被 3 秒一次的重绘吃掉。 */
+       用户编辑不会被 3 秒一次的重绘吃掉。
+       ⚠️ v1.1.63：面板已简化为只有一个单价输入框。 */
     var tariffNode = body.querySelector('[data-tariff-box]');
     /* ①-c 记住焦点落在电价面板的哪个输入框上（v1.1.58）
        ⚠️ body.innerHTML = html 会把面板节点从文档树上**摘除**，
@@ -1122,11 +1123,7 @@
     var focusRestore = null;
     if (active && tariffNode && tariffNode.contains(active)) {
       focusRestore = {
-        sel: active.getAttribute('data-tariff-rate') !== null ? 'data-tariff-rate'
-          : (active.getAttribute('data-tariff-season-price') !== null
-            ? 'data-tariff-season-price'
-            : (active.getAttribute('data-tariff-season-tier') !== null
-              ? 'data-tariff-season-tier' : null)),
+        sel: active.getAttribute('data-tariff-rate') !== null ? 'data-tariff-rate' : null,
         idx: active.getAttribute('data-i'),
         start: (typeof active.selectionStart === 'number') ? active.selectionStart : null,
         end: (typeof active.selectionEnd === 'number') ? active.selectionEnd : null

@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""v1.1.57：电价模型与历史库的集成测试
+"""v1.1.63：单一单价电价模型与历史库的集成测试
 
 验证整条链路：
   造功率采样点 → 写入临时历史库 → 归档（产生 kwh@HH 小时分桶）
-  → split_energy_by_period() 拆谷/平 → energy_stats() 算阶梯电费
+  → split_energy_by_period() 统计当月电量 → energy_stats() 按单一单价算电费
 
 重点验证：
-  · 拆分出的谷+平 = 总电量（与 energy_stats 的 month_kwh 一致）
-  · 谷段电量确实落在低谷时段
-  · 阶梯模式下 month_yuan 不再是「总量 × 单一单价」
-  · 未启用时行为与 v1.1.56 完全一致（向后兼容）
+  · 电量统计口径正确（当月总量 = 分桶之和）
+  · **不再按谷时段拆分**（valley 恒为 0，全部计入 flat）
+  · month_yuan = month_kwh × 配置里的单一单价
+  · 配置里的单价是权威值（覆盖入口参数 rate）
+  · daily 接口的 cost 也按同一单价
+  · 阶梯/分时/地区相关字段不再输出
 """
 import os
 import sys
 import time
+import json
 import tempfile
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -47,7 +50,7 @@ import history_collect as hc   # noqa: E402
 import power_tariff as pt      # noqa: E402
 
 # ---------------------------------------------------------------------------
-print('\n=== 1. 构造含谷/平差异的历史库 ===')
+print('\n=== 1. 构造含昼夜差异的历史库 ===')
 # 造 3 天的点：白天 60W、夜里 20W，每 5 分钟一个点
 db = os.path.join(TMP, 'storage.db')
 store = sc.HistoryStore(db)
@@ -78,77 +81,94 @@ check('归档写入 %d 行' % n, n > 0)
 hc._STORE = store
 
 # ---------------------------------------------------------------------------
-print('\n=== 2. 谷/平拆分 ===')
+print('\n=== 2. 电量统计（不再分谷平）===')
 split = hc.split_energy_by_period()
-check('拆分结果非空', split.get('total', 0) > 0, split.get('total'))
-check('谷 + 平 = 总电量',
-      approx(split['flat'] + split['valley'], split['total'], 1e-3),
-      '%.4f + %.4f vs %.4f' % (split['flat'], split['valley'], split['total']))
-check('谷段电量 > 0', split['valley'] > 0, split['valley'])
-check('平段电量 > 0', split['flat'] > 0, split['flat'])
-# 夜里功率低 → 谷段电量应显著少于平段（谷段 8h/天 vs 平段 16h/天）
-ratio = split['valley'] / max(1e-9, split['flat'])
-check('谷段电量显著少于平段（夜间低功耗）ratio=%.3f' % ratio, ratio < 0.5, ratio)
-print('    平段 %.4f kWh / 谷段 %.4f kWh' % (split['flat'], split['valley']))
+check('统计结果非空', split.get('total', 0) > 0, split.get('total'))
+check('flat = total（全部电量计入 flat）',
+      approx(split['flat'], split['total'], 1e-6),
+      '%.4f vs %.4f' % (split['flat'], split['total']))
+check('valley 恒为 0（不再分谷段）',
+      approx(split['valley'], 0.0, 1e-9), split['valley'])
+check('total = flat + valley',
+      approx(split['total'], split['flat'] + split['valley'], 1e-6))
+check('by_hour 分桶保留（柱状图要用）',
+      isinstance(split.get('by_hour'), dict) and len(split['by_hour']) > 0,
+      len(split.get('by_hour') or {}))
+print('    当月总电量 %.4f kWh' % split['total'])
 
 # ---------------------------------------------------------------------------
-print('\n=== 3. 未启用：与 v1.1.56 行为一致（向后兼容） ===')
-cfg = pt.default_config()
-cfg['enabled'] = False
-pt.save_config(cfg)
+print('\n=== 3. 默认单价下的电费 ===')
+pt.save_config({'rate': 0.5224})
 st = hc.energy_stats(0.6, None)
-check('tariff_mode 不存在或为 fixed',
-      st.get('tariff_mode') in (None, 'fixed'), st.get('tariff_mode'))
-check('month_yuan = month_kwh × 0.6',
-      approx(st['month_yuan'], st['month_kwh'] * 0.6, 0.02),
-      '%.4f vs %.4f' % (st['month_yuan'], st['month_kwh'] * 0.6))
-check('无 valIey_kwh 字段（未拆分）', 'valley_kwh' not in st or st.get('valley_kwh') is None)
-
-# ---------------------------------------------------------------------------
-print('\n=== 4. 启用阶梯：电费按谷/平 + 阶梯算 ===')
-cfg = pt.default_config()
-cfg['enabled'] = True
-pt.save_config(cfg)
-st = hc.energy_stats(0.6, None)
-check('tariff_mode = tiered', st.get('tariff_mode') == 'tiered', st.get('tariff_mode'))
-check('tariff_region = sichuan', st.get('tariff_region') == 'sichuan',
-      st.get('tariff_region'))
-check('返回谷段电量', st.get('valley_kwh') is not None and st.get('valley_kwh') > 0,
-      st.get('valley_kwh'))
-check('返回平段电量', st.get('flat_kwh') is not None and st.get('flat_kwh') > 0,
-      st.get('flat_kwh'))
-check('谷+平 ≈ month_kwh',
-      approx(st['valley_kwh'] + st['flat_kwh'], st['month_kwh'], 1e-3),
-      '%.4f vs %.4f' % (st['valley_kwh'] + st['flat_kwh'], st['month_kwh']))
-
-# 电费必须小于「总量 × 0.6」（因为有低谷优惠）
-naive = st['month_kwh'] * 0.6
-check('阶梯电费 < 总量×0.6（低谷拉低）%.4f < %.4f' % (st['month_yuan'], naive),
-      st['month_yuan'] < naive, '%.4f vs %.4f' % (st['month_yuan'], naive))
-check('电费 > 0', st['month_yuan'] > 0, st['month_yuan'])
-check('有阶梯明细', isinstance(st.get('tariff_detail'), list) and
-      len(st['tariff_detail']) == 3, st.get('tariff_detail'))
-check('有阶梯档位电量', isinstance(st.get('tier_kwh'), list) and
-      len(st['tier_kwh']) == 3, st.get('tier_kwh'))
-check('三档电量之和 = 本月总电量',
-      approx(sum(st['tier_kwh']), st['month_kwh'], 1e-3),
-      '%.4f vs %.4f' % (sum(st['tier_kwh']), st['month_kwh']))
-check('综合单价 = month_yuan / month_kwh',
-      approx(st['eff_rate_yuan_per_kwh'],
-             st['month_yuan'] / st['month_kwh'], 1e-2),
+check('tariff_mode = fixed', st.get('tariff_mode') == 'fixed',
+      st.get('tariff_mode'))
+check('配置里的 rate 是权威值（覆盖入口 0.6）',
+      approx(st['rate_yuan_per_kwh'], 0.5224, 1e-6),
+      st['rate_yuan_per_kwh'])
+check('month_yuan = month_kwh × 0.5224',
+      approx(st['month_yuan'], st['month_kwh'] * 0.5224, 0.02),
+      '%.4f vs %.4f' % (st['month_yuan'], st['month_kwh'] * 0.5224))
+check('tariff_rate 与 rate_yuan_per_kwh 一致',
+      approx(st.get('tariff_rate'), st['rate_yuan_per_kwh'], 1e-6),
+      (st.get('tariff_rate'), st['rate_yuan_per_kwh']))
+check('today_yuan 也按同一单价',
+      approx(st['today_yuan'], st['today_kwh'] * 0.5224, 0.02),
+      '%.4f vs %.4f' % (st['today_yuan'], st['today_kwh'] * 0.5224))
+check('month_kwh 与 split 的总量一致',
+      approx(st['month_kwh'], split['total'], 1e-3),
+      '%.4f vs %.4f' % (st['month_kwh'], split['total']))
+check('综合单价 eff_rate = rate（单一时恒等）',
+      approx(st['eff_rate_yuan_per_kwh'], 0.5224, 1e-3),
       st['eff_rate_yuan_per_kwh'])
+check('预计单价 proj_rate = 同一单价',
+      approx(st['proj_rate_yuan_per_kwh'], 0.5224, 1e-3),
+      st['proj_rate_yuan_per_kwh'])
 
 # ---------------------------------------------------------------------------
-print('\n=== 5. 阶梯模式下预计电费随之变化 ===')
+print('\n=== 4. 阶梯/分时/地区字段不再输出 ===')
+for k in ('tier_kwh', 'tier_rates', 'current_tier', 'tier_limits',
+          'tariff_detail', 'valley_kwh', 'valley_label', 'carry_in',
+          'tariff_region', 'tariff_voltage'):
+    check('energy_stats 不再输出 %s' % k, k not in st,
+          '仍存在: %s' % sorted(st.keys()))
+
+# ---------------------------------------------------------------------------
+print('\n=== 5. 改单价 → 电费随之变化 ===')
+pt.save_config({'rate': 0.6})
 st2 = hc.energy_stats(0.6, None)
-check('month_proj_yuan 有值', st2.get('month_proj_yuan') is not None)
-check('month_proj_yuan > month_yuan（本月已用 < 全月预计）',
-      st2['month_proj_yuan'] > st2['month_yuan'],
-      '%.2f vs %.2f' % (st2['month_proj_yuan'], st2['month_yuan']))
+check('单价改成 0.6 后 rate 生效',
+      approx(st2['rate_yuan_per_kwh'], 0.6, 1e-6),
+      st2['rate_yuan_per_kwh'])
+check('month_yuan 随之重算',
+      approx(st2['month_yuan'], st2['month_kwh'] * 0.6, 0.02),
+      '%.4f vs %.4f' % (st2['month_yuan'], st2['month_kwh'] * 0.6))
+check('电量本身不受单价影响',
+      approx(st2['month_kwh'], st['month_kwh'], 1e-3),
+      '%.4f vs %.4f' % (st2['month_kwh'], st['month_kwh']))
+
+pt.save_config({'rate': 1.0})
+st3 = hc.energy_stats(0.6, None)
+check('单价 1.0 时 month_yuan = month_kwh',
+      approx(st3['month_yuan'], st3['month_kwh'], 0.05),
+      '%.4f vs %.4f' % (st3['month_yuan'], st3['month_kwh']))
 
 # ---------------------------------------------------------------------------
-print('\n=== 6. daily 接口在阶梯模式下的 cost ===')
-d = hc.daily_energy(0.6, 7)
+print('\n=== 6. 预计电费随单价变化 ===')
+pt.save_config({'rate': 0.5224})
+st4 = hc.energy_stats(0.6, None)
+check('month_proj_yuan 有值', st4.get('month_proj_yuan') is not None)
+check('month_proj_yuan > month_yuan（本月已用 < 全月预计）',
+      st4['month_proj_yuan'] > st4['month_yuan'],
+      '%.2f vs %.2f' % (st4['month_proj_yuan'], st4['month_yuan']))
+check('预计电费也按同一单价',
+      approx(st4['month_proj_yuan'], st4['month_proj_kwh'] * 0.5224, 0.05),
+      '%.2f vs %.2f' % (st4['month_proj_yuan'], st4['month_proj_kwh'] * 0.5224))
+
+# ---------------------------------------------------------------------------
+print('\n=== 7. daily 接口的 cost ===')
+# ⚠️ daily_energy 的单价来自 eff_rate 入参 —— 服务端 /api/power/daily
+#    会把配置里的 rate 作为 eff_rate 传进来（见 fnstyle_server._handle_power_daily）
+d = hc.daily_energy(0.6, 7, eff_rate=0.5224)
 days_with_data = [x for x in d['days'] if x.get('kwh') is not None]
 check('daily 有数据的天', len(days_with_data) > 0, len(days_with_data))
 if days_with_data:
@@ -156,38 +176,27 @@ if days_with_data:
     check('daily cost = kwh × rate（统一单价口径）',
           approx(x['cost'], x['kwh'] * d['rate_yuan_per_kwh'], 0.02),
           '%.4f vs %.4f' % (x['cost'], x['kwh'] * d['rate_yuan_per_kwh']))
+check('daily 的 rate 来自 eff_rate（单一单价）',
+      approx(d['rate_yuan_per_kwh'], 0.5224, 1e-6),
+      d['rate_yuan_per_kwh'])
 
 # ---------------------------------------------------------------------------
-print('\n=== 7. 切换地区 → 行为变化 ===')
-cfg2 = pt.default_config()
-cfg2['enabled'] = True
-cfg2['region'] = 'tianjin'
-pt.save_config(cfg2)
-st3 = hc.energy_stats(0.6, None)
-check('地区切到天津', st3.get('tariff_region') == 'tianjin', st3.get('tariff_region'))
-# 天津居民不执行峰谷分时 → 谷段电费应为 0
-check('天津无低谷优惠（谷段电费为 0）',
-      st3.get('valley_yuan') is not None and st3['valley_yuan'] == 0.0,
-      st3.get('valley_yuan'))
-
-cfg3 = pt.default_config()
-cfg3['enabled'] = True
-cfg3['region'] = 'flat'
-pt.save_config(cfg3)
-st4 = hc.energy_stats(0.6, None)
-check('固定单价地区电费 = 总量×0.6',
-      approx(st4['month_yuan'], st4['month_kwh'] * 0.6, 0.02),
-      '%.4f' % st4['month_yuan'])
-
-# ---------------------------------------------------------------------------
-print('\n=== 8. 阶梯台账写入 ===')
-pt.save_config(pt.default_config() | {'enabled': True, 'region': 'sichuan'})
+print('\n=== 8. 阶梯台账已废弃（不再写）===')
 hc.update_tier_ledger(50.0, 20.0)
-mk = pt._month_key()
-led = pt.load_ledger(mk)
-# 2026 年（现在）不满足 carry_over_since=2027-01 → 不应写台账
-check('2026 年不写台账（结转规则自 2027-01 起）',
-      led.get('tier1_remaining', 0) == 0.0, led)
+check('update_tier_ledger 返回 False（空实现）',
+      hc.update_tier_ledger(50.0, 20.0) is False)
+
+# ---------------------------------------------------------------------------
+print('\n=== 9. 旧配置升级：废弃键不影响计算 ===')
+with open(pt._cfg_path(), 'w', encoding='utf-8') as f:
+    json.dump({'rate': 0.7, 'region': 'tianjin', 'enabled': True,
+               'overrides': {'x': 1}}, f, ensure_ascii=False)
+st5 = hc.energy_stats(0.6, None)
+check('旧库升级后 rate 仍生效',
+      approx(st5['rate_yuan_per_kwh'], 0.7, 1e-6),
+      st5['rate_yuan_per_kwh'])
+check('旧库升级后仍无阶梯字段',
+      'current_tier' not in st5 and 'tier_kwh' not in st5)
 
 # ---------------------------------------------------------------------------
 print('\n%s' % ('-' * 56))

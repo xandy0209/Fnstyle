@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 /* ===========================================================================
-   v1.1.57 回归测试：电价设置面板（地区切换 + 季节参数）
+   v1.1.63 回归测试：电价设置面板（单一单价形态）
 
-   用户反馈：
+   历史沿革
+   --------
+   v1.1.57 用户反馈：
      ① 「为什么电价设置中的地区下拉选择后总是恢复到成都？」
      ② 「成都的电价不是区分丰水期、枯水期还有夏季吗？设置里面为什么没有？」
 
@@ -10,8 +12,14 @@
       tariffCache**；而抽屉每 3 秒 live 重建一次 → loadTariff 命中 60 秒
       缓存 → 用旧缓存（sichuan）重刷面板 → <select> 被重建 → 选中项回落。
 
-   本测试跑真实链路：powerSheetHtml → loadTariff → 模拟 change →
-   断言 tariffCache 已更新、面板重建后选中值写回、季节参数区块存在。
+   v1.1.63：整个电价模型退化为**单一单价** ——
+     「删除阶梯计费和档位信息等，也不区分区域，就是一个电费单价的配置，
+       并增加对应的说明即可」
+     ⇒ 地区下拉、季节参数、价目表 **全部消失**
+     ⇒ ① 的问题（地区切换弹回）**从根上不存在了** —— 没有地区可切
+
+   本测试跑真实链路：powerSheetHtml → loadTariff →
+   断言面板只含「单价输入框 + 口径说明 + 保存按钮」，且无任何下拉/档位信息。
    =========================================================================== */
 const fs = require('fs');
 const path = require('path');
@@ -63,51 +71,17 @@ function makeEl(tag) {
   return el;
 }
 
-/* ================= 响应数据 ================= */
-const PROFILES = [
-  {
-    id: 'sichuan', name: '四川省居民（成都）', note: '一户一表，不满1kV。',
-    peak_rates: [0.5224, 0.6224, 0.8224],
-    valley_rates_wet: [0.175, 0.275, 0.475],
-    valley_rates_dry: [0.2535, 0.3535, 0.5535],
-    tiers_summer: [260, 460, null], tiers_other: [180, 280, null],
-    summer_months: [7, 8, 9], wet_months: [6, 7, 8, 9, 10],
-    peak_hours: [[7, 23]], valley_hours: [[23, 7]],
-    has_time_of_use: true, carry_over_since: '2027-01'
-  },
-  {
-    id: 'tianjin', name: '天津市居民', note: '居民不执行峰谷分时。',
-    peak_rates: [0.49, 0.54, 0.79],
-    valley_rates_wet: [0.49, 0.54, 0.79],
-    valley_rates_dry: [0.49, 0.54, 0.79],
-    tiers_summer: [220, 400, null], tiers_other: [220, 400, null],
-    summer_months: [], wet_months: [],
-    peak_hours: [[0, 24]], valley_hours: [],
-    has_time_of_use: false, carry_over_since: null
-  },
-  {
-    id: 'flat', name: '固定单价（不分时不分阶梯）', note: '单一固定单价。',
-    peak_rates: [0.6, 0.6, 0.6],
-    valley_rates_wet: [0.6, 0.6, 0.6],
-    valley_rates_dry: [0.6, 0.6, 0.6],
-    tiers_summer: [null, null, null], tiers_other: [null, null, null],
-    summer_months: [], wet_months: [],
-    peak_hours: [[0, 24]], valley_hours: [],
-    has_time_of_use: false, carry_over_since: null
-  }
-];
-
+/* ================= 响应数据（单一单价形态） ================= */
 function tariffResponse() {
   return {
     success: true,
-    config: { region: 'sichuan', enabled: true, valley_start: 23, valley_end: 7, rate_override: null, overrides: {} },
-    current_month: 11,
-    active_tiers: [180, 280, null],
-    active_valley_rates: [0.2535, 0.3535, 0.5535],
-    is_summer_tier: false, is_wet_season: false,
-    overrides: {},
-    profile: PROFILES[0],
-    profiles: PROFILES
+    config: { rate: 0.5224, updated: 0 },
+    rate: 0.5224,
+    default_rate: 0.5224,
+    unit: '元/kWh',
+    note: '电费按「用电量 × 电费单价」估算，不区分阶梯档位、不区分峰谷时段、不区分地区。'
+        + '默认单价 0.5224 元/kWh，取成都（四川）一户一表居民不满 1 千伏第一档高峰平段电价'
+        + '（成都居民电价的最低档），可按你家的实际电价自行调整。'
   };
 }
 
@@ -148,48 +122,37 @@ function makeSandbox() {
 }
 
 (async function main() {
-  console.log('\n========== v1.1.57 电价设置面板回归 ==========');
+  console.log('\n========== v1.1.63 电价设置面板回归（单一单价）==========');
 
   const sandbox = makeSandbox();
   const M = sandbox.window.FnStyleMonitor;
   if (!M) { console.log('❌ FnStyleMonitor 未加载'); process.exit(1); }
 
-  /* ---------- 源码级断言（先做，最直接） ---------- */
-  section('① 源码级：地区切换必须同步 tariffCache');
-  /* 注意：change 回调到 tariffCache 赋值相隔 ~3000 字符
-     （中间有价目表重算 + v1.1.61 新增的电压等级同步），
-     正则窗口要放宽，否则会误报 */
-  const changeBlock = (function () {
-    const i = RAW.indexOf("region.addEventListener('change'");
-    return i < 0 ? '' : RAW.slice(i, i + 4000);
-  })();
-  check('change 回调里更新了 tariffCache',
-    /tariffCache = j/.test(changeBlock));
-  check('change 回调里更新了 tariffAt',
-    /tariffAt = Date\.now\(\)/.test(changeBlock));
-  check('重建后把选中值写回 select',
-    /applyTariff\(box, j\)[\s\S]{0,300}rg\.value = region\.value/.test(RAW));
+  /* ---------- 源码级断言 ---------- */
+  section('① 源码级：面板只剩一个单价输入框');
+  check('存在 tariffPanelHtml 函数', /function tariffPanelHtml\(/.test(RAW));
+  check('渲染 data-tariff-rate 输入框', /data-tariff-rate/.test(RAW));
+  check('渲染 data-tariff-note 口径说明', /data-tariff-note/.test(RAW));
+  check('渲染 data-tariff-save 保存按钮', /data-tariff-save/.test(RAW));
+  check('读取后端下发的 note', /d && d\.note/.test(RAW));
 
-  section('② 源码级：季节参数区块');
-  check('存在 tariffSeasonHtml 函数', /function tariffSeasonHtml\(prof, d\)/.test(RAW));
-  check('面板调用了 tariffSeasonHtml', /html \+= tariffSeasonHtml\(prof, d\)/.test(RAW));
-  /* 这些属性是**动态拼接**的（kind 变量），源码里查不到字面量 "wet"，
-     所以断言查拼接形式，而不是查渲染结果 */
-  check('渲染丰水期/夏季月份选择（动态拼接 kind）',
-    /data-tariff-months="\' \+ kind \+ \'"/.test(RAW) ||
-    /monthBtns\('wet', wet\)/.test(RAW) && /monthBtns\('summer', summer\)/.test(RAW));
-  check('渲染丰/枯谷价输入',
-    /priceInputs\('wet', prof\.valley_rates_wet/.test(RAW) &&
-    /priceInputs\('dry', prof\.valley_rates_dry/.test(RAW));
-  check('渲染夏季/其他月档位输入',
-    /tierInputs\('summer', prof\.tiers_summer\)/.test(RAW) &&
-    /tierInputs\('other', prof\.tiers_other\)/.test(RAW));
-  check('保存时收集 overrides',
-    /payload\.overrides\[regId\] = ov/.test(RAW));
-  check('月份按钮有点选事件', /classList\.toggle\('on'\)/.test(RAW));
+  section('② 源码级：地区 / 季节 / 档位控件已删除');
+  const gone = [
+    'tariffSeasonHtml', 'tariffTableHtml', 'tariffDerivationHtml',
+    'syncTariffVoltageTable', 'syncTariffFlatRate',
+    'data-tariff-region', 'data-tariff-voltage', 'data-tariff-vstart',
+    'data-tariff-vend', 'data-tariff-enabled', 'data-tariff-meter',
+    'data-tariff-people', 'data-tariff-proj-rate', 'data-tariff-season',
+    'data-tariff-months', 'data-tariff-flat-rate'
+  ];
+  gone.forEach(w => check('monitor.js 不含 ' + w, RAW.indexOf(w) < 0));
 
-  /* ---------- 渲染级：抽屉里的季节参数 ---------- */
-  section('③ 渲染级：季节参数出现在面板里');
+  check('无地区 change 事件绑定',
+    !/region\.addEventListener\('change'/.test(RAW));
+  check('无 payload.overrides 收集', !/payload\.overrides/.test(RAW));
+
+  /* ---------- 渲染级：抽屉里的电价面板 ---------- */
+  section('③ 渲染级：抽屉含电价设置容器');
   const POWER_DATA = {
     power: {
       ok: true, total: 30.2, source: 'rapl',
@@ -202,12 +165,8 @@ function makeSandbox() {
   const sheetHtml = M.powerSheetHtml(POWER_DATA);
   check('抽屉含电价设置容器', sheetHtml.indexOf('data-tariff-box') > -1);
 
-  /* ---------- 模拟真实 DOM：把 panel HTML 塞进 box，然后跑 loadTariff ---------- */
-  section('④ 端到端：地区切换后不弹回');
-  /* 构造一个能 querySelector 的 box，支持 [data-tariff-box] / [data-tariff-region] */
-  const regEl = makeEl('select');
-  regEl.value = 'sichuan';
-  regEl.options = [];
+  /* ---------- 端到端：loadTariff 渲染面板 ---------- */
+  section('④ 端到端：面板渲染内容');
   const tariffBox = makeEl('div');
   tariffBox.setAttribute('data-tariff-box', '1');
 
@@ -215,45 +174,41 @@ function makeSandbox() {
   body.innerHTML = sheetHtml;
   body.querySelector = function (sel) {
     if (sel === '[data-tariff-box]') return tariffBox;
-    if (sel === '[data-tariff-region]') return regEl;
     return null;
   };
-  tariffBox.querySelector = function (sel) {
-    if (sel === '[data-tariff-region]') return regEl;
-    return null;
-  };
+  tariffBox.querySelector = function (sel) { return null; };
   tariffBox.querySelectorAll = function (sel) { return []; };
 
-  /* loadTariff → applyTariff → tariffPanelHtml 会 innerHTML 覆盖 tariffBox */
   M.loadTariff(body);
   await new Promise(r => setTimeout(r, 40));
 
   check('面板已渲染（tariffBox 有内容）', tariffBox.innerHTML.length > 0);
-  check('面板含季节参数区块',
-    tariffBox.innerHTML.indexOf('data-tariff-season') > -1);
-  check('面板含丰水期月份按钮',
-    tariffBox.innerHTML.indexOf('data-tariff-months="wet"') > -1);
-  check('面板含夏季月份按钮',
-    tariffBox.innerHTML.indexOf('data-tariff-months="summer"') > -1);
-  check('面板含当前季节说明',
-    tariffBox.innerHTML.indexOf('丰水期') > -1 ||
-    tariffBox.innerHTML.indexOf('枯平期') > -1);
-  check('面板含「夏季档」说明',
-    tariffBox.innerHTML.indexOf('夏季档') > -1);
+  check('面板含单价输入框',
+    tariffBox.innerHTML.indexOf('data-tariff-rate') > -1);
+  check('面板含口径说明',
+    tariffBox.innerHTML.indexOf('data-tariff-note') > -1);
+  check('面板含保存按钮',
+    tariffBox.innerHTML.indexOf('data-tariff-save') > -1);
+  check('面板含默认值 0.5224',
+    tariffBox.innerHTML.indexOf('0.5224') > -1);
 
-  /* 地区切换：模拟 change 事件 */
-  const before = sandbox.__fetchCalls.length;
-  regEl.value = 'tianjin';
-  regEl.dispatchEvent({ type: 'change', bubbles: true });
-  await new Promise(r => setTimeout(r, 60));
+  check('面板不含地区下拉',
+    tariffBox.innerHTML.indexOf('data-tariff-region') < 0);
+  check('面板不含电压下拉',
+    tariffBox.innerHTML.indexOf('data-tariff-voltage') < 0);
+  check('面板不含谷时段控件',
+    tariffBox.innerHTML.indexOf('data-tariff-vstart') < 0);
+  check('面板不含季节参数区块',
+    tariffBox.innerHTML.indexOf('data-tariff-season') < 0);
+  check('面板不含档位价目表',
+    tariffBox.innerHTML.indexOf('tariff-table') < 0);
+  check('面板不含 <select>', tariffBox.innerHTML.indexOf('<select') < 0);
+  check('面板说明含「用电量 × 电费单价」口径',
+    tariffBox.innerHTML.indexOf('用电量') > -1);
 
-  check('change 触发了重新拉取配置', sandbox.__fetchCalls.length > before);
-  /* 关键：applyTariff 重建面板后，选中值必须被写回为 tianjin */
-  check('地区切换后选中值仍是 tianjin（不再弹回成都）',
-    regEl.value === 'tianjin', '当前 ' + regEl.value);
-  check('缓存已同步（源码层 tar' +
-    'iffCache = j 存在）',
-    /tariffCache = j/.test(RAW));
+  /* 只有一个 input */
+  const inputCount = (tariffBox.innerHTML.match(/<input/g) || []).length;
+  check('面板只有 1 个输入框', inputCount === 1, '实际 ' + inputCount);
 
   console.log('\n' + '-'.repeat(60));
   console.log('通过 ' + PASS + ' 项，失败 ' + FAIL + ' 项');

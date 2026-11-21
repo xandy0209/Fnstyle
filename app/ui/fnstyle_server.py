@@ -674,18 +674,17 @@ class Handler(BaseHTTPRequestHandler):
         #   tdp_w / disk_typical_w / nic_fixed_w / base_w 四个字段，
         #   **不含电价** → params.get("rate_yuan_per_kwh") 恒为 None
         #   → 整段逻辑恒回落硬编码 0.6（v1.1.56 及之前都是死代码）。
-        #   现在电价统一由 power_tariff 模块负责：
-        #     · 未启用阶梯 → 仍用 0.6（向后兼容，显示不变）
-        #     · 启用了阶梯 → 按谷/平 + 阶梯算，energy_stats 内部覆盖
+        #   ⚠️ v1.1.63：电价统一由 power_tariff 模块负责 ——
+        #   单一可配置单价（默认 0.5224 = 成都最低档），不分阶梯/时段/地区。
         try:
             import power_tariff as pt
             tcfg = pt.load_config()
         except Exception:
             tcfg = None
         rate = 0.6
-        if tcfg and tcfg.get("enabled") and tcfg.get("rate_override"):
+        if tcfg:
             try:
-                rate = float(tcfg["rate_override"])
+                rate = float(tcfg.get("rate"))
             except Exception:
                 rate = 0.6
 
@@ -724,8 +723,9 @@ class Handler(BaseHTTPRequestHandler):
     def _handle_tariff_save(self):
         """保存电价配置：POST /api/power/tariff
 
-        body = {"region": "sichuan", "enabled": true,
-                "valley_start": 23, "valley_end": 7, "rate_override": null}
+        ⚠️ v1.1.63：body = {"rate": 0.5224}
+           （v1.1.62 及之前是 region / enabled / valley_start / valley_end /
+             rate_override / proj_rate / voltage / overrides —— 全部废弃）
         """
         try:
             import power_tariff as pt
@@ -737,14 +737,6 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(body, dict):
             self._send_json(400, {"success": False, "error": "请求体格式错误"})
             return True
-
-        # enabled 允许 "true"/1/"1" 等写法
-        if "enabled" in body:
-            v = body["enabled"]
-            if isinstance(v, str):
-                body["enabled"] = v.strip().lower() in ("1", "true", "yes", "on")
-            else:
-                body["enabled"] = bool(v)
 
         ok, msg = pt.save_config(body)
         if not ok:
@@ -790,17 +782,14 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             days = 30
 
-        # ⚠️ v1.1.57：开启阶梯电价后，各天的 cost 用「本月实际综合均价」
-        #   折算，与本月总账口径自洽（阶梯本身是按月清算的，不逐日套用）。
+        # ⚠️ v1.1.63：统一用配置里的**单一单价**折算各天电费，
+        #   与本月总账口径完全一致（v1.1.57 那套「阶梯下的综合均价」
+        #   已随阶梯模型一起废弃）。
         eff_rate = None
         try:
             import power_tariff as pt
             tcfg = pt.load_config()
-            if tcfg.get("enabled"):
-                st = history_collect.energy_stats(0.6, None)
-                er = st.get("eff_rate_yuan_per_kwh")
-                if er:
-                    eff_rate = float(er)
+            eff_rate = float(tcfg.get("rate"))
         except Exception:
             eff_rate = None
 

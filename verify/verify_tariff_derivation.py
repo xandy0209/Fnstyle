@@ -1,27 +1,32 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""v1.1.60：验证「本月生效档位推导明细」
+"""v1.1.63：「推导明细已整体废弃」+「口径说明取代推导」的防回归验证
 
-背景
-----
-用户反馈电价面板上方的档位表（0–490 / 491–690）和下面两个「档位」输入框
-（夏季 260/460、其他月 180/280）看着像重复，其实是「结果 vs 参数」；
-但表格下方那行说明文字（7–9 月档位 260/460、6–10 月低谷价 0.175）
-**全是下方输入框已有的数字** → 纯重复。
-而真正该说的「490/690 是怎么算出来的」反而没说。
+历史沿革
+--------
+v1.1.60：用户反馈电价面板上的档位表与输入框看着像重复 → 加了
+      power_tariff.tier_derivation() 输出「本月生效档位推导明细」，
+      前端用推导解释行取代重复说明文字。
 
-本轮改动：
-  ① 后端 power_tariff.tier_derivation() 输出推导明细
-  ② describe() / profile_list() 带上推导明细
-  ③ 前端用推导解释行取代重复说明文字
-  ④ 季节参数区块收成可折叠
+v1.1.63：老板决定整个电价模型退化为**单一单价** ——
+      「删除阶梯计费和档位信息等，也不区分区域，就是一个电费单价的配置，
+        并增加对应的说明即可」
+      ⇒ 没有档位，就没有「档位怎么推导出来的」这回事
+      ⇒ tier_derivation() 整体废弃
+      ⇒ 取而代之的是**一段口径说明**（describe().note），直接讲清楚
+        「用电量 × 电费单价」这个算法和默认单价的来源
 
-本脚本验证后端推导链的数值正确性 + 前端渲染逻辑的关键约束。
+本脚本验证：
+  ① tier_derivation / effective_tier_limits 等推导 API 全部不存在
+  ② describe() 不再透出 tier_derivation
+  ③ describe().note 承担起「说明」职责，含关键口径要素
+  ④ 前端不再有推导行 UI（tariffDerivationHtml / tariff-tb-derive）
+  ⑤ 前端改为渲染后端下发的 note
+  ⑥ CSS 里推导行样式已清理
 """
 import os
 import sys
 import json
-import time
 import subprocess
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -49,167 +54,91 @@ def approx(a, b, eps=1e-6):
 
 
 def strip_comments(src):
-    """去掉 JS 注释，只留真正会执行的代码。
-
-    ⚠️ 上一轮栽过：改动后我在注释里**引用**了被删掉的旧文案，
-       源码文本断言因此误报「旧说明还在」。断言必须只看可执行代码。
-
-    ⚠️ 实现踩坑：手写状态机不可靠 —— 正则字面量（/^\\d+/）里的
-       斜杠会被误判成注释起始，字符串里的转义引号也会让状态错乱。
-       改用正则按行剥离（够用且稳定）。
-    """
+    """去掉 JS 注释，只留真正会执行的代码。"""
     import re
     no_block = re.sub(r"/\*.*?\*/", " ", src, flags=re.S)
     no_line = re.sub(r"(?m)^\s*//.*$", " ", no_block)
-    # 去掉行尾注释（前面不能是引号/反斜杠，简单起见只处理明显的）
     no_line = re.sub(r"(?m)\s//[^\n\"'`]*$", " ", no_line)
     return no_line
 
 
 print("=" * 70)
-print("v1.1.60 验证：阶梯电价推导明细")
+print("v1.1.63 验证：推导明细已废弃，口径说明取代之")
 print("=" * 70)
 
-import power_tariff as pt
+import power_tariff as pt  # noqa: E402
 
-# ── ① 默认配置 ──────────────────────────────────────────────────
-# ⚠️ v1.1.62：推导链只剩两环 —— **基准档位 + 跨月结转**。
-#    「抄表周期倍数」与「一户多人口加成」两项已移除。
-print("\n[1] 默认配置推导明细")
-cfg0 = dict(pt.load_config())
-cfg0.update({"region": "sichuan"})
-d0 = pt.tier_derivation("sichuan", cfg0)
+# ── ① 推导 API 全部不存在 ─────────────────────────────────────
+print("\n[1] 后端推导 API 已删除")
+for fn in ("tier_derivation", "effective_tier_limits", "_effective_caps",
+           "carry_in_for", "load_ledger", "save_ledger", "update_tier_ledger",
+           "_month_key", "_prev_month_key"):
+    check("后端已无 %s" % fn, not hasattr(pt, fn))
 
-check("默认返回推导明细", isinstance(d0, dict) and bool(d0))
-check("基准档位 = 其他月 180/280",
-      d0["base_tiers"][:2] == [180.0, 280.0], str(d0["base_tiers"]))
-check("基准标签 = 其他月档位", d0["base_label"] == "其他月档位", d0["base_label"])
-check("不再返回 meter_months（v1.1.62 已移除）",
-      "meter_months" not in d0, sorted(d0.keys()))
-check("不再返回 mp_extra（v1.1.62 已移除）",
-      "mp_extra" not in d0, sorted(d0.keys()))
-check("不再返回 base_after_cycle（v1.1.62 已移除）",
-      "base_after_cycle" not in d0, sorted(d0.keys()))
-check("结转 = 0", approx(d0["carry1"], 0) and approx(d0["carry2"], 0))
-check("生效档位 = 180/280/不限",
-      d0["limits"][:2] == [180.0, 280.0] and d0["limits"][2] is None,
-      str(d0["limits"]))
-
-# ── ② 残留的旧配置不再影响门槛 ─────────────────────────────────
-print("\n[2] 旧配置残留（抄表周期/人口数）不再影响门槛")
-cfg2 = dict(cfg0)
-cfg2["meter_months"] = 2
-cfg2["household_people"] = 6
-d2 = pt.tier_derivation("sichuan", cfg2)
-check("生效档位仍为 180/280/不限",
-      d2["limits"][:2] == [180.0, 280.0] and d2["limits"][2] is None,
-      str(d2["limits"]))
-
-# ── ③ 跨月结转仍生效 ───────────────────────────────────────────
-print("\n[3] 跨月结转仍参与推导")
-cfgC = dict(cfg0)
-dC = pt.tier_derivation("sichuan", cfgC)
-check("结转字段仍存在", "carry1" in dC and "carry2" in dC, sorted(dC.keys()))
-
-# ── ④ 一致性：推导明细的 limits 必须等于 effective_tier_limits ──
-print("\n[4] 推导明细与生效档位严格一致")
-for tag, c in (("默认", cfg0), ("残留配置", cfg2), ("结转", cfgC)):
-    lim, _caps = pt.effective_tier_limits("sichuan", c)
-    dv = pt.tier_derivation("sichuan", c)
-    same = (lim[:2] == dv["limits"][:2]) and (lim[2] is None) == (dv["limits"][2] is None)
-    check("%s 组合 limits 一致" % tag, same, "%s vs %s" % (lim, dv["limits"]))
-
-# ── ⑥ describe() 带上推导明细 ───────────────────────────────────
-print("\n[6] describe() 输出")
+# ── ② describe() 不再透出推导明细 ───────────────────────────────
+print("\n[2] describe() 输出")
 desc = pt.describe()
-check("describe 含 tier_derivation", "tier_derivation" in desc)
-check("tier_derivation 非空", bool(desc.get("tier_derivation")))
-check("tier_derivation 含 base_tiers",
-      "base_tiers" in (desc.get("tier_derivation") or {}))
-# JSON 必须合法（不能出现 Infinity/NaN）
+check("describe 不含 tier_derivation", "tier_derivation" not in desc,
+      str(sorted(desc.keys())))
+for k in ("profiles", "profile", "active_tiers", "effective_tiers"):
+    check("describe 不含 %s" % k, k not in desc, str(sorted(desc.keys())))
+check("describe 含 rate", "rate" in desc, str(sorted(desc.keys())))
+check("describe 含 note", "note" in desc, str(sorted(desc.keys())))
 try:
     json.dumps(desc, allow_nan=False)
     check("describe() 是合法 JSON（无 Infinity/NaN）", True)
 except ValueError as e:
     check("describe() 是合法 JSON（无 Infinity/NaN）", False, str(e))
 
-# ── ⑦ profile_list() 每个地区都带推导明细 ───────────────────────
-print("\n[7] profile_list() 按地区给推导明细")
-plist = pt.profile_list(cfg0)
-ok_all = True
-detail = ""
-for p in plist:
-    d = p.get("effective_derivation")
-    if not isinstance(d, dict) or "base_tiers" not in d:
-        ok_all = False
-        detail = "%s 缺 effective_derivation" % p["id"]
-        break
-    if not p.get("effective_tiers"):
-        ok_all = False
-        detail = "%s 缺 effective_tiers" % p["id"]
-        break
-check("所有地区都有 effective_derivation + effective_tiers", ok_all, detail)
+# ── ③ note 承担说明职责 ─────────────────────────────────────────
+print("\n[3] 口径说明（note）的内容要素")
+note = desc.get("note") or ""
+check("note 非空", bool(note))
+for kw in ("用电量", "电费单价", "0.5224", "成都", "不区分阶梯档位",
+           "不区分峰谷时段", "不区分地区"):
+    check("note 含「%s」" % kw, kw in note, note)
+check("note 说明可自行调整", "调整" in note, note)
+check("note 不含阶梯档位数字（如 180/280）", "180" not in note, note)
+check("note 不含结转概念", "结转" not in note, note)
 
-# 各地区的 limits 应与其 effective_tiers 一致
-inconsistent = []
-for p in plist:
-    et = p.get("effective_tiers") or []
-    ed = (p.get("effective_derivation") or {}).get("limits") or []
-    if et[:2] != ed[:2]:
-        inconsistent.append("%s: %s vs %s" % (p["id"], et, ed))
-check("各地区 effective_tiers 与推导明细一致", not inconsistent, "; ".join(inconsistent))
-
-# ── ⑧ 天津不受旧配置残留影响 ───────────────────────────────────
-print("\n[8] 天津：旧配置残留不生效")
-cfgT = dict(cfg0)
-cfgT["region"] = "tianjin"
-cfgT["household_people"] = 6
-cfgT["meter_months"] = 2
-dT = pt.tier_derivation("tianjin", cfgT)
-check("天津生效档位 = 220/400",
-      dT["limits"][:2] == [220.0, 400.0], str(dT["limits"]))
-
-# ── ⑨ 前端：重复说明文字必须消失，推导行必须存在 ───────────────
-print("\n[9] 前端源码约束")
+# ── ④ 前端不再有推导行 UI ──────────────────────────────────────
+print("\n[4] 前端源码约束")
 JS = os.path.join(UI, "static", "js", "monitor.js")
 with open(JS, encoding="utf-8") as f:
     js = f.read()
+code = strip_comments(js)
 
+check("已移除 tariffDerivationHtml",
+      "function tariffDerivationHtml" not in js)
+check("已移除推导行 class tariff-tb-derive",
+      "tariff-tb-derive" not in js)
+check("已移除 tier_derivation 读取", "tier_derivation" not in code)
+check("已移除 effective_derivation", "effective_derivation" not in code)
 check("已移除旧的重复说明（7–9 月档位）",
-      "7–9 月档位" not in strip_comments(js), "仍存在重复说明文字")
+      "7–9 月档位" not in code)
 check("已移除旧的重复说明（6–10 月低谷价）",
-      "6–10 月低谷价" not in strip_comments(js), "仍存在重复说明文字")
-check("新增推导行函数 tariffDerivationHtml",
-      "function tariffDerivationHtml" in js)
-check("推导行读取 tier_derivation",
-      "tier_derivation" in js)
-check("推导行 class = tariff-tb-derive",
-      "tariff-tb-derive" in js)
-check("季节参数有折叠开关",
-      "data-tariff-season-toggle" in js)
-check("切换地区同步推导明细",
-      "effective_derivation" in js)
+      "6–10 月低谷价" not in code)
 
-# 折叠默认状态
-check("季节参数默认折叠",
-      "collapsed" in js)
+# 新形态：渲染后端下发的 note
+check("前端渲染 note（data-tariff-note）",
+      "data-tariff-note" in js)
+check("前端从 d.note 取说明",
+      "d && d.note" in js or "(d && d.note)" in js)
+check("说明有独立样式类 tariff-note",
+      "tariff-note" in js)
 
-# ── ⑩ CSS ────────────────────────────────────────────────────────
-print("\n[10] CSS 约束")
+# ── ⑤ CSS 清理 ──────────────────────────────────────────────────
+print("\n[5] CSS 约束")
 CSS = os.path.join(UI, "static", "css", "app.css")
 with open(CSS, encoding="utf-8") as f:
     css = f.read()
-check("折叠态隐藏 body/cur",
-      ".tariff-season.collapsed .tariff-season-body" in css)
-check("有折叠箭头样式",
-      ".tariff-season-caret" in css)
-check("button 头样式复位",
-      "button.tariff-season-head" in css)
-check("推导行样式存在",
-      ".tariff-tb-derive" in css)
+check("已移除推导行样式 .tariff-tb-derive",
+      ".tariff-tb-derive" not in css)
+check("已移除推导说明 .tariff-tb-note", ".tariff-tb-note" not in css)
+check("新增 .tariff-note 样式", ".tariff-note" in css)
 
-# ── ⑪ JS 语法 ───────────────────────────────────────────────────
-print("\n[11] JS 语法检查")
+# ── ⑥ JS 语法 ───────────────────────────────────────────────────
+print("\n[6] JS 语法检查")
 r = subprocess.run(["node", "--check", JS], capture_output=True, text=True)
 check("monitor.js 语法正确", r.returncode == 0, r.stderr[:300])
 

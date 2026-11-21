@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""CDP 截图（v1.1.62）：实机抓「本月用电」格下方的判档说明行 + 预计电费单价行
+"""CDP 截图（v1.1.63）：实机抓「本月预计电费」格下方的单价说明行
 
 背景
 ----
-v1.1.62 新增两处前端说明：
-  ① 「本月用电」格下方 → 「判档：本月 X kWh → 第 N 档（区间）」
-     —— 回答用户的根本质疑「我没输入电量，你怎么知道按哪一档计费」
-  ② 「本月预计电费」格下方 → 「0.5224 元/kWh」
-     —— 说明预计电费用的是可调的单一估算单价，不是按阶梯算
+v1.1.62 时这里抓的是「判档说明行」（本月 X kWh → 第 N 档）。
+v1.1.63 电价模型退化为**单一单价**后：
+  · 「判档依据行」(.sub-tier) 已删除 —— 没有档位了
+  · 「预计电费单价行」(.sub-proj-rate) 保留 → 「按 0.5224 元/kWh 估算」
+  · 「电价行」(.sub-rate) 保留 → 「电价 0.5224 元/kWh」
+
+本脚本抓「本月预计电费」格（它下面挂了两行单价说明），
+并打印三行说明的实际文本，供人工核对。
 
 前置：Chrome 已带 --remote-debugging-port=9222 启动。
 """
@@ -21,7 +24,7 @@ import urllib.request
 import websocket
 
 URL = "http://192.168.5.8:9910/"
-OUT = "/tmp/fnstyle_v1162_energy_tier.png"
+OUT = "/tmp/fnstyle_v1163_energy_rate.png"
 
 
 class CDP:
@@ -81,11 +84,13 @@ def main():
     # 能耗卡片区域
     # ⚠️ 必须先 scrollIntoView —— 卡片在文档流很靠下的位置，
     #    直接取 getBoundingClientRect 得到的 y 可能超出视口 → 截出空白。
+    # ⚠️ v1.1.63：抓「本月预计电费」格 —— 它下面挂着两行单价说明
+    #    （.sub-proj-rate「按 X 元/kWh 估算」+ .sub-rate「电价 X 元/kWh」）。
     c.js("""
     (function(){
       var els = document.querySelectorAll('.stat-cell');
       for (var i=0;i<els.length;i++){
-        if ((els[i].textContent||'').indexOf('本月用电')>=0){
+        if ((els[i].textContent||'').indexOf('本月预计电费')>=0){
           els[i].scrollIntoView({block:'center'});
           return 'scrolled';
         }
@@ -99,7 +104,7 @@ def main():
     (function(){
       var els = document.querySelectorAll('.stat-cell');
       for (var i=0;i<els.length;i++){
-        if ((els[i].textContent||'').indexOf('本月用电')>=0){
+        if ((els[i].textContent||'').indexOf('本月预计电费')>=0){
           var r = els[i].getBoundingClientRect();
           return JSON.stringify({x:Math.max(0,r.x-14),y:Math.max(0,r.y-14),
                                   w:r.width+28,h:r.height+28});
@@ -144,7 +149,7 @@ def main():
       var out = [];
       document.querySelectorAll('.stat-cell').forEach(function(el){
         var t = (el.textContent||'').replace(/\\s+/g,' ').trim();
-        if (t.indexOf('本月用电')>=0 || t.indexOf('本月预计电费')>=0){
+        if (t.indexOf('本月预计电费')>=0){
           out.push(t);
         }
       });
@@ -158,20 +163,28 @@ def main():
     except Exception:
         print("  ", txt)
 
+    # ⚠️ v1.1.63：.sub-tier（判档行）已删除 —— 应查不到
     tier = c.js("""
     (function(){
       var e = document.querySelector('.sub-tier');
-      return e ? (e.textContent||'').trim() : '(无 .sub-tier 元素)';
+      return e ? (e.textContent||'').trim() : '(无 .sub-tier 元素 —— 符合 v1.1.63 预期)';
     })()
     """)
     rate = c.js("""
+    (function(){
+      var e = document.querySelector('.sub-rate');
+      return e ? (e.textContent||'').trim() : '(无 .sub-rate 元素)';
+    })()
+    """)
+    proj = c.js("""
     (function(){
       var e = document.querySelector('.sub-proj-rate');
       return e ? (e.textContent||'').trim() : '(无 .sub-proj-rate 元素)';
     })()
     """)
     print("\n.sub-tier       :", tier)
-    print(".sub-proj-rate  :", rate)
+    print(".sub-rate       :", rate)
+    print(".sub-proj-rate  :", proj)
     return 0
 
 
