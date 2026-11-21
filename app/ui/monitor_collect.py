@@ -58,6 +58,15 @@ except Exception:  # pragma: no cover
     subprocess = None
 
 
+# ⚠️ v1.1.68：部署探针。
+#    采集进程是常驻后台线程，替换 FPK 后若没重启进程，跑的仍是旧代码 ——
+#    出现过「本地源码已改、实机 API 返回的却是旧结构」的迷惑现象
+#    （nicDetail 里有新字段、但缺 tunnel 键，正是新旧代码混合的指纹）。
+#    这个常量会随 power 数据一起上报，从 API 一眼就能确认
+#    「NAS 上跑的到底是哪一版代码」，省掉逐字段比对。
+COLLECT_VERSION = "1.1.68"
+
+
 # ----------------------------- 基础工具 -----------------------------
 
 def read_text(path, limit=8192):
@@ -78,6 +87,35 @@ def read_int(path):
         return int(float(t))
     except Exception:
         return None
+
+
+def _net_iface_names():
+    """返回内核登记在册的网络接口名集合（来自 /proc/net/dev）。
+
+    ⚠️ v1.1.68 新增。这是判断「一个 /sys/class/net/* 条目是不是真接口」的
+    **唯一可靠依据**：
+      · /proc/net/dev 由内核直接导出，**只含真正的网络接口**；
+      · /sys/class/net 下除此之外还有**内核符号链接**
+        （bonding_masters → bonding 模块全局变量），不是接口；
+      · 用「读 ifindex/address/speed/operstate 猜」全都不可靠
+        —— 实测 bonding_masters 在 NAS 上 address/speed/operstate 全空，
+        却仍能通过那种判据。
+
+    格式：每行「  <接口名>: <收包字节> <收包包数> ...」，
+    冒号前是接口名；前两行是表头。
+    读不到时返回空集合（此时调用方会退化为不过滤，宁可多列也不漏报）。
+    """
+    out = set()
+    try:
+        with open("/proc/net/dev", "r", encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+    except Exception:
+        return out
+    for line in lines[2:]:
+        name = line.split(":", 1)[0].strip()
+        if name:
+            out.add(name)
+    return out
 
 
 def run_cmd(cmd, timeout=3):
@@ -950,12 +988,97 @@ def collect_power(cpu_percent, disks_active):
         disk_typical = w
 
     # 网卡固定功耗（估算用）
-    nics = 0
-    for nic in glob.glob("/sys/class/net/*"):
+    #
+    # ⚠️ v1.1.67：原来这里数的是 /sys/class/net 下的**网络接口**，
+    #    被显示成「网卡 2 口」，但**接口数 ≠ 物理网口数**：
+    #    · bond0（ bonding 聚合口）算 1 个，但它背后可能是 2 个物理口
+    #    · 虚拟网桥 / 容器口也算进来
+    #    → 老板看到「2 口」会问「我 NAS 真有两个网口？」
+    #
+    #    修法：**物理网口**只认有 PCI/平台设备链接的接口
+    #    （/sys/class/net/<if>/device 存在 → 真实网卡）；
+    #    虚拟口（docker0/br-*/veth*/virbr*/tun*/lo）排除；
+    #    bonding 聚合口则按其成员 slave 的**物理口**计。
+    #    两个数都上报：nics（物理口，用于功耗估算）+ nics_iface（接口数，仅供排查）。
+    nics = 0            # 物理网口数（用于功耗估算）
+    nics_iface = 0      # 非虚拟网络接口数（排查用）
+    nic_detail = []     # 每个接口的明细
+    _phys_devs = set()  # 已计入的物理设备路径（去重）
+    # ⚠️ v1.1.68：/sys/class/net 下不只有网络接口，还有**内核符号链接**
+    #    （如 bonding_masters —— 指向 bonding 模块的全局变量）。
+    #    glob 会把它们一起扫到，用「读某个属性文件」来猜是不是接口
+    #    （ifindex / address / speed / operstate）**全都不可靠**：
+    #    实测 bonding_masters 在 NAS 上 address/speed/operstate 皆空，
+    #    却仍能通过判据 —— 说明它至少有一个属性能被读到非空值。
+    #
+    #    正解：用 **/proc/net/dev**（内核权威的网络接口清单）来判定。
+    #    这份表由内核直接导出，**只含真正的网络接口**，一行一个，
+    #    格式是「  <接口名>: <收包字节> ...」，冒号前就是接口名。
+    #    不在表里的 → 根本不是接口 → 直接跳过。
+    _real_ifaces = _net_iface_names()
+    for nic in sorted(glob.glob("/sys/class/net/*")):
         base = os.path.basename(nic)
-        if base == "lo" or base.startswith(("docker", "br-", "veth", "virbr", "bond", "tun")):
+        if base == "lo" or base.startswith(("docker", "br-", "veth", "virbr", "tun")):
             continue
-        nics += 1
+        # 不是内核登记在册的接口 → 跳过（bonding_masters 等内核符号链接）
+        # ⚠️ 读不到 /proc/net/dev 时（_real_ifaces 为空）**不过滤** ——
+        #    否则会把所有接口都排掉，物理口直接变 0，比原来的 bug 更糟。
+        #    宁可多列一行，也不要报错数。
+        if _real_ifaces and base not in _real_ifaces:
+            continue
+        _ifindex = read_text(os.path.join(nic, "ifindex"), 32).strip()
+        _addr = read_text(os.path.join(nic, "address"), 64).strip()
+        _speed = read_text(os.path.join(nic, "speed"), 64).strip()
+        _state = read_text(os.path.join(nic, "operstate"), 64).strip()
+        nics_iface += 1
+        # 设备链接 → 物理网卡；无链接 → 虚拟口
+        dev_link = os.path.realpath(os.path.join(nic, "device"))
+        is_phys = bool(dev_link) and os.path.exists(os.path.join(nic, "device"))
+        slaves = []
+        # bonding 聚合口：成员 slave 在 /sys/class/net/<master>/bonding/slaves
+        slave_dir = os.path.join(nic, "bonding", "slaves")
+        if os.path.isdir(slave_dir):
+            try:
+                slaves = sorted(os.listdir(slave_dir))
+            except OSError:
+                slaves = []
+        nic_detail.append({
+            "name": base,
+            # 三态：物理口 / 聚合口（bond，成员另列）/ 虚拟口
+            "kind": ("bond" if slaves else ("phys" if is_phys else "virt")),
+            "physical": bool(is_phys),
+            "slaves": slaves,
+            "mac": _addr,
+            "speed": _speed,
+            "state": _state,
+            # ⚠️ v1.1.68：带上 ifindex —— 这是接口的**内核索引号**，
+            #    有值即证明它是内核登记在册的真接口。
+            #    （诊断用：一旦某个条目的 ifindex 为空，就说明它不是接口。）
+            "ifindex": _ifindex,
+            "driver": os.path.basename(os.path.realpath(
+                os.path.join(nic, "device", "driver"))) if is_phys else "",
+        })
+        # ⚠️ v1.1.67：Tailscale / WireGuard 这类**隧道虚拟网卡**有 speed/state，
+        #    但 speed = -1、mac 为空、且没有 PCI device。
+        #    它们不占物理网口，但要在清单里标出来（用户会问「这个算不算口」）。
+        if not is_phys and not slaves:
+            nd = nic_detail[-1]
+            nd["tunnel"] = bool(nd["speed"] == "-1" or not nd["mac"])
+        # 物理口计数：**按物理设备去重**
+        #   · 有 device 链接的接口 → 记 1 个物理口
+        #   · bonding 聚合口本身**不额外计数** —— 它的 slave 本身就是带
+        #     device 的物理接口（eth0/eth1），会被下面那条规则记上。
+        #     （若 slave 没有独立 device，才按 slave 数补记。）
+        if is_phys and dev_link not in _phys_devs:
+            _phys_devs.add(dev_link)
+            nics += 1
+        elif slaves and not is_phys:
+            # 聚合口自身无 device（少见）→ 按 slave 数补
+            for sl in slaves:
+                sl_link = os.path.realpath(os.path.join("/sys/class/net", sl, "device"))
+                if sl_link and sl_link not in _phys_devs:
+                    _phys_devs.add(sl_link)
+                    nics += 1
     nic_fixed = 5.0
     base_fixed = 8.0
 
@@ -990,6 +1113,12 @@ def collect_power(cpu_percent, disks_active):
                     "disksW": round(disks_w, 1),
                     "disksActive": disk_count,
                     "nics": nics,
+                    # ⚠️ v1.1.67：nics 现在是**物理网口**数（不是网络接口数）。
+                    #    下面两个字段用于前端展示与排查。
+                    "nicsIface": nics_iface,
+                    "nicDetail": nic_detail,
+                    # ⚠️ v1.1.68：部署探针（见 COLLECT_VERSION 注释）
+                    "collectVersion": COLLECT_VERSION,
                     "estimation_params": {
                         "tdp_w": 65.0, "disk_typical_w": disk_typical,
                         "nic_fixed_w": nic_fixed, "base_w": base_fixed,
@@ -1025,6 +1154,10 @@ def collect_power(cpu_percent, disks_active):
             "disksActive": disk_count,
             "tdp": tdp,
             "nics": nics,
+            "nicsIface": nics_iface,
+            "nicDetail": nic_detail,
+            # ⚠️ v1.1.68：部署探针（见 COLLECT_VERSION 注释）
+            "collectVersion": COLLECT_VERSION,
             "estimation_params": {
                 "tdp_w": tdp, "disk_typical_w": disk_w,
                 "nic_fixed_w": nic_fixed, "base_w": base_fixed,

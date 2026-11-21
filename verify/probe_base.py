@@ -77,11 +77,19 @@ class CDP:
 
 
 def api(path, method="GET", body=None):
-    """调 NAS 上的 API。"""
+    """调 NAS 上的 API。
+
+    ⚠️ v1.1.68：必须**绕过本机代理**。
+       本机全局设了 HTTP_PROXY/HTTPS_PROXY（沙箱出口代理），
+       urllib 会自动带上代理去连 192.168.5.8 —— 内网地址走代理必然失败
+       （表现为 ConnectionError / 超时），而这不是 NAS 的问题。
+       用 ProxyHandler({}) 建一个**空代理**的 opener 来绕开。
+    """
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(API + path, data=data, method=method,
                                  headers={"Content-Type": "application/json"})
-    return json.loads(urllib.request.urlopen(req, timeout=15).read().decode())
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    return json.loads(opener.open(req, timeout=15).read().decode())
 
 
 def find_tab(host="192.168.5.8", port=9222):

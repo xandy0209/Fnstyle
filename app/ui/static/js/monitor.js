@@ -2562,7 +2562,13 @@
     detail.push(['主板 / 其他底座', w(p.base)]);
     detail.push(['活动硬盘' + (p.disksActive ? '（' + p.disksActive + ' 块）' : ''), w(p.disksW)]);
     if (p.nics !== null && p.nics !== undefined) {
-      detail.push(['网卡', p.nics + ' 口 · 约 ' + fmt1(p.nics * 5) + ' W']);
+      /* ⚠️ v1.1.67：这里显示的是**物理网口数**（后端已改成只数有 PCI 设备
+         链接的接口 / bonding 的物理 slave）。
+         原来数的是 /sys/class/net 下的**网络接口数** —— bond0 聚合口、
+         虚拟桥、容器口都会被算进去 → 显示成「2 口」，用户一看就怀疑
+         「我 NAS 真有两个网口？」（老板原话：「我NAS设备有两个网口？？核实一下」）。
+         → 数字改准，并在下面附一行接口明细供核对。 */
+      detail.push(['网卡（物理口）', p.nics + ' 口 · 约 ' + fmt1(p.nics * 5) + ' W']);
     }
     html += '<div class="mon-cmp-sec"><span>部件明细</span>' +
       '<span class="faint">' + (isRapl ? 'RAPL 实测' : '模型估算') + '</span></div>';
@@ -2570,6 +2576,37 @@
       return '<div class="mon-dkv-row"><span class="k">' + esc(kv[0]) + '</span>' +
         '<span class="v">' + kv[1] + '</span></div>';
     }).join('') + '</div>';
+
+    /* --- 部件明细后的网卡接口清单（v1.1.67）---
+       老板看到「网卡 2 口」会问「我 NAS 真有两个网口？」——
+       这里把后端读到的**每个网络接口**都列出来（名称 / 是否物理口 /
+       速率 / 状态），用户可以自己核对到底是几个物理网口。
+       有 bonding 聚合口时同时列出它的 slave。 */
+    var nd = p.nicDetail;
+    if (nd && nd.length) {
+      html += '<div class="mon-cmp-sec"><span>网卡接口</span>' +
+        '<span class="faint">物理 ' + (p.nics || 0) + ' / 接口 ' +
+        (p.nicsIface || nd.length) + '</span></div>';
+      html += '<div class="mon-dkv">' + nd.map(function (x) {
+        /* 三态：物理口 / 聚合口（bond，成员另列）/ 虚拟口
+           隧道口（Tailscale / WireGuard 等）单独标 —— 它们不占物理网口，
+           但常被误当成「一个网口」。 */
+        var tag = x.kind === 'bond' ? '聚合口'
+          : (x.kind === 'phys' || x.physical ? '物理口'
+            : (x.tunnel ? '隧道口' : '虚拟口'));
+        var bits = [];
+        if (x.driver) bits.push(x.driver);
+        if (x.speed && x.speed !== '-1' && x.speed) bits.push(x.speed + ' Mbps');
+        if (x.state) bits.push(x.state);
+        if (x.slaves && x.slaves.length) bits.push('成员 ' + x.slaves.join('/'));
+        /* ⚠️ v1.1.68：带上内核接口索引号 —— 有值就证明这是内核登记在册的
+           真接口（不是 /sys/class/net 下的内核符号链接），用户可据此自行核对。 */
+        if (x.ifindex) bits.push('if#' + x.ifindex);
+        return '<div class="mon-dkv-row"><span class="k">' + esc(x.name) +
+          ' <span class="faint">' + tag + '</span></span>' +
+          '<span class="v">' + esc(bits.join(' · ') || '—') + '</span></div>';
+      }).join('') + '</div>';
+    }
 
     /* --- ⑤ 用电与电费（异步加载） --- */
     html += '<div class="mon-cmp-sec"><span>用电与电费</span>' +

@@ -1,5 +1,5 @@
 appname               = fnstyle
-version           = 1.1.66
+version           = 1.1.68
 display_name          = FnStyle
 desc                  = 集中管理飞牛个性化设置与丰富主题库：网站标题、登录框、LOGO、壁纸、毛玻璃、任务栏等独立配置，内置多源主题库，支持一键应用到 fnOS 系统，卸载后自动还原系统默认样式。
 platform              = all
@@ -15,5 +15,5 @@ desktop_applaunchname = fnstyle.main
 service_port          = 9910
 checkport             = false
 ctl_stop              = true
-changelog         = 1.1.66：修复内存抽屉趋势图「没有实时更新」+ 系统监控模块全功能点逐项核查。【根因】chart.js 的 X 轴窗口两端被历史记录钉死（t0=min(数据点时间戳)、t1=max(数据点时间戳)）→ 曲线虽随 live 点延伸，但时间轴刻度冻结在打开那一刻（实测刻度停在 18:58、真实时间 19:05），视觉上就是「没实时更新」。【修复】① 窗口改为跟随当前时刻滚动：t1=max(数据末点, 现在)、t0=t1-span，窗口长度恒等于 span、数据不足整窗时左侧留白（不再压缩窗口）；② 修窗口时一度引入「数据不够整窗就把 t0 拉回数据起点」的兜底，会把 1h 档压成 3531 秒且 t0 再次钉死，已删除该分支；③ 依赖 requestAnimationFrame 初始化的三处（抽屉趋势图 / 硬盘抽屉 spark / 板块趋势图）补 setTimeout(60ms) 兜底 + 幂等守卫 —— 标签页切后台时 Chrome 冻结 rAF，双层 rAF 不执行 → 图表永远空白（连 SVG 都没有）。【全面核查】新增三个实机探针逐项验证：probe_monitor_audit（80 项：页面骨架/后端数据/四个抽屉/趋势图逐图实时性/交互健壮性/页面级数据流）、probe_range_switch（93 项：3 抽屉 × 6 档范围 + 时间轴滚动）、probe_monitor_deep（58 项：能耗统计/每日用电/电价/温度/存储/状态条/处理器/交叉自洽/交互链路）。【核查出的问题】均为探针取数方式错误、产品无 BUG：每日用电柱子是 SVG rect.b（本来就没有 title 属性，数值走 hover 浮层 .pwr-tip）、日期标签是 SVG text.axis-t（SVG 元素没有 innerText）、硬盘抽屉 overlay 的 id 是 monDrawerOverlay、电价「已保存」提示 2.5 秒后自动清空、柱状图在页面下方需先 scrollIntoView 且抽屉遮罩会挡住指针事件。【回归】新增 verify/verify_chart_window.js：直接驱动 chart.js 的 LineChart 断言窗口长度恒等于 span、t0/t1 同步右移、t1≥当前时刻、各档位（10m/6h/24h/7d）窗口长度正确、span=0 退回数据范围，共 15 项。【验证】本地 JS 回归全绿（monitor 渲染 / chart 窗口 / 电价 4 套）；实机 4 个抽屉共 6 张趋势图全部「点数增加 + 末端距右边界 0.2~0.5px + 有时间轴刻度」。
-checksum              = 0c6e08baa33bddedc546439847cf96b2
+changelog         = 1.1.68：彻底修掉「网卡接口数 ≠ 物理网口数」的残留问题 —— 接口清单里不再混入内核符号链接。【上一版遗留】v1.1.67 已把「网卡 2 口」修正为「网卡（物理口）1 口」，但接口清单里仍多出一行 bonding_masters（接口数显示 3，实际只有 2 个接口），且实机 API 返回的 nicDetail 缺少 tunnel 字段 —— 说明 NAS 上跑的是新旧混合的代码。【根因】/sys/class/net 下不只有网络接口，还有**内核符号链接**（bonding_masters → bonding 模块全局变量）。用「读 ifindex / address / speed / operstate 猜是不是接口」**全都不可靠**：实测 bonding_masters 在本机 address/speed/operstate 全为空，却仍能通过判据。【修复】① 改用 **/proc/net/dev**（内核权威的网络接口清单）判定真接口 —— 该表由内核直接导出、只含真接口，不在表里的直接跳过，从根上排除 bonding_masters；② 读不到 /proc/net/dev 时**安全降级为不过滤**（宁可多列一行，也不把物理口错报成 0）；③ 网卡明细新增 ifindex 字段（内核接口索引号），前端清单同步显示 if#N，用户可自行核对「这条是不是真接口」；④ 新增部署探针 collectVersion —— 采集进程是常驻后台线程，换 FPK 后不重启就跑旧代码，这个常量随功耗数据上报，从 API 一眼可确认「NAS 上跑的到底是哪版代码」，省掉逐字段比对。【修正后】接口清单只有 enp1s0（物理口 · r8169 · 1000 Mbps · up）与 tailscale0（隧道口 · speed=-1），接口数 2、物理口 1。【回归】verify/verify_nic_ports.py 扩充到 39 项全过：新增 2 个 bonding_masters 专项用例（符号链接带 ifindex / 属性齐全两种最坏情况），并断言旧的「靠属性猜」判据已移除、新判据与安全降级都在位。【独立佐证】fnOS 硬件信息显示主板为 ASRock J3455-ITX（板载单 RJ45 + Realtek RTL8169），与「1 个物理网口」一致。【核实结论不变】该 NAS 只有 1 个物理网口 enp1s0（1000 Mbps / up / MAC 70:85:c2:76:58:77）。checksum              = b9473c88b74a35566710554350caebb7
+checksum              = b9473c88b74a35566710554350caebb7
