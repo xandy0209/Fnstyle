@@ -75,9 +75,15 @@ check('monitor.js 判断 prof.has_tiers',
   /has_tiers\s*!==\s*false/.test(MON));
 check('has_tiers 为 false 时不渲染 .tariff-table',
   /if\s*\(prof\.has_tiers\s*!==\s*false\)\s*\{[\s\S]{0,900}tariff-table/.test(MON));
+/* ⚠️ v1.1.61：固定单价地区（合表）的单价**也分电压等级**
+   （lv1=0.5464 / lv2=lv3=0.5364），所以单价不能再是死文本 ——
+   要放进一个 data-tariff-flat-rate 的 span，切电压时就地更新。
+   断言相应改为检查「单价在 span 里 + span 在说明行里」。 */
 check('has_tiers 为 false 时把单价并入说明行（不重复渲染两行说明）',
-  /flatRate\s*!==\s*null\s*\?\s*'（'\s*\+\s*flatRate/.test(MON) &&
-  /flatRate\s*!==\s*null[\s\S]{0,80}元\/kWh/.test(MON));
+  /data-tariff-flat-rate/.test(MON) &&
+  /元\/kWh/.test(MON));
+check('固定单价说明行用 data-tariff-flat-rate span 承载单价',
+  /flatRate\s*!==\s*null[\s\S]{0,200}data-tariff-flat-rate/.test(MON));
 
 /* ============ ② 逻辑级：真实跑 capture/restore ============ */
 section('逻辑级：capture / restore 往返');

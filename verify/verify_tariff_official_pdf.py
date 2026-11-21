@@ -317,9 +317,19 @@ check('非法电压等级回落默认', c.get('voltage') == 'lv1', c.get('voltag
 ok, msg = pt.save_config({'region': 'tianjin', 'valley_start': 23, 'valley_end': 7,
                           'voltage': 'lv2'})
 c = pt.load_config()
-# load_config 以 default_config() 为基底 → 字段恒存在；无电压等级时为空串
-check('无电压等级的地区 voltage 为空串',
-      c.get('voltage') == '', repr(c.get('voltage')))
+# ⚠️ v1.1.61 行为变更：电压等级 id（lv1/lv2/lv3）是**跨地区通用**的，
+#    天津虽不执行分档电价，但这里**保留**用户选的等级 ——
+#    原来这里是 cfg.pop('voltage')，导致「在四川选了 1-10 千伏，
+#    切天津保存一次，再切回四川」电压被重置回「不满 1 千伏」。
+#    切回四川时后端会按四川的 levels 重新校验回落。
+check('无电压等级的地区保留用户选的电压等级（不被清空）',
+      c.get('voltage') == 'lv2', repr(c.get('voltage')))
+# 天津本身不区分电压等级 → 解析出的生效电压为空
+vid, vname, _p = pt.resolve_voltage('tianjin', c)
+check('天津解析出的生效电压为空（该地区不区分电压）',
+      vid == '', repr(vid))
+check('天津峰价用档案默认 0.49/0.54/0.79',
+      [abs(a - b) < 1e-9 for a, b in zip(_p, [0.49, 0.54, 0.79])], str(_p))
 
 # ---------------------------------------------------------------------------
 print('\n=== 11. describe() 透出新配置项 ===')

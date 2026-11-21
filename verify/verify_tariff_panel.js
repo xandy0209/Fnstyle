@@ -156,11 +156,12 @@ function makeSandbox() {
 
   /* ---------- 源码级断言（先做，最直接） ---------- */
   section('① 源码级：地区切换必须同步 tariffCache');
-  /* 注意：change 回调到 tariffCache 赋值相隔 ~1350 字符（中间有价目表重算），
+  /* 注意：change 回调到 tariffCache 赋值相隔 ~3000 字符
+     （中间有价目表重算 + v1.1.61 新增的电压等级同步），
      正则窗口要放宽，否则会误报 */
   const changeBlock = (function () {
     const i = RAW.indexOf("region.addEventListener('change'");
-    return i < 0 ? '' : RAW.slice(i, i + 2200);
+    return i < 0 ? '' : RAW.slice(i, i + 4000);
   })();
   check('change 回调里更新了 tariffCache',
     /tariffCache = j/.test(changeBlock));

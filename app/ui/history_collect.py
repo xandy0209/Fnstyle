@@ -295,13 +295,23 @@ def _integrate_points(pts, default_dt=60.0, since_ts=None):
     except Exception:
         vs, ve = 23, 7
 
+    # ⚠️ v1.1.61 修复（真实缺陷）：原来这里是「从 vs 逐小时数到 ve」
+    #   的循环，**vs == ve 时会数满 24 小时** → 谷段覆盖全天，
+    #   全部电量按低谷价计费。
+    #   用户在面板上把「低谷时段 起」和「止」设成同一个点时，
+    #   语义上应该是**空区间**（谷段时长为 0），而不是全天。
+    #   现在与 power_tariff._in_hours 的语义对齐：
+    #     · vs == ve → 空区间（除非 vs == 0，那才是真正的 0-24）
+    #     · vs > ve  → 跨零点（23→7 这类）
+    #     · vs < ve  → 普通区间
     valley_hours = set()
-    h = vs
-    for _ in range(24):
-        valley_hours.add(h)
-        h = (h + 1) % 24
-        if h == ve:
-            break
+    if vs == ve:
+        if vs == 0:
+            valley_hours = set(range(24))
+    elif vs < ve:
+        valley_hours = set(range(vs, ve))
+    else:
+        valley_hours = set(list(range(vs, 24)) + list(range(0, ve)))
 
     for hh, v in out["by_hour"].items():
         if hh in valley_hours:

@@ -2833,7 +2833,21 @@
        高峰平段价按电压等级不同；低谷价三档三等级完全相同。 */
     var levels = prof.voltage_levels || [];
     if (levels.length) {
-      var curV = cfg.voltage || prof.default_voltage || (levels[0] && levels[0].id) || '';
+      /* ⚠️ v1.1.61 修复：选中值必须用**该地区生效的电压**（prof.voltage），
+         而不是全局的 cfg.voltage。
+         以前写的是 `cfg.voltage || prof.default_voltage` ——
+         cfg.voltage 是**跨地区共享的全局配置**，切地区后它仍指向
+         旧地区的等级；若该等级在新地区不存在，select 会显示**空白**。
+         现在后端已按「唯一回落规则」算好每个地区的生效电压，
+         这里直接用，规则与后端完全一致。 */
+      var curV = prof.voltage || prof.default_voltage
+        || (levels[0] && levels[0].id) || '';
+      /* 兜底：万一 curV 不在 options 里，选第一项，别留空白 */
+      var curOk = false;
+      for (var ci = 0; ci < levels.length; ci++) {
+        if (levels[ci].id === curV) { curOk = true; break; }
+      }
+      if (!curOk) curV = (levels[0] && levels[0].id) || '';
       html += '<div class="tariff-field"><span class="tariff-lbl">电压等级</span>' +
         '<select class="tariff-select" data-tariff-voltage>';
       levels.forEach(function (lv) {
@@ -2884,21 +2898,38 @@
       if (prof.has_tiers !== false) {
         /* ⚠️ v1.1.59：把当前选中的电压等级带进表格，
            峰价要按该等级取（不满1千伏 / 1-10千伏 / 35-110千伏 三档价不同）。
-           优先用面板上**用户当前选择**的值（未保存的编辑也即时可见），
-           没有则用后端返回的生效值。 */
+           ⚠️ v1.1.61 修复：以前这里用
+             `document.querySelector('#monComputeBody [data-tariff-voltage]')`
+             去 DOM 里捞**上一个面板**的下拉值 —— 但本函数正是在
+             innerHTML 赋值**之前**调用的，此刻 DOM 里还是**旧面板**，
+             捞到的是**旧地区**的电压等级 → 切地区后表格峰价
+             跟着旧地区走。现在统一用 prof.voltage（后端算好的
+             该地区生效电压）；用户**未保存**的选择由
+             restoreTariffForm + syncTariffVoltageTable 处理。 */
         var tbAct = {};
         for (var k in d) {
           if (Object.prototype.hasOwnProperty.call(d, k)) tbAct[k] = d[k];
         }
-        var selV = document.querySelector(
-          '#monComputeBody [data-tariff-voltage]');
-        if (selV && selV.value) tbAct.voltage = selV.value;
+        tbAct.voltage = prof.voltage || '';
         html += '<div class="tariff-table' +
           (prof.has_time_of_use !== false ? ' tariff-tb-tou' : '') + '">' +
           tariffTableHtml(prof, tbAct) + '</div>';
       } else {
-        flatRate = (prof.peak_rates && prof.peak_rates[0] !== undefined)
-          ? prof.peak_rates[0] : null;
+        /* ⚠️ v1.1.61 修复：固定单价地区的单价也要按**电压等级**取。
+           合表：lv1=0.5464，lv2/lv3=0.5364 —— 以前直接用档案默认
+           peak_rates[0]，用户选了「1-10 千伏」却仍显示 0.5464，
+           同样属于「下拉与显示不一致」。 */
+        var flatPeaks = null;
+        var flatLv = prof.voltage_levels || [];
+        for (var fi = 0; fi < flatLv.length; fi++) {
+          if (flatLv[fi].id === prof.voltage && flatLv[fi].peak_rates) {
+            flatPeaks = flatLv[fi].peak_rates;
+            break;
+          }
+        }
+        if (!flatPeaks) flatPeaks = prof.peak_rates;
+        flatRate = (flatPeaks && flatPeaks[0] !== undefined)
+          ? flatPeaks[0] : null;
       }
     }
 
@@ -2906,8 +2937,13 @@
     html += tariffSeasonHtml(prof, d);
 
     if (prof.note) {
+      /* ⚠️ v1.1.61：固定单价地区的单价随电压等级变（合表 lv1=0.5464，
+         lv2/lv3=0.5364）→ 单价单独放一个 span，便于切换电压时
+         就地更新，不必整块重绘（重绘会丢用户输入）。 */
       html += '<div class="tariff-note">' + esc(prof.note) +
-        (flatRate !== null ? '（' + flatRate + ' 元/kWh）' : '') + '</div>';
+        (flatRate !== null
+          ? '（<span data-tariff-flat-rate>' + flatRate + '</span> 元/kWh）'
+          : '') + '</div>';
     }
 
     /* 保存按钮 */
@@ -3235,12 +3271,34 @@
        ⚠️ 这段必须在「!sameProf 提前 return」**之前**执行：
           提前 return 会让这三个框保留旧地区的值。 */
     var cfgv = box.__tariffData && box.__tariffData.config;
+    var profv = box.__tariffData && box.__tariffData.profile;
     var vt = box.querySelector('[data-tariff-voltage]');
     if (vt) {
       if (sameProf && st.voltage !== null && st.voltage !== undefined) {
         vt.value = st.voltage;
       } else {
-        vt.value = (cfgv && cfgv.voltage) ? cfgv.voltage : '';
+        /* ⚠️ v1.1.61 修复：换地区后不能直接用 cfgv.voltage ——
+           那是**全局配置**里的旧地区值，在新地区可能压根不存在
+           （天津/固定单价没有电压等级）→ select.value 会被置成
+           一个不存在的 option，下拉显示空白。
+           正确做法：用**新地区档案自带的生效电压**
+           （后端 profile_list 已给出 hit.voltage），并做
+           「option 存在性」校验，兜底回落到该地区默认等级。 */
+        var wantV = (profv && profv.voltage) ? profv.voltage : '';
+        var vtOpts = vt.options || [];
+        var has = false;
+        for (var oi = 0; oi < vtOpts.length; oi++) {
+          if (vtOpts[oi].value === wantV) { has = true; break; }
+        }
+        if (!has) {
+          /* 该地区没有电压等级（或后端没给）→ 交给默认值 */
+          wantV = (profv && profv.default_voltage) ? profv.default_voltage : '';
+          has = false;
+          for (var oj = 0; oj < vtOpts.length; oj++) {
+            if (vtOpts[oj].value === wantV) { has = true; break; }
+          }
+        }
+        vt.value = has ? wantV : (vtOpts.length ? vtOpts[0].value : '');
       }
     }
     var hp = box.querySelector('[data-tariff-people]');
@@ -3310,6 +3368,84 @@
     /* 标记已渲染 → 之后 live 重建不再重绘面板（保住用户输入与焦点） */
     tbox.setAttribute('data-tariff-rendered', '1');
     if (st) restoreTariffForm(tbox, st, curProf);
+    /* ⚠️ v1.1.61：回填之后，电压下拉与价目表必须**再次对齐**。
+       restoreTariffForm 负责把下拉的值改对（用户未保存的选择
+       或新地区的生效值），但表格的峰价是在 tariffPanelHtml
+       渲染时按 prof.voltage 定的 —— 若用户改的是电压，
+       这里必须把表格峰价刷成新值；否则切地区回来后，
+       下拉显示 lv2、表格还是 lv1 的价（老 bug 复发）。 */
+    syncTariffVoltageTable(tbox, d);
+  }
+
+  /* 按当前电压下拉的值，就地刷新价目表峰价（v1.1.61）
+     ------------------------------------------------------------
+     表格的峰价是渲染期按 prof.voltage 写死的；用户在下拉上
+     改了电压、或切地区后下拉回落到新地区等级，都需要在这里
+     把表格刷成与下拉一致的值。低谷价**不受电压影响**
+     （官方表三个电压等级的低谷价完全相同），故不处理。 */
+  function syncTariffVoltageTable(box, d) {
+    if (!box || !d || !d.profile) return;
+    var vt = box.querySelector('[data-tariff-voltage]');
+    var tb = box.querySelector('.tariff-table');
+    if (!vt) return;
+    var vid = vt.value;
+    if (!vid) return;
+    var lvList = d.profile.voltage_levels || [];
+    var peaks = null;
+    for (var i = 0; i < lvList.length; i++) {
+      if (lvList[i].id === vid && lvList[i].peak_rates) {
+        peaks = lvList[i].peak_rates;
+        break;
+      }
+    }
+    /* ⚠️ v1.1.61 修复：内存里的生效电压**必须先**跟着下拉走。
+       原来固定单价地区（无档位表）走的是「提前 return」分支，
+       d.profile.voltage 一直停在旧值 → syncTariffFlatRate 按旧
+       电压取价 → 用户切「1-10 千伏」，合表单价还是 0.5464
+       （实际应为 0.5364）。 */
+    d.profile.voltage = vid;
+    for (var j = 0; j < lvList.length; j++) {
+      if (lvList[j].id === vid) {
+        d.profile.voltage_name = lvList[j].name || '';
+        break;
+      }
+    }
+    /* 固定单价地区没有表格 → 只更新单价说明行 */
+    if (!tb) {
+      syncTariffFlatRate(box, d);
+      return;
+    }
+    if (!peaks) return;
+    var rows = tb.querySelectorAll('.tariff-tb-row');
+    for (var r = 1; r < rows.length; r++) {
+      var cells = rows[r].querySelectorAll('span');
+      if (cells.length < 3) continue;
+      var pi = r - 1;
+      if (peaks[pi] !== undefined) cells[2].textContent = String(peaks[pi]);
+    }
+  }
+
+  /* 固定单价地区的单价说明行就地更新（v1.1.61）
+     ------------------------------------------------------------
+     合表 / 固定单价地区没有档位表，但**单价仍然分电压等级**
+     （合表：不满1千伏 0.5464，1-10千伏 与 35-110千伏 0.5364）。
+     用户切电压时若不同步，说明行会一直显示旧等级的价。 */
+  function syncTariffFlatRate(box, d) {
+    if (!box || !d || !d.profile) return;
+    var el = box.querySelector('[data-tariff-flat-rate]');
+    if (!el) return;
+    var prof = d.profile;
+    var vid = d.profile.voltage;
+    var peaks = null;
+    var lvList = prof.voltage_levels || [];
+    for (var i = 0; i < lvList.length; i++) {
+      if (lvList[i].id === vid && lvList[i].peak_rates) {
+        peaks = lvList[i].peak_rates;
+        break;
+      }
+    }
+    if (!peaks) peaks = prof.peak_rates;
+    if (peaks && peaks[0] !== undefined) el.textContent = String(peaks[0]);
   }
 
   function bindTariffEvents(box) {
@@ -3337,32 +3473,13 @@
        ⚠️ 真实缺陷修复：之前电压下拉没有 change 监听，
           用户切了「1-10 千伏」，表格里的峰价还是「不满 1 千伏」的
           0.5224 —— 用户会照着错的价估电费。
-          这里用面板内已有的 voltage_levels 数据就地重算峰价，
-          不发请求、不改后端（保存仍然走原来的保存按钮）。 */
+       ⚠️ v1.1.61：统一走 syncTariffVoltageTable ——
+          它同时负责刷表格峰价、固定单价地区的单价说明行，
+          以及同步内存里的 d.profile.voltage（后续重绘按它取价）。 */
     var vtSel = box.querySelector('[data-tariff-voltage]');
     if (vtSel) {
       vtSel.addEventListener('change', function () {
-        var tb = box.querySelector('.tariff-table');
-        if (!tb) return;
-        var d = box.__tariffData;
-        if (!d || !d.profile) return;
-        var lvList = d.profile.voltage_levels || [];
-        var peaks = null;
-        for (var i = 0; i < lvList.length; i++) {
-          if (lvList[i].id === vtSel.value && lvList[i].peak_rates) {
-            peaks = lvList[i].peak_rates;
-            break;
-          }
-        }
-        if (!peaks) return;
-        /* 就地更新三行的峰价单元格（表格结构：档位/电量/峰平/[低谷]） */
-        var rows = tb.querySelectorAll('.tariff-tb-row');
-        for (var r = 1; r < rows.length; r++) {
-          var cells = rows[r].querySelectorAll('span');
-          if (cells.length < 3) continue;
-          var pi = r - 1;
-          if (peaks[pi] !== undefined) cells[2].textContent = String(peaks[pi]);
-        }
+        syncTariffVoltageTable(box, box.__tariffData);
       });
     }
     /* 季节参数：月份按钮点选（v1.1.57） */
@@ -3415,6 +3532,36 @@
             /* ⚠️ v1.1.60：推导明细也要按新地区重算，
                否则解释行会残留上一个地区的门槛来源。 */
             j.tier_derivation = hit.effective_derivation || {};
+            /* ⚠️ v1.1.61 关键修复：电压等级必须跟着新地区走。
+               以前 `j.profile = hit` 把 voltage 覆盖成 undefined
+               （profile_list 不给这个字段）→ 价目表回落成
+               lv1 默认峰价 0.5224，而电压下拉仍显示用户的 lv2
+               → 下拉与表格对不上，用户照着错的价估电费。
+               现在后端 profile_list 已给出每个地区的生效电压
+               （v1.1.61），这里同步过来即可。 */
+            if (hit.voltage !== undefined && hit.voltage !== null) {
+              j.profile.voltage = hit.voltage;
+            }
+            j.profile.voltage_name = hit.voltage_name || '';
+            /* 峰价也要按新地区的电压等级取 —— 不能只改 voltage，
+               否则表格仍用上一地区的 peak_rates。 */
+            var newPeaks = null;
+            var newLv = (hit.voltage_levels || []);
+            for (var vi = 0; vi < newLv.length; vi++) {
+              if (newLv[vi].id === hit.voltage && newLv[vi].peak_rates) {
+                newPeaks = newLv[vi].peak_rates;
+                break;
+              }
+            }
+            if (!newPeaks && hit.voltage) {
+              for (var vj = 0; vj < newLv.length; vj++) {
+                if (newLv[vj].id === hit.voltage) {
+                  newPeaks = newLv[vj].peak_rates;
+                  break;
+                }
+              }
+            }
+            if (newPeaks) j.profile.peak_rates = newPeaks;
           }
           /* ① 缓存同步更新，否则下一次 loadTariff 会用旧地区刷回来 */
           tariffCache = j;
@@ -3446,17 +3593,35 @@
         valley_end: ve ? Number(ve.value) : 7,
         rate_override: (rt && rt.value !== '') ? Number(rt.value) : null
       };
-      /* 新增配置项（v1.1.59）：电压等级 / 家庭人口 / 抄表周期 */
-      if (vt) payload.voltage = vt.value;
+      /* 新增配置项（v1.1.59）：电压等级 / 家庭人口 / 抄表周期
+         ⚠️ v1.1.61 修复：这三个控件在**不支持该政策的地区**
+            （天津 / 合表 / 固定单价）不渲染，querySelector 拿不到。
+            以前这时**完全不提交**这三个字段，后端收到缺失值就
+            直接清零 → 用户在四川设的「6 人 + 两个月抄表 + 1-10 千伏」
+            被切一次地区就吞掉了。
+            现在：控件不存在时，提交**配置里已有的值**
+            （box.__tariffData.config），让请求自描述完整、
+            不依赖后端的兜底逻辑。 */
+      var cfgSave = (box.__tariffData && box.__tariffData.config) || {};
+      if (vt) {
+        payload.voltage = vt.value;
+      } else if (cfgSave.voltage) {
+        payload.voltage = cfgSave.voltage;
+      }
       if (hp) {
         var ppl = Number(hp.value);
         /* 空值 / 非法值一律按 0（不适用）提交，后端还会再校验一次 */
         payload.household_people =
           (isFinite(ppl) && ppl >= 0 && ppl <= 30) ? Math.floor(ppl) : 0;
+      } else if (cfgSave.household_people !== undefined
+        && cfgSave.household_people !== null) {
+        payload.household_people = Number(cfgSave.household_people) || 0;
       }
       if (mm) {
         var mv = Number(mm.value);
         payload.meter_months = (mv === 2) ? 2 : 1;
+      } else if (cfgSave.meter_months) {
+        payload.meter_months = (Number(cfgSave.meter_months) === 2) ? 2 : 1;
       }
       /* 季节参数覆盖（v1.1.57）：把面板上的月份选择与电价输入收集起来。
          只提交**当前地区**的覆盖值，后端按地区分别存。 */

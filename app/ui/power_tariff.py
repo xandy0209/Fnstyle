@@ -446,19 +446,50 @@ def save_config(cfg):
     cfg["valley_end"] = int(cfg["valley_end"])
     # 电压等级（v1.1.59）：必须是该地区 `voltage_levels` 里存在的一个 id；
     # 地区没有电压等级定义时忽略该字段。
+    #
+    # ⚠️ v1.1.61 修复（真实缺陷）：电压等级 id（lv1/lv2/lv3）是
+    #    **跨地区通用**的（四川与合表的 levels 完全一致），
+    #    原来这段逻辑在「前端没提交 voltage」时直接把它**删掉**或
+    #    **回落成默认值**：
+    #      · 天津/固定单价（无 levels）→ cfg.pop("voltage")
+    #        ⇒ 用户在四川选了「1-10 千伏」，切到天津点一次保存，
+    #          再切回四川电压就变回「不满 1 千伏」—— **设置被吞掉**；
+    #      · 合表（有 levels）→ 回落成 lv1，同样吞掉设置。
+    #    现在改为：**先继承旧配置里的值，再按新地区的 levels 校验**，
+    #    只有确实非法时才回落。
+    try:
+        old_cfg = load_config()
+    except Exception:
+        old_cfg = {}
+    old_voltage = old_cfg.get("voltage") or ""
+    if not cfg.get("voltage"):
+        cfg["voltage"] = old_voltage
     levels = (PROFILES.get(region) or {}).get("voltage_levels") or []
     if levels:
         vid = cfg.get("voltage")
         valid = [lv.get("id") for lv in levels if lv.get("id")]
         if vid not in valid:
             vid = (PROFILES[region].get("default_voltage")
-                   or (valid[0] if valid else ""))
+                   or (valid[0] if valid else "")
+                   or "")
         cfg["voltage"] = vid
     else:
-        cfg.pop("voltage", None)
+        # 该地区不区分电压等级（天津 / 固定单价）
+        # → 保留原值（切回有 levels 的地区时还会用到），不删。
+        cfg["voltage"] = cfg.get("voltage") or old_voltage or ""
 
     # 「一户多人口」家庭人口数（v1.1.59）
     # 0 = 不适用；1-4 = 人数不足 5（无加成）；>=5 → 有加成
+    # ⚠️ v1.1.61 修复（真实缺陷）：前端在**不支持该政策的地区**
+    #    （天津 / 合表 / 固定单价）不渲染这两个输入框，
+    #    保存时也不提交 → 这里原来直接 `int(cfg.get(...) or 0)`
+    #    把用户的设置**清零**。
+    #    后果：用户在四川设了「6 人 + 两个月抄表」，
+    #    切到天津点一次保存，再切回四川 → 门槛从 490/690
+    #    掉回 180/280，电费直接算错。
+    #    现在：**前端没提交就继承旧配置**，只有提交了才校验。
+    if cfg.get("household_people") in (None, ""):
+        cfg["household_people"] = old_cfg.get("household_people") or 0
     try:
         people = int(cfg.get("household_people") or 0)
     except Exception:
@@ -469,6 +500,9 @@ def save_config(cfg):
 
     # 抄表周期（月）（v1.1.59）
     # 1 = 每月；2 = 两个月抄一次（档位门槛 ×2，川发改价格〔2012〕560号）
+    # ⚠️ v1.1.61：同上 —— 前端没提交时继承旧值，别把设置清零。
+    if cfg.get("meter_months") in (None, ""):
+        cfg["meter_months"] = old_cfg.get("meter_months") or 1
     try:
         mm = int(cfg.get("meter_months") or 1)
     except Exception:
@@ -722,6 +756,59 @@ def _meter_months_of(cfg, prof):
         return 1
 
 
+def resolve_voltage(region, cfg=None, prof=None):
+    """解析某地区**当前生效**的电压等级。
+
+    ⚠️ v1.1.61：以前这段逻辑在 compute_bill / describe / profile_list
+       里各写了一遍，三处的**回落规则不一致**：
+         · compute_bill 找不到匹配就回落到 levels[0]
+         · describe  找不到匹配就**保持 cfg 里的原值**（可能是个
+           在本地区不存在的 id）
+         · profile_list 干脆**不给**这个字段
+       结果：前端切地区后，电压下拉与价目表峰价对不上
+       （下拉显示 lv2，表格却是 lv1 的 0.5224）。
+
+       现在统一到这一个函数，三处共用，**回落规则唯一**：
+         1. cfg 里的 voltage 在本地区 levels 里存在 → 用它
+         2. 否则用本地区 default_voltage
+         3. 再否则用 levels[0]
+         4. 本地区没有 levels（天津/固定单价）→ 返回空
+
+    返回 (voltage_id, voltage_name, peak_rates)：
+      voltage_id     生效的电压等级 id（无则 ""）
+      voltage_name   该等级的显示名（无则 ""）
+      peak_rates     该等级对应的峰/平三档价；无等级定义时取档案默认
+    """
+    cfg = cfg if cfg is not None else load_config()
+    if prof is None:
+        prof = effective_profile(region, cfg)
+    levels = prof.get("voltage_levels") or []
+    default_peaks = list(prof.get("peak_rates") or [])
+    if not levels:
+        # 本地区不区分电压等级（天津 / 固定单价）
+        return "", "", default_peaks
+
+    vid = cfg.get("voltage")
+    hit = None
+    for lv in levels:
+        if lv.get("id") == vid:
+            hit = lv
+            break
+    if hit is None:
+        # cfg 里的值在本地区无效 → 落到该地区默认等级
+        dv = prof.get("default_voltage")
+        for lv in levels:
+            if lv.get("id") == dv:
+                hit = lv
+                break
+    if hit is None:
+        hit = levels[0]
+    out_id = hit.get("id") or ""
+    out_name = hit.get("name") or ""
+    out_peaks = list(hit.get("peak_rates") or default_peaks)
+    return out_id, out_name, out_peaks
+
+
 # ---------------------------------------------------------------------------
 # 核心：时段判定与电费计算
 # ---------------------------------------------------------------------------
@@ -897,22 +984,10 @@ def compute_bill(flat_kwh, valley_kwh, cfg=None, ts=None):
     # ---- 电压等级（v1.1.59）----
     # 官方表给了三列：不满1千伏 / 1-10千伏 / 35-110千伏。
     # 高峰平段价按电压等级不同；**低谷价三档三等级完全相同**。
-    voltage = cfg.get("voltage") or prof.get("default_voltage") or "lv1"
-    voltage_name = ""
-    peak_rates = list(prof["peak_rates"])
-    levels = prof.get("voltage_levels") or []
-    if levels:
-        hit = None
-        for lv in levels:
-            if lv.get("id") == voltage:
-                hit = lv
-                break
-        if hit is None:
-            hit = levels[0]
-        voltage = hit.get("id") or voltage
-        voltage_name = hit.get("name") or ""
-        if hit.get("peak_rates"):
-            peak_rates = list(hit["peak_rates"])
+    # ⚠️ v1.1.61：统一走 resolve_voltage（唯一回落规则），
+    #    不再就地解析 —— 以前这里的回落规则与 describe/profile_list
+    #    不一致，导致前端切地区后下拉与表格峰价对不上。
+    voltage, voltage_name, peak_rates = resolve_voltage(region, cfg, prof)
 
     # ---- 未启用：沿用单一固定单价 ----
     # ⚠️ 未启用时**不套用地区的阶梯价**，而是用「单一均价」——
@@ -1121,6 +1196,15 @@ def profile_list(cfg=None):
             eff_deriv = tier_derivation(key, cfg)
         except Exception:
             eff_deriv = {}
+        # ⚠️ v1.1.61 关键修复：这个地区**自己**的生效电压等级。
+        #    以前 profile_list 不给这个字段 → 前端切地区时
+        #    `j.profile = hit` 把 voltage 覆盖成 undefined →
+        #    价目表回落到 prof.peak_rates（lv1 默认价），
+        #    而电压下拉仍显示用户的 lv2 → 下拉与表格对不上。
+        try:
+            eff_vid, eff_vname, _eff_peaks = resolve_voltage(key, cfg, p)
+        except Exception:
+            eff_vid, eff_vname = "", ""
         out.append({
             "id": key,
             "name": p["name"],
@@ -1135,6 +1219,9 @@ def profile_list(cfg=None):
             "effective_tiers": eff_limits,
             # 该地区当前生效档位的推导明细（前端解释行用）
             "effective_derivation": eff_deriv,
+            # ⚠️ v1.1.61：该地区生效的电压等级（前端切地区时同步下拉与峰价）
+            "voltage": eff_vid,
+            "voltage_name": eff_vname,
             "summer_months": p["summer_months"],
             "wet_months": p["wet_months"],
             "peak_hours": p["peak_hours"],
@@ -1261,15 +1348,11 @@ def describe():
     is_summer = month in (prof.get("summer_months") or [])
     is_wet = month in (prof.get("wet_months") or [])
     # 电压等级（v1.1.59）：peak_rates 按当前等级给出
-    voltage = cfg.get("voltage") or prof.get("default_voltage") or ""
-    levels = prof.get("voltage_levels") or []
-    cur_peak = list(prof["peak_rates"])
-    voltage_name = ""
-    for lv in levels:
-        if lv.get("id") == voltage:
-            cur_peak = list(lv.get("peak_rates") or cur_peak)
-            voltage_name = lv.get("name") or ""
-            break
+    # ⚠️ v1.1.61：统一走 resolve_voltage —— 原来这里找不到匹配时
+    #    会**保持 cfg 里的原值**（可能是不存在于本地区的 id），
+    #    与 compute_bill 的回落规则不一致 → 前端切地区后
+    #    下拉显示 lv2、表格却是 lv1 的峰价。
+    voltage, voltage_name, cur_peak = resolve_voltage(region, cfg, prof)
     # ⚠️ v1.1.59 修复：active_tiers 必须是**本月实际生效**的门槛
     #    （含抄表周期 ×2 / 一户多人口加成 / 跨月结转），
     #    否则前端价目表与真实计费口径对不上。
@@ -1329,7 +1412,7 @@ def describe():
             "has_tiers": prof.get("has_tiers", True),
             "carry_over_since": prof.get("carry_over_since"),
             # 电压等级（v1.1.59）
-            "voltage_levels": levels,
+            "voltage_levels": prof.get("voltage_levels") or [],
             "voltage": voltage,
             "voltage_name": voltage_name,
             # 地方政策开关（v1.1.59）

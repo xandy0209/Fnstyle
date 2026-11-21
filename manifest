@@ -1,5 +1,5 @@
 appname               = fnstyle
-version           = 1.1.60
+version           = 1.1.61
 display_name          = FnStyle
 desc                  = 集中管理飞牛个性化设置与丰富主题库：网站标题、登录框、LOGO、壁纸、毛玻璃、任务栏等独立配置，内置多源主题库，支持一键应用到 fnOS 系统，卸载后自动还原系统默认样式。
 platform              = all
@@ -15,5 +15,5 @@ desktop_applaunchname = fnstyle.main
 service_port          = 9910
 checkport             = false
 ctl_stop              = true
-changelog         = 1.1.60：优化电价面板信息结构，消除重复展示并补上生效口径说明。① 价目表下方原有一行说明「7–9 月档位 0–260 / 261–460 / 460+；6–10 月低谷价 0.175，其余月份 0.2535」，经核查这些数字**全部**已存在于下方「季节参数」输入框中，属纯重复，且真正需要说明的「本月生效门槛是如何推导出来的」反而缺失；现替换为**推导解释行**，按实际生效情况逐项列出：生效档位及来源基准档位、抄表周期倍数、一户多人口加成的度数、上月结转额度、当前所处丰枯水期（低谷价取哪套标准）。② 新增后端 power_tariff.tier_derivation() 统一推导明细出口，describe() 与 profile_list()（按地区）均附带，推导结果与 effective_tier_limits 严格同源，不会出现「解释行说的」与「实际计费的」对不上。③ 切换地区时推导解释行同步按新地区重算，避免残留上一个地区的门槛来源。④ 「季节参数」区块默认折叠（头部保留当前季节摘要），这些项属于地方电网口径差异 / 政策调整才需修改的例外项，默认值已按官方口径内置；此前一直平铺，把用户真正要看的价目表挤到了下方。⑤ 清理 tariffTableHtml() 中随说明文字一并失效的 vw / ts / isSummer / isWet 死变量。verify 新增 verify_tariff_derivation.py 44 项，全量回归（21 个 Python + 5 个 JS）全绿。checksum              = 03c9a708c4ff95dcf4ed693bfffe1e8a
-checksum              = 03c9a708c4ff95dcf4ed693bfffe1e8a
+changelog         = 1.1.61：修复电价面板「下拉选择联动」的一批真实缺陷（用户反馈「下拉选择联动好像有问题」，经系统核查共定位 8 处）。① 切地区后电压下拉与价目表峰价不一致：根因是后端 profile_list() 不给每个地区「生效的电压等级」字段，前端 `j.profile = hit` 把 voltage 覆盖成 undefined，价目表回落成档案默认峰价；现新增后端 power_tariff.resolve_voltage() 统一电压解析（唯一回落规则：配置值有效→用之，否则地区默认等级，再否则首项），compute_bill / describe / profile_list 三处共用，杜绝规则漂移。② 前端 tariffPanelHtml 曾用 document.querySelector("#monComputeBody [data-tariff-voltage]") 去 DOM 捞电压等级，但该函数在 innerHTML 赋值之前调用，此刻 DOM 里还是旧面板 → 捞到旧地区的等级；现改用 prof.voltage。③ 换地区回填电压下拉时曾用全局 cfg.voltage（仍指向旧地区），在新地区无该等级时下拉显示空白；现改用新地区生效电压并做 option 存在性校验。④ 固定单价地区（合表）的单价同样分电压等级（不满1千伏 0.5464 / 1-10千伏与35-110千伏 0.5364），此前恒取档案默认值，用户选了「1-10 千伏」却仍显示 0.5464；现单价随电压即时更新。⑤ 电压切换后未同步内存中的 profile.voltage，后续重绘会跳回旧值；现统一走新增的 syncTariffVoltageTable / syncTariffFlatRate。⑥⑦ 切到天津/合表/固定单价保存一次，会把用户在四川设置的电压等级、家庭人口、抄表周期**全部清零**（后端在无电压等级地区 pop 掉该字段，且前端在这些地区不提交这些值）；现改为继承旧配置，并在这些地区生效档位仍严格套用各自政策（天津不套四川的「一户多人口」与「两个月抄表」）。⑧ 低谷时段「起=止」时后端判定为全天谷段（全部电量按谷价计费），与 power_tariff._in_hours 语义不一致；现已统一为区间语义（起=止为空区间，起>止为跨零点）。verify 新增 verify_tariff_linkage.py 67 项，全量回归（21 个 Python + 5 个 JS）全绿。
+checksum              = 00e09aa2614a10ad00e4068f08c6768c
