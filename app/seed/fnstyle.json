@@ -1,5 +1,5 @@
 {
-  "FndeskGlass": -1,
+  "FndeskGlass": 8,
   "FndeskIconSort": 1,
   "FndeskMenu": [
     "fnos",
@@ -16,11 +16,11 @@
   "fnWindows": 1,
   "fndeskClickSound": 1,
   "fndeskLoginVH": "0",
-  "fndeskLoginVW": "0",
+  "fndeskLoginVW": "60",
   "loginBackground": "/deskdata/fnstyle/loginBackground.png",
   "loginLogo": "/deskdata/fnstyle/loginLogo.png",
   "loginOpacity": "8",
-  "nasNameDisplay": 1,
+  "nasNameDisplay": 2,
   "shareMbTitle": "飞牛 fnOS",
   "webFavicon": "/deskdata/fnstyle/webFavicon.png",
   "web_desc": "飞牛fnOS私有云存储系统"

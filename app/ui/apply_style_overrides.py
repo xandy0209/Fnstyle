@@ -144,10 +144,17 @@ def write(path, text):
 #   FndeskGlass     : -1..50   -1 = 飞牛原设(blur 8px)，0 = 关闭，N = blur(Npx)
 #   fndeskLoginVW   : -80..80  水平偏移（视口宽度百分比）
 #   fndeskLoginVH   : -80..80  垂直偏移（视口高度百分比）
+#
+# ⚠️ v1.1.81：出厂缺省值调整（老板需求「个性化设置中……默认为」）
+#   FndeskGlass   : -1 → 8   （毛玻璃强度默认 blur(8px)）
+#   fndeskLoginVW :  0 → 60  （登录框水平位置默认右移 60%）
+# 这两个缺省必须与前端 app.js 的 DEFAULTS、前端 fnstyle-login.js 的
+# num() 兜底、以及 app/seed/fnstyle.json 的播种值**四处同步**，
+# 否则「界面显示的默认」与「实际生效的默认」会脱节。
 def map_values(cfg):
-    glass = num(cfg, 'FndeskGlass', -1)
+    glass = num(cfg, 'FndeskGlass', 8)
     opacity = num(cfg, 'loginOpacity', 10)
-    vw = num(cfg, 'fndeskLoginVW', 0)
+    vw = num(cfg, 'fndeskLoginVW', 60)
     vh = num(cfg, 'fndeskLoginVH', 0)
 
     if glass == -1:

@@ -24,7 +24,7 @@ set -uo pipefail
 # ------------------------- 版本与更新检查 -------------------------
 # ⚠️ 必须与 manifest 的 version 保持一致（自动更新靠它判断「是否比线上新」）。
 # GitHub 发布新版本时，两处都要改：manifest 的 version + 本常量。
-APP_VERSION="1.1.80"
+APP_VERSION="1.1.81"
 
 # ----------------------------- 路径配置 -----------------------------
 # APP_ROOT 是 fnOS 安装后创建的标准软链：
@@ -183,11 +183,16 @@ json_set() {
 #
 #      字段            runtime 缺省              UI offValue
 #      Fndesk_taskbar  num(x,0)  → 0 = 关闭       0 = 关闭   ✓ 相同
-#      nasNameDisplay  num(x,1)  → 1 = 显示       2 = 隐藏   ✗ 不同！
+#      nasNameDisplay  num(x,2)  → 2 = 隐藏       2 = 隐藏   ✓ 相同
 #
-#    nasNameDisplay 的 offValue 是 2（隐藏），
-#    但 runtime 缺省是 1（显示）——
-#    若按 offValue 归一化，null 会被写成 2，
+#    ⚠️ v1.1.81：nasNameDisplay 的 runtime 缺省由 1（显示）改为 2（隐藏）
+#    （老板需求「登录框名字默认为隐藏」），与 UI offValue 恰好相同。
+#
+#    ⚠️ 但**语义仍不相同**，绝不能因此就把两者混用：
+#      offValue  = 「用户主动关掉」的结果值
+#      nullValue = 「没配置时」的缺省行为
+#    将来若把 nasNameDisplay 的 runtime 缺省改回 1（显示），
+#    这里必须**跟着改回 1**，否则 null 会被写成 2，
 #    等于把用户「显示名字」的行为反转成「隐藏名字」，是回归。
 #
 #    所以这里的语义统一为：**null = 该字段在 runtime 下的缺省行为**，
@@ -196,7 +201,7 @@ json_set() {
 #
 SWITCH_NULL_DEFAULTS="
 Fndesk_taskbar	0
-nasNameDisplay	1
+nasNameDisplay	2
 autoRestoreOnUninstall	1
 "
 
@@ -2046,8 +2051,10 @@ PY
         #
         # 这里在服务端兜底：null 一律按该字段的 **runtime 缺省行为** 归一化
         #（见 SWITCH_NULL_DEFAULTS 表）。
-        # 注意：不能用 offValue —— nasNameDisplay 的 offValue 是 2（隐藏），
-        #       而 runtime 缺省是 1（显示），用错会把用户行为反转。
+        # 注意：不能用 offValue —— offValue 是「用户主动关掉」的结果值，
+        #       而 runtime 缺省是「没配置时」的行为，两者语义不同。
+        #       （v1.1.81 起 nasNameDisplay 的两者恰好都是 2，
+        #        但只要任一侧改动，这里都必须跟着改表，不能靠巧合。）
         normalize_null_values "${KV}.clean" || true
 
         # ---- 外链媒体资源本地化（2026-11-13 新增）----

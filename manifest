@@ -1,5 +1,5 @@
 appname               = fnstyle
-version           = 1.1.80
+version           = 1.1.81
 display_name          = FnStyle
 desc                  = 集中管理飞牛个性化设置与丰富主题库：网站标题、登录框、LOGO、壁纸、毛玻璃、任务栏等独立配置，内置多源主题库，支持一键应用到 fnOS 系统，卸载后自动还原系统默认样式。
 platform              = all
@@ -15,5 +15,5 @@ desktop_applaunchname = fnstyle.main
 service_port          = 9910
 checkport             = false
 ctl_stop              = true
-changelog         = 1.1.80：阈值「配置管理」齿轮按钮**从顶栏移到监控面板状态条右端**（老板 2026-11-22 反馈：「如图将配置按钮放到下方的标签右侧显示。」）。【为什么】阈值只对系统监控生效，放在监控面板的工具条里语义更贴合，且不必先切到「系统监控」标签才能找到入口。【改动】index.html 移除顶栏 #tbOpenThresholds、在 .mon-toolbar-row 末尾（自动刷新右侧）新增同 id 按钮并加 .mon-cfg-btn 类；app.css 新增 .mon-cfg-btn 规则（flex:none + align-self:center + 显式钉住 padding，因为 .btn.sm 与 .btn.icon-btn 同为 (0,2,0) 且 .btn.sm 在样式表更靠后会覆盖 padding）；按钮 id 未变，thresholds-ui.js 的绑定逻辑零改动。【布局坑】.mon-toolbar-row 里的 .spacer 没有 flex:1 1 auto 规则（只有 .card>header / .tabs / .sync-bar 等有），所以它并不撑开空间——右侧元素仍靠状态条自身的 flex 排布，按钮需显式 flex:none 避免被压缩。【测试】verify_thresholds.py / probe_thresholds.py 沿用（按钮 id 不变，断言不受影响）；新增实机布局探针核对按钮位置与对齐。
-checksum              = a50f7aba059b15c179e8623819bcccd4
+changelog         = 1.1.81：个性化设置**出厂默认值调整**（老板需求：「个性化设置中登录酷水平位置默认为 60%，登录框名字默认为隐藏，窗口毛玻璃效果默认为 8」）。【改动】登录框水平位置 fndeskLoginVW 0→60（%）；登录框名字 nasNameDisplay 1（显示）→2（隐藏）；窗口毛玻璃 FndeskGlass -1（飞牛原设）→8（blur 8px）。【⚠️ 这三个「默认」散落在 7 处，必须全部同步，漏一处就会「界面骗人」】① app/ui/static/js/app.js 的 DEFAULTS（点「默认」按钮的回填值）；② app/ui/static/js/app.js 里 nasNameDisplay 字段的 nullValue（界面与实际的缺省语义）；③ app/ui/static/js/fnstyle-login.js 的 num(cfg.FndeskGlass/-VW, 缺省)（登录页运行时）；④ app/ui/static/js/fnstyle-runtime.js 的 num(cfg.nasNameDisplay, 缺省)（桌面运行时）；⑤ app/ui/apply_style_overrides.py 的 map_values() 缺省（后端样式覆盖）；⑥ app/ui/index.cgi 的 SWITCH_NULL_DEFAULTS（后端 null 归一化目标）；⑦ app/seed/fnstyle.json（首次安装播种值）。【⚠️ 连带的行为变更 · 一个必须处理的坑】fnstyle-login.js 里原本有一个短路：「glass===-1 && opacity===10 && vw===0 && vh===0 ⇒ 不注入任何覆盖 ⇒ 保持飞牛原生外观」。它当时是安全的，因为**旧默认值恰好等于原生外观**（原生 blur(8px) + 居中 vw=0 + alpha 0.1）。但新默认的 vw=60 **不是**原生外观（原生居中 vw=0）—— 若短路保留，用户「什么都不配」时会命中短路而不注入 ⇒ 登录框仍是居中，而界面上「登录框水平位置」显示 60% ⇒ **界面骗人**，且与需求直接矛盾。故**移除该短路**，一律注入覆盖（blur=8 与 alpha=0.1 本就等于原生值，注入无副作用，真正要生效的是 vw=60）。【⚠️ nullValue ≠ offValue 的坑（本次两者恰好都是 2）】nasNameDisplay 的 offValue（用户主动关掉的结果值）与 nullValue（没配置时的缺省行为）语义不同，本次恰好相同纯属巧合，任何一侧改动都必须同步另一侧，否则界面与实际行为脱节。【测试】新增 verify/verify_default_values.py（30 项：7 层默认值一致性 + 后端 map_values 实跑输出 + node 实跑抽 JS 缺省 + 短路已移除 + UI 取值范围自洽）；verify_browser_render.py 的「全关闭」场景改为新出厂默认并把断言从「有没有 card CSS」改为「按值断言」，42/42。
+checksum              = 662a1d5226641b7a3ebc230f790d9e9d

@@ -272,9 +272,14 @@
    * 功能 3：登录框样式（毛玻璃 / 透明度 / 位置）
    * ---------------------------------------------------------------- */
   function applyCardStyle(cfg) {
-    var glass = num(cfg.FndeskGlass, -1);
+    // ⚠️ v1.1.81：缺省值调整（老板需求「个性化设置中……默认为」）
+    //   FndeskGlass   : -1 → 8   （毛玻璃强度默认 blur(8px)）
+    //   fndeskLoginVW :  0 → 60  （登录框水平位置默认右移 60%）
+    // 这两个缺省必须与 app.js 的 DEFAULTS 和后端
+    // apply_style_overrides.map_values() 保持一致。
+    var glass = num(cfg.FndeskGlass, 8);
     var opacity = num(cfg.loginOpacity, 10);
-    var vw = num(cfg.fndeskLoginVW, 0);
+    var vw = num(cfg.fndeskLoginVW, 60);
     var vh = num(cfg.fndeskLoginVH, 0);
 
     // 毛玻璃：-1 = 飞牛原设（原生实测为 blur(8px)）
@@ -290,13 +295,23 @@
     vw = Math.max(-80, Math.min(80, vw));
     vh = Math.max(-80, Math.min(80, vh));
 
-    // ⚠️ 三个值全都是「默认值」时 ⇒ 不注入任何覆盖 ⇒ 保持飞牛原生外观。
-    //    这是关键：避免「什么都没配」却被强行改样式。
-    if (glass === -1 && opacity === 10 && vw === 0 && vh === 0) {
-      var old = document.getElementById('fnstyle_login_card_css');
-      if (old) old.remove();
-      return false;
-    }
+    // ⚠️⚠️ v1.1.81：这里原本有一个「三项都是默认值 ⇒ 不注入任何覆盖 ⇒
+    //    保持飞牛原生外观」的短路：
+    //
+    //        if (glass === -1 && opacity === 10 && vw === 0 && vh === 0) { ... }
+    //
+    //    它当时是安全的，因为**旧默认值恰好等于飞牛原生外观**
+    //    （原生 blur(8px) + 居中 vw=0 + alpha 0.1）。
+    //
+    //    但出厂默认改成了 (glass=8, vw=60) 之后，其中 **vw=60 不是原生外观**
+    //    （原生是居中 vw=0）。若短路保留：
+    //      · 用户「什么都不配」时 → 命中短路 → 不注入 → 登录框保持原生居中
+    //      · 但界面上「登录框水平位置」显示的是 60%
+    //    ⇒ **界面骗人**，且与老板「默认为 60%」的诉求直接矛盾。
+    //
+    //    所以现在**一律注入覆盖**，让缺省值真正生效。
+    //    （blur=8 与 alpha=0.1 本来就等于原生值，注入它们无副作用；
+    //      真正需要生效的是 vw=60。）
 
     var css =
       '.gradient-border{' +

@@ -41,11 +41,12 @@
     },
     {
       // 元素 id: nasNameDisplay   json key: nasNameDisplay   数字 1=显示 2=隐藏
-      // ⚠️ nullValue 必须等于 runtime 里的缺省行为（num(x,1) → 1 = 显示），
-      //    不是 offValue(2 = 隐藏)。写错会导致界面显示「隐藏」但实际显示着名字，
-      //    或者反过来 —— 界面与实际必须一致。
+      // ⚠️ nullValue 必须等于 runtime 里的缺省行为（num(x,2) → 2 = 隐藏），
+      //    不是 offValue(2 = 隐藏) —— 本次两者恰好相同，但这只是巧合，
+      //    改 runtime 缺省时**必须同步改这里**，否则界面与实际行为会不一致。
+      //    ⚠️ v1.1.81：出厂默认改为「隐藏」（老板需求），runtime 缺省同步改成 2。
       key: 'nasNameDisplay', label: '登录框名字', type: 'switch', group: '登录框',
-      onValue: '1', offValue: '2', numeric: true, nullValue: '1',
+      onValue: '1', offValue: '2', numeric: true, nullValue: '2',
       onLabel: '显示', offLabel: '隐藏',
       hint: '是否在登录框上显示设备名字'
     },
@@ -120,11 +121,11 @@
     appTitle: '飞牛 fnOS',
     web_desc: '飞牛 fnOS 私有云存储系统',
     loginOpacity: '30',
-    nasNameDisplay: '1',
-    fndeskLoginVW: '0',
+    nasNameDisplay: '2',
+    fndeskLoginVW: '60',
     fndeskLoginVH: '0',
     Fndesk_taskbar: '1',
-    FndeskGlass: '-1',
+    FndeskGlass: '8',
     autoRestoreOnUninstall: '1',
     /* 「图片与壁纸」的默认值 = 软件出厂自带的 5 张图（pic/ 目录素材，
        安装时播种到 /deskdata/fnstyle/）。点「默认」就是回到这 5 张，
@@ -253,7 +254,7 @@
           //
           // runtime 的判定：num(cfg.X, DEF) === 目标值
           //   Fndesk_taskbar : num(x, 0) !== 1 → 0 = 关闭
-          //   nasNameDisplay : num(x, 1) !== 2 → 1 = 显示
+          //   nasNameDisplay : num(x, 2) !== 2 → 2 = 隐藏（v1.1.81 起缺省隐藏）
           //
           // 三种「拿不到值」的情况要分别处理：
           //   · raw === null      → 脏数据（曾被写成 null）
@@ -265,7 +266,9 @@
           // ⚠️ nullValue 是每个字段显式声明的（见字段定义），
           //    **不能统一用 offValue** ——
           //    nasNameDisplay 的 offValue 是 2（隐藏），
-          //    但 runtime 缺省是 1（显示），用 offValue 会把行为反转。
+          //    runtime 缺省现在也是 2，但两者**语义不同**：
+          //    offValue 是「用户主动关掉」，nullValue 是「没配置时的默认」。
+          //    改任何一个都要同步改另一个，否则界面与实际会脱节。
           var cur;
           if (raw === null || raw === undefined || raw === '') {
             cur = (f.nullValue !== undefined)
@@ -431,8 +434,8 @@
       //    兜底必须用 **nullValue**（= 该字段在 runtime 下的缺省行为），
       //    不能用 offValue：
       //      Fndesk_taskbar : nullValue=0（关闭）= offValue ✓
-      //      nasNameDisplay : nullValue=1（显示）≠ offValue(2=隐藏) ✗
-      //    用错会把用户行为反转。
+      //      nasNameDisplay : nullValue=2（隐藏）= offValue（v1.1.81 起两者相同）
+      //    即便当前值相同，也必须各自显式声明 —— 语义不同，混用会出事。
       if (isNaN(n)) {
         var fallback = (f.nullValue !== undefined) ? f.nullValue
                                                    : (DEFAULTS[key] === undefined ? '' : DEFAULTS[key]);
@@ -1533,7 +1536,7 @@
   var AUTOINSTALL_KEY = 'fnstyle_autoinstall_update_v1';
   /* 当前版本号：与 manifest 的 version 保持一致，发版时同步修改。
      顶栏版本胶囊与「发现新版本」提示都基于它展示。 */
-  var APP_VERSION = '1.1.80';
+  var APP_VERSION = '1.1.81';
 
   /* 顶栏右侧更新控件：版本胶囊 + 检查/下载按钮 + 状态文字。
      reason：error 态下展示在状态文字与悬停提示里的诊断摘要（可省略）。

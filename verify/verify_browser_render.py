@@ -29,10 +29,24 @@ CFG_ON = dict(BASE, **{
     'fndeskLoginVW': 15, 'fndeskLoginVH': -8, 'Fndesk_taskbar': 1,
     'FndeskGlass': 18,
 })
+# ⚠️ v1.1.81：出厂默认值变更（老板需求「个性化设置中……默认为」）
+#   登录框水平位置 0 → 60（%）
+#   登录框名字     显示 → 隐藏
+#   窗口毛玻璃     -1 → 8（blur 8px）
+#
+# 这里 CFG_OFF 模拟的是「用户什么都没配」⇒ 取**出厂默认值**。
+# 旧值 (nasNameDisplay:1, fndeskLoginVW:0, FndeskGlass:-1) 已不再是出厂默认。
+#
+# ⚠️ 连带的行为变化：fnstyle-login.js 里原本有个
+#   「三项都是默认值 ⇒ 不注入覆盖 ⇒ 保持飞牛原生」的短路，
+#   它当时安全是因为旧默认值恰好等于原生外观。
+#   新默认的 vw=60 **不是**原生外观（原生居中 vw=0），
+#   短路已移除（否则界面显示 60% 而实际没右移 = 界面骗人）。
+#   所以 CFG_OFF 现在**会**注入 card CSS，且内容应为 blur(8px)+margin-left:60vw。
 CFG_OFF = dict(BASE, **{
-    'appTitle': '飞牛 fnOS', 'loginOpacity': 10, 'nasNameDisplay': 1,
-    'fndeskLoginVW': 0, 'fndeskLoginVH': 0, 'Fndesk_taskbar': 0,
-    'FndeskGlass': -1,
+    'appTitle': '飞牛 fnOS', 'loginOpacity': 10, 'nasNameDisplay': 2,
+    'fndeskLoginVW': 60, 'fndeskLoginVH': 0, 'Fndesk_taskbar': 0,
+    'FndeskGlass': 8,
 })
 
 # 静态 DOM（在 HTML 解析阶段就存在，用于区分「时序问题」与「选择器问题」）
@@ -159,15 +173,23 @@ def run(browser, url, cfg, label, results, dom_ready=False):
     rec('设备 LOGO', 'deviceLogo.png?v=' in (d['deviceLogo'] or ''), d['deviceLogo'])
     rec('桌面壁纸', 'desktopWallpaper.jpg?v=' in (d['wallpaper'] or ''), d['wallpaper'])
     card = d['cardCss'] or ''
+    # ⚠️ v1.1.81：card CSS 现在**总会注入**（原来的"全默认不注入"短路已移除，
+    #    因为出厂默认 vw=60 不是原生外观，跳过会导致界面与实际脱节）。
+    #    所以下面统一按「值」断言，而不是按「有没有 card」断言。
     rec('登录框透明度',
-        ('rgba(255,255,255,0.2500)' in card) if cfg['loginOpacity'] == 25 else not card,
+        ('rgba(255,255,255,%.4f)' % (cfg['loginOpacity'] / 100.0)) in card,
         card[:120])
-    rec('窗口毛玻璃',
-        ('blur(18px)' in card) if cfg['FndeskGlass'] != -1 else not card, card[:120])
+    # 毛玻璃：-1 = 飞牛原设（原生就是 blur(8px)，注入后仍是 8px）
+    #         8  = blur(8px)，与 -1 渲染结果相同
+    _blur = 8 if cfg['FndeskGlass'] == -1 else cfg['FndeskGlass']
+    rec('窗口毛玻璃', ('blur(%dpx)' % _blur) in card, card[:120])
+    # ⚠️ v1.1.81：出厂默认水平位置 = 60%（不再是 0）
+    #    且「全是默认值」不再跳过注入（该短路已移除），
+    #    所以 card CSS **总会存在**，vw/vh 为 0 时也应有 margin-*:0vw/0vh。
     rec('登录框水平位置',
-        ('margin-left:15vw' in card) if cfg['fndeskLoginVW'] else not card, card[:120])
+        ('margin-left:%dvw' % cfg['fndeskLoginVW']) in card, card[:120])
     rec('登录框垂直位置',
-        ('margin-top:-8vh' in card) if cfg['fndeskLoginVH'] else not card, card[:120])
+        ('margin-top:%dvh' % cfg['fndeskLoginVH']) in card, card[:120])
     rec('登录框名字显示/隐藏',
         d['nasNameNodes'] == 0 if cfg['nasNameDisplay'] == 2 else d['nasNameNodes'] == 1,
         'p.select-none 剩余=%d' % d['nasNameNodes'])

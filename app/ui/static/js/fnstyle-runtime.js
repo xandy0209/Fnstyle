@@ -192,9 +192,15 @@
    * 功能 2：隐藏登录框里的 NAS 名字
    *   字段：nasNameDisplay  1=显示 2=隐藏
    *   实现：把 <p class="select-none"> 换成 <br>（FnDesk 当年的做法）
+   *
+   * ⚠️ v1.1.81：缺省由 1（显示）改为 2（隐藏）—— 老板要求
+   *    「登录框名字默认为隐藏」。**这个缺省必须与前端 app.js 里
+   *    nasNameDisplay 的 nullValue、以及 index.cgi 的
+   *    SWITCH_NULL_DEFAULTS 保持一致**，否则会出现
+   *    「界面显示隐藏、实际却显示着名字」或反之的脱节。
    * ---------------------------------------------------------------- */
   function applyNasNameDisplay(cfg) {
-    if (num(cfg.nasNameDisplay, 1) !== 2) return;
+    if (num(cfg.nasNameDisplay, 2) !== 2) return;
 
     var tries = 0;
     var timer = setInterval(function () {
