@@ -5211,7 +5211,11 @@ html.mon-scroll-lock body {
 .ov-metric[data-ov="temp"] .ov-dnum,
 .ov-metric[data-ov="pwr"] .ov-dnum {
   position: relative;
-  top: 3px;
+  /* ⚠️ v1.1.76：老板「将卡片中右侧的环形图往下移 10PX」——
+     环形图下移后，为保持 v1.1.73 定的「数字与环形图水平居中」，
+     数字**同步下移 10px**：3 → **13px**。
+     （相对定位不改变行高 → 卡片总高仍是 163px） */
+  top: 13px;
 }
 .ov-metric[data-ov="cpu"] .ov-m-sub,
 .ov-metric[data-ov="mem"] .ov-m-sub,
@@ -5220,7 +5224,11 @@ html.mon-scroll-lock body {
 .ov-metric[data-ov="pwr"] .ov-m-sub,
 .ov-metric[data-ov="net"] .ov-m-sub {
   position: relative;
-  top: -5px;
+  /* ⚠️ v1.1.76：数字下移 10px → 副标题同步下移，-5 → **5px**。
+     这样「数字字形底 → 副标题顶 = 10px」的间距保持不变。
+     net 卡虽无仪表，但它的副标题与其它卡在同一行，
+     必须同步下移，否则两行卡片的内容基线会错位。 */
+  top: 5px;
 }
 /* ⚠️ v1.1.74：网络卡**没有仪表**（仪表只有 cpu/mem/disk/temp/pwr 五张），
    它的 .ov-m-main 里装的是 .ov-net-vals（上下行两行，横跨整列），
@@ -5284,6 +5292,12 @@ html.mon-scroll-lock body {
   align-content: start;
   /* ⚠️ v1.1.74：与副标题的间距 10px（同样抵消 row-gap 3.2px） */
   margin-top: 6.8px;
+  /* ⚠️ v1.1.76：副标题随环形图一起下移 10px（保持两行卡片基线一致），
+     网络卡**没有仪表**，但它的副标题在第二行，
+     必须与第一行卡片的副标题同步下移，否则两行内容基线错位。
+     这里把数字区也下移 10px，保持「数字 → 副标题 = 10px」不变。 */
+  position: relative;
+  top: 10px;
 }
 .ov-net-vals .row {
   display: flex;
@@ -5336,13 +5350,16 @@ html.mon-scroll-lock body {
    （dm.cy=1649 vs gauge.cy=1640）→ 仪表要**下移** 9px 才能同一水平线。
    ⚠️ 之后又把数字用 relative 下移了 3px（对齐「上移 15px」），
       所以仪表这里改成下移 9 + 3 = **12px**。
-   （老板：「与右侧的环形图水平居中显示」） */
+   （老板：「与右侧的环形图水平居中显示」）
+   ⚠️ v1.1.76 老板反馈「将卡片中右侧的环形图往下移 10PX」
+      → 12 + 10 = **22px**。
+      （注意：这只改仪表自己的位置，不动卡片高度——它是 absolute 定位的） */
 .ov-metric[data-ov="cpu"] .ov-m-gauge,
 .ov-metric[data-ov="mem"] .ov-m-gauge,
 .ov-metric[data-ov="disk"] .ov-m-gauge,
 .ov-metric[data-ov="temp"] .ov-m-gauge,
 .ov-metric[data-ov="pwr"] .ov-m-gauge {
-  top: calc(.75rem + 12px);
+  top: calc(.75rem + 22px);
 }
 .ov-gauge { width: 100%; height: 100%; display: block; }
 .ov-gauge-track { stroke: var(--bg-hover); }

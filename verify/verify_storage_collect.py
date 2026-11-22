@@ -135,6 +135,19 @@ cases = [
                          "reallocated_sectors": 0, "pending_sectors": 3}, "warn"),
     ("重映射>0 → warn", {"health": "PASSED", "uncorrectable": 0,
                          "reallocated_sectors": 5, "pending_sectors": 0}, "warn"),
+    # ⚠️ v1.1.76：UDMA CRC 错误（ATA 属性 199）此前被完全忽略 ——
+    #    实机 sdc（WalkDisk SSD）udma_crc=60 却判成 ok，
+    #    存储卡右上角一直显示「充足」，把真实问题掩盖了。
+    #    对齐 fnmonitor：SMART 任一计数 > 0 即留意。
+    ("UDMA CRC>0 → warn", {"health": "PASSED", "uncorrectable": 0,
+                            "reallocated_sectors": 0, "pending_sectors": 0,
+                            "udma_crc": 60}, "warn"),
+    ("UDMA CRC=0 → ok", {"health": "PASSED", "uncorrectable": 0,
+                          "reallocated_sectors": 0, "pending_sectors": 0,
+                          "udma_crc": 0}, "ok"),
+    ("UDMA CRC 缺失 → ok（不误报）", {"health": "PASSED", "uncorrectable": 0,
+                                     "reallocated_sectors": 0,
+                                     "pending_sectors": 0}, "ok"),
     ("健康缺失 → unknown", {"health": "", "uncorrectable": None,
                             "reallocated_sectors": None, "pending_sectors": None}, "unknown"),
 ]
@@ -147,6 +160,68 @@ prev = {"defects": 5}
 g, reasons = sc.grade_disk({"health": "PASSED", "uncorrectable": 0,
                             "reallocated_sectors": 20, "pending_sectors": 0}, prev)
 check("缺陷增长≥10 → crit", g == "crit", "got=%s %s" % (g, reasons))
+
+# ⚠️ v1.1.76：CRC 错误要出现在 reasons 里（前端详情能显示具体数字）
+g, reasons = sc.grade_disk({"health": "PASSED", "uncorrectable": 0,
+                            "reallocated_sectors": 0, "pending_sectors": 0,
+                            "udma_crc": 60})
+check("CRC 错误的 reasons 含 UDMA CRC 文字",
+      any("UDMA CRC" in r for r in reasons), "got=%s" % reasons)
+check("CRC 错误的 reasons 含具体数量 60",
+      any("60" in r for r in reasons), "got=%s" % reasons)
+
+# ⚠️⚠️ v1.1.76 端到端回归：collect_disks_detail 必须把 udma_crc
+#   **传进** grade_disk。
+#   踩坑记录：第一版修复只改了 grade_disk 函数体（加 CRC 判定），
+#   却忘了调用点只传了 health/uncorrectable/reallocated/pending 四个键 ——
+#   函数收到不含 udma_crc 的 dict → _nz(None)=0 → 判定恒为 ok，
+#   实机验证时 grade 依然是 "ok"，改动**完全没生效**。
+#   这条测试锁住「调用点必须传 udma_crc」这个坑。
+print()
+print("=" * 60)
+print("3b. collect_disks_detail 端到端分级（udma_crc 必须传到 grade_disk）")
+print("=" * 60)
+_orig_lsblk = sc._lsblk_json
+_orig_smart_detail = sc.smart_detail
+try:
+    sc._lsblk_json = lambda: [{
+        "name": "sdc", "type": "disk", "size": 128035676160,
+        "ro": False, "rm": False, "model": "WalkDisk WD-SLAA-128C",
+        "mountpoint": "/vol1", "children": [],
+    }]
+    sc.smart_detail = lambda dev, *a, **k: {
+        "health": "PASSED", "uncorrectable": 0, "reallocated_sectors": 0,
+        "pending_sectors": 0, "udma_crc": 60,
+        "serial": "WD2447S128F0006M", "model2": "WalkDisk WD-SLAA-128C",
+        "temp_c": 30,
+    }
+    _ds = sc.collect_disks_detail(with_states=True)
+    _d0 = (_ds or [{}])[0]
+    check("端到端：udma_crc 传到 grade_disk 后 grade = warn",
+          _d0.get("grade") == "warn",
+          "got=%s detail=%s" % (_d0.get("grade"), _d0.get("detail")))
+    check("端到端：detail 含 UDMA CRC 文字",
+          "UDMA CRC" in str(_d0.get("detail") or ""),
+          "got=%s" % _d0.get("detail"))
+
+    # 同参数但 CRC=0 → 应回到 ok（确认不是无条件 warn）
+    # ⚠️ 必须清掉 SMART 缓存：_DISK_HEALTH_MEM 会记住上一次的健康数据，
+    #    不清的话第二次调用直接复用缓存（udma_crc=60），测不出真实行为。
+    sc._DISK_HEALTH_MEM.clear()
+    sc.smart_detail = lambda dev, *a, **k: {
+        "health": "PASSED", "uncorrectable": 0, "reallocated_sectors": 0,
+        "pending_sectors": 0, "udma_crc": 0,
+        "serial": "WD2447S128F0006M", "model2": "WalkDisk WD-SLAA-128C",
+        "temp_c": 30,
+    }
+    _ds2 = sc.collect_disks_detail(with_states=True)
+    _d1 = (_ds2 or [{}])[0]
+    check("端到端：udma_crc=0 时 grade = ok",
+          _d1.get("grade") == "ok",
+          "got=%s detail=%s" % (_d1.get("grade"), _d1.get("detail")))
+finally:
+    sc._lsblk_json = _orig_lsblk
+    sc.smart_detail = _orig_smart_detail
 
 print()
 print("=" * 60)

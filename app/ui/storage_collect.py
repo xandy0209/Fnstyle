@@ -855,7 +855,11 @@ def collect_disks_detail(prev=None, with_states=True, health_prev=None):
                 {"health": entry.get("health", ""),
                  "uncorrectable": entry.get("uncorrectable"),
                  "reallocated_sectors": entry.get("reallocated_sectors"),
-                 "pending_sectors": entry.get("pending_sectors")},
+                 "pending_sectors": entry.get("pending_sectors"),
+                 # ⚠️ v1.1.76：必须把 udma_crc 一起传进去 ——
+                 #   之前漏传，导致 grade_disk 里新增的 CRC 判定**永远不生效**
+                #   （函数收到了不含该键的 dict → _nz(None)=0 → 恒为 ok）。
+                 "udma_crc": entry.get("udma_crc")},
                 prev_row)
             entry["grade"] = grade
             entry["detail"] = "；".join(reasons)
@@ -1382,6 +1386,16 @@ def grade_disk(rec, prev=None):
     """给单盘定级，返回 (grade, reasons)。rec 为 smart_detail() 结果。
 
     prev 是上一次巡检记录，用于判定缺陷增长。
+
+    ⚠️ v1.1.76：补上 **UDMA CRC 错误**的判定。
+       之前只看了 reallocated / pending / uncorrectable，
+       而 ATA 属性 199（udma_crc）被完全忽略 ——
+       实机 sdc（WalkDisk SSD）udma_crc=60 却仍被判为 grade="ok"，
+       存储卡片右上角显示「充足」，把真实问题**完全掩盖**了。
+       对齐 fnmonitor 的口径（server.py 里 _THRESHOLD_SMART_KEYS 同样含
+       udma_crc，且规则是「任一计数 > 0 即留意」）：
+         · unc（不可纠正错误）> 0 → crit
+         · 任一 SMART 计数 > 0（含 CRC）→ warn
     """
     if not rec:
         return "unknown", ["未读取到 SMART"]
@@ -1389,6 +1403,8 @@ def grade_disk(rec, prev=None):
     unc = _nz(rec.get("uncorrectable")) or 0
     reall = _nz(rec.get("reallocated_sectors"))
     pend = _nz(rec.get("pending_sectors")) or 0
+    # ⚠️ v1.1.76：UDMA CRC 错误（ATA 属性 199）也计入「留意」判定
+    crc = _nz(rec.get("udma_crc")) or 0
     if re.search(r"FAIL", health, re.I):
         return "crit", ["SMART 自检未通过"]
     if unc > 0:
@@ -1405,6 +1421,8 @@ def grade_disk(rec, prev=None):
         reasons.append("重映射扇区 %d 个" % reall)
     if pend:
         reasons.append("待处理扇区 %d 个" % pend)
+    if crc:
+        reasons.append("UDMA CRC 错误 %d 个" % crc)
     if delta and delta > 0:
         reasons.append("较上次 +%d" % delta)
     if reasons:

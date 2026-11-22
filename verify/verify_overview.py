@@ -1204,12 +1204,14 @@ def run_tests(page):
        res['hasTitleRow'], False)
     # ② 「第二个红框和第三个红框的内容都往上移动 15px」
     #    —— v1.1.73 基线：数字相对卡顶 66px、副标题相对卡顶 128px
-    truthy('上移', '数字相对卡顶 = 51px（v1.1.73 的 66 - 15）',
-           abs(res['dmRelTop'] - 51) <= 2, res['dmRelTop'])
-    truthy('上移', '副标题相对卡顶 = 93px（128 - 15 + 间距 10 - 4）',
-           abs(res['subRelTop'] - 93) <= 2, res['subRelTop'])
-    truthy('上移', '数字确实比 v1.1.73 上移了 15px',
-           res['dmRelTop'] <= 51, res['dmRelTop'])
+    #    ⚠️ v1.1.76 又整体下移了 10px（环形图下移，数字/副标题同步跟随）
+    #       → 现基线：数字 51 + 10 = **61px**、副标题 93 + 10 = **103px**
+    truthy('上移', '数字相对卡顶 = 61px（v1.1.74 的 51 + v1.1.76 的 10）',
+           abs(res['dmRelTop'] - 61) <= 2, res['dmRelTop'])
+    truthy('上移', '副标题相对卡顶 = 103px（v1.1.74 的 93 + 10）',
+           abs(res['subRelTop'] - 103) <= 2, res['subRelTop'])
+    truthy('上移', '数字确实比 v1.1.73 上移过 15px（61 < 66）',
+           res['dmRelTop'] <= 61, res['dmRelTop'])
     # ③ 「第三红框与第二个红框的间距调整为 10px」
     truthy('间距', '数字字形底 → 副标题顶 = 10px',
            abs(res['dmToSubGap'] - 10) <= 1, res['dmToSubGap'])
@@ -1358,6 +1360,123 @@ def run_tests(page):
                        "health": "休眠"},
                       {"name": "sdb", "percent": 30, "grade": "ok", "health": "PASSED"}])
     eq('存储告警', '休眠盘（grade=unknown）不误报', r['state'], '充足')
+
+    # ----------------------------------------------------------
+    section('J3 v1.1.76：SMART 计数 / 单盘容量 / 单池容量（老板 2 条反馈）')
+    # ----------------------------------------------------------
+    # 老板：「将卡片中右侧的环形图往下移10PX，
+    #   存储卡片右上角的充足在存在硬盘问题是替换为问题提示」
+    # 实机 bug：SMART 全 PASSED 仍显示「充足」，因为漏了两类判定：
+    #   ① SMART **计数 > 0**（含 udma_crc）—— 实机 sdc udma_crc=60
+    #   ② **单盘 / 单池容量**超阈值 —— 实机 sdb 85.9% / vol3 86%
+    #      被汇总 69% 完全掩盖
+
+    def _disk_render2(disks, pct=69, volumes=None):
+        """同 _disk_render，但可指定逐池 volumes（用于单池容量判定）。"""
+        vol = volumes if volumes is not None else [
+            {"name": "vol1", "total": 8589934592,
+             "used": 4304967296, "percent": pct}]
+        page.evaluate("""([disks, pct, volumes]) => {
+          const host = document.getElementById('monOverview');
+          const total = 8589934592;
+          window.FnStyleOverview.render(host, {
+            cpu: { available: true, percent: 30 },
+            mem: { available: true, percent: 40 },
+            storage: { summary: { total: total, used: Math.round(total*pct/100),
+                                  percent: pct, poolCount: volumes.length,
+                                  diskCount: disks.length },
+                       volumes: volumes, disks: disks },
+            network: { available: true, rxRate: 100, txRate: 50 },
+            temp: { temps: [{ type: 'cpu', value: 45 }] },
+            power: { ok: true, source: 'rapl', total: 30 },
+          });
+        }""", [disks, pct, vol])
+        return page.evaluate("""() => {
+          const host = document.getElementById('monOverview');
+          const c = host.querySelector('[data-ov="disk"]');
+          return { state: host.querySelector('[data-ov-state="disk"]').textContent.trim(),
+                   warn: c.classList.contains('is-warn'),
+                   crit: c.classList.contains('is-crit') };
+        }""")
+
+    # ① SMART 计数 > 0（udma_crc），grade 仍是 ok → 必须报「需留意」
+    #    ⚠️ 这是实机 bug 的核心：后端 grade_disk 漏判 udma_crc
+    r = _disk_render2([{"name": "sdc", "percent": 15, "grade": "ok",
+                         "health": "PASSED", "udma_crc": 60,
+                         "reallocated_sectors": 0, "pending_sectors": 0,
+                         "uncorrectable": 0}])
+    eq('存储问题', 'SMART 计数 > 0（udma_crc=60）→ 不再显示「充足」',
+       r['state'], '1 块需留意')
+    truthy('存储问题', 'SMART 计数 > 0 → 卡片 is-warn', r['warn'])
+
+    # ② SMART 计数 > 0（待映射扇区）
+    r = _disk_render2([{"name": "sda", "percent": 20, "grade": "ok",
+                         "health": "PASSED", "pending_sectors": 3}])
+    eq('存储问题', 'SMART 计数 > 0（pending_sectors）→「1 块需留意」',
+       r['state'], '1 块需留意')
+
+    # ③ SMART 计数全 0 → 回到「充足」
+    r = _disk_render2([{"name": "sda", "percent": 20, "grade": "ok",
+                         "health": "PASSED", "udma_crc": 0,
+                         "reallocated_sectors": 0, "pending_sectors": 0,
+                         "uncorrectable": 0}])
+    eq('存储问题', 'SMART 计数全 0 → 「充足」', r['state'], '充足')
+
+    # ④ 单盘容量 86%（超 capWarn 85），但汇总 69% 正常
+    #    → 必须报「1 块偏满」而不是「充足」
+    r = _disk_render2([{"name": "sdb", "percent": 86, "grade": "ok",
+                         "health": "PASSED"}], pct=69)
+    eq('存储问题', '单盘 86% 超阈值（汇总 69%）→「1 块偏满」',
+       r['state'], '1 块偏满')
+    truthy('存储问题', '单盘 86% → 卡片 is-warn', r['warn'])
+
+    # ⑤ 单盘容量 96%（超 capCrit 95）→「1 块将满」+ is-crit
+    r = _disk_render2([{"name": "sdb", "percent": 96, "grade": "ok",
+                         "health": "PASSED"}], pct=69)
+    eq('存储问题', '单盘 96% 超 crit → 「1 块将满」', r['state'], '1 块将满')
+    truthy('存储问题', '单盘 96% → 卡片 is-crit', r['crit'])
+
+    # ⑥ 单池 86%（vol3），盘都是正常的小盘 → 同样要报
+    r = _disk_render2([{"name": "sda", "percent": 7, "grade": "ok",
+                         "health": "PASSED"},
+                        {"name": "sdb", "percent": 86, "grade": "ok",
+                         "health": "PASSED"}],
+                      pct=69,
+                      volumes=[{"name": "vol3", "total": 2000259383296,
+                                "used": 1718174871552, "percent": 86}])
+    eq('存储问题', '单池 86%（vol3）→「1 块偏满」', r['state'], '1 块偏满')
+
+    # ⑦ 单盘容量与汇总几乎相同（差 ≤ 0.5%）→ 不重复提醒
+    #    （对齐 fnmonitor：与池用量几乎相同的不单独提醒）
+    r = _disk_render2([{"name": "sda", "percent": 69.2, "grade": "ok",
+                         "health": "PASSED"}], pct=69)
+    eq('存储问题', '单盘与汇总几乎相同（69.2 vs 69）→ 不重复提醒',
+       r['state'], '充足')
+
+    # ⑧ 硬盘 SMART 问题优先于容量问题
+    r = _disk_render2([{"name": "sda", "percent": 96, "grade": "ok",
+                         "health": "PASSED", "udma_crc": 5}], pct=69)
+    eq('存储问题', 'SMART 问题优先于单盘容量问题',
+       r['state'], '1 块需留意')
+
+    # ⑨ 环形图下移 10px（v1.1.76）
+    res = page.evaluate("""() => {
+      const host = document.getElementById('monOverview');
+      const out = {};
+      for (const k of ['cpu','mem','disk','temp','pwr']) {
+        const card = host.querySelector('[data-ov="' + k + '"]');
+        const g = card.querySelector('.ov-m-gauge');
+        const gb = g.getBoundingClientRect();
+        const cb = card.getBoundingClientRect();
+        out[k] = Math.round(gb.top - cb.top);
+      }
+      return out;
+    }""")
+    # v1.1.74 是 +25px（.75rem=12px + 12px 偏移 = 24 + 1px 边框）；
+    # v1.1.76 再下移 10px → +35px 左右
+    for k in ['cpu', 'mem', 'disk', 'temp', 'pwr']:
+        truthy('环形图', '%s 卡环形图已下移 10px（%d → %d）'
+               % (k, res[k] - 10, res[k]), abs(res[k] - 35) <= 2)
 
     # ⚠️ J2 段反复重渲染会污染后面「告警态大数字着色」断言读取的 DOM ——
     #    这里把页面恢复成 J 段的告警快照，让后续断言读到正确状态。

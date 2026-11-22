@@ -193,6 +193,35 @@ def snap_overview(c):
           var e = host.querySelector('[data-ov="cpu"] .ov-m-gauge');
           return e ? getComputedStyle(e).position : null;
         })(),
+        /* ⚠️ v1.1.76：环形图相对卡顶（v1.1.74 是 25px，下移 10px → 35px） */
+        gaugeRelTop: (function(){
+          var c = host.querySelector('[data-ov="cpu"]');
+          var g = c && c.querySelector('.ov-m-gauge');
+          if (!c || !g) return -1;
+          return Math.round(g.getBoundingClientRect().top - c.getBoundingClientRect().top);
+        })(),
+        /* ⚠️ v1.1.76：数字中心与仪表圆心的差（v1.1.73 定的「水平居中」基线） */
+        dmGaugeCydiff: (function(){
+          var c = host.querySelector('[data-ov="cpu"]');
+          var d = c && c.querySelector('[data-ov-val="cpuV"]');
+          var g = c && c.querySelector('.ov-m-gauge');
+          if (!c || !d || !g) return -1;
+          var dr = d.getBoundingClientRect(), gr = g.getBoundingClientRect();
+          return Math.round((dr.top + dr.height/2) - (gr.top + gr.height/2));
+        })(),
+        /* ⚠️ v1.1.76：存储卡右上角状态词与告警类 */
+        diskState: (function(){
+          var e = host.querySelector('[data-ov-state="disk"]');
+          return e ? e.textContent.trim() : null;
+        })(),
+        diskWarn: (function(){
+          var c = host.querySelector('[data-ov="disk"]');
+          return c ? c.classList.contains('is-warn') : null;
+        })(),
+        diskCrit: (function(){
+          var c = host.querySelector('[data-ov="disk"]');
+          return c ? c.classList.contains('is-crit') : null;
+        })(),
         /* ⚠️ v1.1.72：概览区**外层不再是 .card 卡片**
            （老板：「不要最外层的卡片，直接呈现内部的卡片即可」） */
         outerHasCard: (function(){
@@ -491,16 +520,43 @@ def main():
     # ----------------------------------------------------------
     ck.check('概览区标题行已删除（.ov-wrap-head 不存在）',
              ov.get('hasTitleRow') is False, str(ov.get('hasTitleRow')))
-    ck.check('数字相对卡顶 = 51px（v1.1.73 的 66 - 15）',
-             abs((ov.get('dmRelTop') or -1) - 51) <= 2, str(ov.get('dmRelTop')))
-    ck.check('副标题相对卡顶 = 93px',
-             abs((ov.get('subRelTop') or -1) - 93) <= 2, str(ov.get('subRelTop')))
+    ck.check('数字相对卡顶 = 61px（v1.1.74 的 51 + v1.1.76 的 10）',
+             abs((ov.get('dmRelTop') or -1) - 61) <= 2, str(ov.get('dmRelTop')))
+    ck.check('副标题相对卡顶 = 103px（v1.1.74 的 93 + 10）',
+             abs((ov.get('subRelTop') or -1) - 103) <= 2, str(ov.get('subRelTop')))
     ck.check('数字字形底 → 副标题顶 = 10px',
              abs((ov.get('dmToSubGap') or -1) - 10) <= 1, str(ov.get('dmToSubGap')))
     ck.check('卡片高度 ≤ 175px（v1.1.73 是 192px）',
              bool(hs) and max(hs) <= 175, str(hs))
     ck.check('仪表是绝对定位（不撑高卡片）',
              ov.get('gaugePos') == 'absolute', str(ov.get('gaugePos')))
+
+    # ----------------------------------------------------------
+    ck.section('5f. v1.1.76：环形图下移 10px / 存储卡「硬盘问题」状态词')
+    # ----------------------------------------------------------
+    # 老板：「将卡片中右侧的环形图往下移10PX，
+    #   存储卡片右上角的充足在存在硬盘问题是替换为问题提示」
+    # v1.1.74 基线：环形图相对卡顶 25px → 下移 10px → 35px
+    ck.check('环形图相对卡顶 = 35px（v1.1.74 的 25 + 10）',
+             abs((ov.get('gaugeRelTop') or -1) - 35) <= 2, str(ov.get('gaugeRelTop')))
+    # 存储卡：实机 sdc udma_crc=60 → grade=warn → 应显示「1 块需留意」
+    #   （若 NAS 上确实无 SMART 计数问题，则允许「充足」，但不能是别的词）
+    _ds = ov.get('diskState') or ''
+    ck.check('存储卡右上角是「N 块需留意/故障」或「充足」（不是「偏满/将满」）',
+             _ds in ('充足',) or ('块需留意' in _ds) or ('块故障' in _ds)
+             or ('块偏满' in _ds) or ('块将满' in _ds),
+             _ds)
+    # 若真的检出硬盘问题，必须带 is-warn / is-crit 类
+    if '块需留意' in _ds or '块故障' in _ds or '块偏满' in _ds or '块将满' in _ds:
+        ck.check('存储卡有硬盘问题时带告警类（is-warn/is-crit）',
+                 bool(ov.get('diskWarn') or ov.get('diskCrit')),
+                 'warn=%s crit=%s' % (ov.get('diskWarn'), ov.get('diskCrit')))
+    # 数字与仪表圆心仍须水平居中（环形图下移后数字同步跟随）
+    # ⚠️ 不能用 `or 99` 兜底 —— diff 恰好为 0 时会被当成 falsy 变成 99，
+    #    导致「完全对齐」反而判失败（0 是合法值）。
+    _diff = ov.get('dmGaugeCydiff')
+    ck.check('数字与仪表圆心仍水平居中（diff ≤ 2px）',
+             isinstance(_diff, (int, float)) and abs(_diff) <= 2, str(_diff))
 
     # ----------------------------------------------------------
     ck.section('6. 趋势层')

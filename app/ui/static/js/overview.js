@@ -641,7 +641,10 @@
   /* 存储池汇总
      ⚠️ 后端字段：storage.summary（含 total/used/percent/poolCount/diskCount）
         + storage.volumes（逐池）+ storage.disks（逐盘）。
-        这里优先用 summary（与存储板块同一口径，避免两处数字对不上）。 */
+        这里优先用 summary（与存储板块同一口径，避免两处数字对不上）。
+     ⚠️ v1.1.76：额外带出 volumes（逐池容量），
+        用于「单池超阈值」判定 —— 汇总容量会把紧张的单池掩盖掉
+        （实机：汇总 69% 显示「充足」，但 vol3 已用 86%）。 */
   function diskOf(d) {
     var st = (d && d.storage) || {};
     var sum = st.summary || {};
@@ -660,6 +663,7 @@
     return {
       total: total, used: used, pct: pct,
       poolCount: sum.poolCount != null ? sum.poolCount : volumes.length,
+      volumes: volumes,
       disks: st.disks || []
     };
   }
@@ -728,8 +732,24 @@
          · 有 crit 盘 → 「N 块故障」
          · 有 warn 盘 → 「N 块需留意」
          · 否则按容量 → 充足 / 偏满 / 将满
-       数字「1 块需留意」而不是「1」——老板原话就是这个措辞。 */
+       数字「1 块需留意」而不是「1」——老板原话就是这个措辞。
+       ⚠️ v1.1.76 老板再次反馈「存储卡片右上角的充足在存在硬盘问题时
+          替换为问题提示」—— 实机上 SMART 全 PASSED 仍显示「充足」，
+          原因是「硬盘问题」判定漏了两类：
+            ① SMART **计数 > 0**（后端 grade_disk 漏判 udma_crc）
+               → v1.1.76 已在后端补齐（udma_crc > 0 → warn）
+            ② **单盘 / 单池容量**超阈值
+               （实机 sdb 85.9% / vol3 86%，但汇总只有 69%，
+                 汇总口径把紧张的单盘**完全掩盖**了）
+          现在按 fnmonitor 的口径逐项判定：
+            · SMART FAIL 或不可纠正错误 → crit
+            · SMART 任一计数 > 0 → warn
+            · 单盘/单池容量 ≥ capWarn → warn；≥ capCrit → crit */
     var smartBad = 0, smartCrit = 0, smartWarn = 0;
+    /* SMART 计数键（与后端 SMART_COUNTER_KEYS 同序）：
+       任一 > 0 即视为「有问题」——对齐 fnmonitor 的 smartState 规则。 */
+    var SMART_KEYS = ['reallocated_sectors', 'reallocated_events',
+      'pending_sectors', 'uncorrectable', 'udma_crc'];
     dk.disks.forEach(function (x) {
       if (!x) return;
       /* 分级优先用后端算好的 grade（ok/warn/crit/unknown），
@@ -738,9 +758,46 @@
       if (g === 'crit') { smartCrit++; smartBad++; return; }
       if (g === 'warn') { smartWarn++; smartBad++; return; }
       var h = String(x.health || '').toLowerCase();
-      if (/fail|bad|critical/.test(h)) { smartCrit++; smartBad++; }
-      else if (/warn|caution/.test(h)) { smartWarn++; smartBad++; }
+      if (/fail|bad|critical/.test(h)) { smartCrit++; smartBad++; return; }
+      if (/warn|caution/.test(h)) { smartWarn++; smartBad++; return; }
+      /* ⚠️ v1.1.76：后端 grade 仍是 ok，但 SMART 计数非 0
+         （例如 udma_crc）→ 也要算「需留意」。
+         之前这一条完全缺失 → 右上角一直显示「充足」。 */
+      var cnt = 0;
+      for (var ci = 0; ci < SMART_KEYS.length; ci++) {
+        var cv = Number(x[SMART_KEYS[ci]]);
+        if (isFinite(cv) && cv > 0) { cnt++; }
+      }
+      if (cnt > 0) { smartWarn++; smartBad++; }
     });
+
+    /* ⚠️ v1.1.76：单盘 / 单池容量超阈值 → 也算「硬盘问题」。
+       汇总容量（dk.pct）会把紧张的单盘掩盖：
+       实机汇总 69%（正常），但 sdb 85.9%、vol3 86% 已过 85% 警戒线。
+       与 fnmonitor 一致：单盘容量与池用量几乎相同的**不重复提醒**
+       （差值 ≤ 0.5% 时认为就是同一个池）。 */
+    var capCritDisks = 0, capWarnDisks = 0;
+    var poolPct = okNum(dk.pct) ? dk.pct : null;
+    dk.disks.forEach(function (x) {
+      if (!x) return;
+      var p = Number(x.percent);
+      if (!isFinite(p)) return;
+      if (poolPct != null && Math.abs(p - poolPct) <= 0.5) return;
+      if (p >= TH.capCrit) capCritDisks++;
+      else if (p >= TH.capWarn) capWarnDisks++;
+    });
+    var capCritPools = 0, capWarnPools = 0;
+    (dk.volumes || []).forEach(function (v) {
+      var p = Number(v && v.percent);
+      if (!isFinite(p)) return;
+      if (p >= TH.capCrit) capCritPools++;
+      else if (p >= TH.capWarn) capWarnPools++;
+    });
+    /* 单盘容量与对应池几乎相同时会双重计数（实机 sdb↔vol3 都是 86%），
+       所以取「盘」与「池」的**较大者**作为容量问题数，不相加。 */
+    var capCrit = Math.max(capCritDisks, capCritPools);
+    var capWarn = Math.max(capWarnDisks, capWarnPools);
+
     var diskState = '';
     var diskStateTxt;
     if (dk.pct == null) {
@@ -751,6 +808,12 @@
     } else if (smartWarn > 0) {
       diskState = 'warn';
       diskStateTxt = smartWarn + ' 块需留意';
+    } else if (capCrit > 0) {
+      diskState = 'crit';
+      diskStateTxt = capCrit + ' 块将满';
+    } else if (capWarn > 0) {
+      diskState = 'warn';
+      diskStateTxt = capWarn + ' 块偏满';
     } else if (ld === 'crit') {
       diskState = 'crit';
       diskStateTxt = '将满';
