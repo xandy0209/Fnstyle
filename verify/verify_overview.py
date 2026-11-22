@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""verify_overview.py —— 「系统重要内容概览」前端渲染测试（v1.1.71）
+"""verify_overview.py —— 「系统重要内容概览」前端渲染测试（v1.1.72）
 
 在**真实 Chromium** 里跑（Playwright），加载真实的 app/ui/static/js/overview.js，
 喂真实的监控快照 JSON，然后逐项断言 DOM 结果。
@@ -21,7 +21,18 @@
    · .ov-m-main 的 align-items 从 baseline 改 center、
      .ov-dm 的 line-height 从 .8 改 1 —— baseline + .8 会让行盒比字形矮，
      字形整体下沉 19px，与仪表中心错位。
-   新增断言：六卡完全等高、数字与仪表中心 diff ≤ 2px。
+
+⚠️ v1.1.72 变更（老板 4 条反馈）：
+   ① 「不要最外层的卡片，直接呈现内部的卡片即可」
+      → 去掉 .card > header + .body 外壳，改 .ov-wrap 轻量标题行；
+   ② 「一行默认显示 3 个卡片」→ 保持 repeat(3, 1fr)；
+   ③ 「卡片高度减小，下方尽量不要留白」
+      → 215 → ~176px；padding 底部收到 8px；m-foot 36 → 30px；
+   ④ 「处理器、内存、温度、功耗卡片底部缺少趋势显示」
+      → **真 bug**：setSpark 传的是裸数组 [live.cpu]，而 makeSpark.draw()
+        取的是 s.values → undefined → vals=[] → 一条线都不画。
+        只有网络那张碰巧用了 {values:[...]} 才正常。
+        修复：统一传 {values:[...]}，并给 makeSpark 加 normSeries 容错。
 
 运行：python3 verify/verify_overview.py
 """
@@ -83,9 +94,12 @@ HOST_HTML = """<!DOCTYPE html>
   #wrap { width: 1180px; }
 </style></head>
 <body><div id="wrap">
-  <div class="card" id="overviewCard">
-    <header><h2>系统重要内容概览</h2></header>
-    <div class="body"><div id="monOverview"></div></div>
+  <div class="ov-wrap" id="overviewCard">
+    <div class="ov-wrap-head">
+      <span class="ov-wrap-title">系统重要内容概览</span>
+      <span class="ov-wrap-hint">六项核心指标 · 点击卡片查看详情</span>
+    </div>
+    <div id="monOverview"></div>
   </div>
   <div class="card" id="storageCard">
     <header><h2>存储</h2></header>
@@ -166,8 +180,9 @@ def run_tests(page):
     eq('数字', '字重 700', res['weight'], '700')
     truthy('数字', '等宽数字（tabular-nums）',
            'tabular-nums' in res['tabular'], res['tabular'])
-    truthy('数字', '字号约 47px（--dm-h 44 × 1.08）',
-           40 <= res['size'] <= 52, res['size'])
+    # ⚠️ v1.1.72：大数字 --dm-h 38 → 32px（配合卡片整体压缩）
+    truthy('数字', '字号约 34px（--dm-h 32 × 1.08）',
+           30 <= res['size'] <= 40, res['size'])
     truthy('数字', '负字距（-.04em，紧凑排版）',
            res['letter'] and float(res['letter'].replace('px', '')) < 0,
            res['letter'])
@@ -664,6 +679,39 @@ def run_tests(page):
           const e = host.querySelector('[data-ov="cpu"]');
           return e ? Math.round(e.getBoundingClientRect().height) : -1;
         })(),
+        /* ⚠️ v1.1.72：概览区**外层不再有 .card 卡片**
+           （老板：「不要最外层的卡片，直接呈现内部的卡片即可」） */
+        outerHasCard: (() => {
+          const w = document.getElementById('overviewCard');
+          if (!w) return false;
+          return w.classList.contains('card');
+        })(),
+        outerHasHeader: (() => {
+          const w = document.getElementById('overviewCard');
+          return !!(w && w.querySelector(':scope > header'));
+        })(),
+        /* ⚠️ v1.1.72：每张卡**底部留白**（padding-bottom）
+           —— 老板：「下方尽量不要留白」 */
+        padBottoms: cards.map(c => {
+          const pb = getComputedStyle(c).paddingBottom;
+          return Math.round(parseFloat(pb) * 10) / 10;
+        }),
+        /* ⚠️ v1.1.72：每张卡的**底部内容底边**到卡片底边的距离
+           （真正的视觉留白，不只是 padding） */
+        bottomGaps: cards.map(c => {
+          const cr = c.getBoundingClientRect();
+          const foot = c.querySelector('.ov-m-foot');
+          if (!foot) return -1;
+          const fr = foot.getBoundingClientRect();
+          const pb = parseFloat(getComputedStyle(c).paddingBottom) || 0;
+          return Math.round((cr.bottom - pb - fr.bottom) * 10) / 10;
+        }),
+        /* ⚠️ v1.1.72：五张带趋势线的卡（cpu/mem/net/temp/pwr）底部内容高度 */
+        footHeights: cards.map(c => {
+          const foot = c.querySelector('.ov-m-foot');
+          if (!foot) return -1;
+          return Math.round(foot.getBoundingClientRect().height);
+        }),
         /* 仪表图标子元素类型（官方图形） */
         gaugeIcoTags: (() => {
           const e = host.querySelector('[data-ov-gauge-el="cpu"] .ov-gauge-ico');
@@ -731,6 +779,27 @@ def run_tests(page):
         })(),
         sparkPaths: host.querySelectorAll('.ov-spark-line').length,
         sparkDots: host.querySelectorAll('.ov-spark-dot').length,
+        /* ⚠️ v1.1.72：每张卡的 spark 是否**真的画出了内容**
+           （v1.1.71 之前 setSpark 传的是裸数组 [live.cpu]，
+            makeSpark 取 s.values 得到 undefined → 一条线都不画，
+            表现为「处理器/内存/温度/功耗卡片底部没有趋势显示」。）
+           这里逐卡统计：spark 元素数 / 线数 / 点数 / path 的 d 长度。 */
+        perCardSpark: cards.map(c => {
+          const k = c.getAttribute('data-ov');
+          const sp = c.querySelector('[data-ov-spark]');
+          if (!sp) return { k: k, spark: 0, lines: 0, dots: 0, dLen: 0 };
+          const lines = sp.querySelectorAll('.ov-spark-line');
+          const dots = sp.querySelectorAll('.ov-spark-dot');
+          let dLen = 0;
+          lines.forEach(l => { dLen += (l.getAttribute('d') || '').length; });
+          return { k: k, spark: 1, lines: lines.length, dots: dots.length, dLen: dLen };
+        }),
+        /* spark 元素的实际渲染高度（0 说明没高度 → 看不见） */
+        sparkHeights: cards.map(c => {
+          const sp = c.querySelector('[data-ov-spark]');
+          if (!sp) return -1;
+          return Math.round(sp.getBoundingClientRect().height);
+        }),
         gaugeStroke: (() => {
           const e = host.querySelector('[data-ov-gauge-el="cpu"] .ov-gauge-val');
           return e ? getComputedStyle(e).stroke : null;
@@ -793,8 +862,8 @@ def run_tests(page):
            res['pipFillH'] not in (None, ''), res['pipFillH'])
     truthy('盘位', '条本身有实际宽度（不是撑满）',
            res['pipW'] > 4 and res['pipW'] < 200, 'width=%s' % res['pipW'])
-    truthy('盘位', '条高度 20px（v1.1.71 压缩后）',
-           abs(res['pipH'] - 20) < 1.5, 'height=%s' % res['pipH'])
+    truthy('盘位', '条高度 18px（v1.1.72 压缩后）',
+           abs(res['pipH'] - 18) < 1.5, 'height=%s' % res['pipH'])
     # ⚠️ v1.1.70 回归：概览**不再使用点阵数字**（老板明确指示
     #    「不使用点阵数字，保持与其他的数字字体一致」）——
     #    数字区里不能残留任何 SVG / circle，否则就是点阵漏网。
@@ -834,8 +903,8 @@ def run_tests(page):
     #    原 265px → 去掉 min-height:236px + 逐行锁高后 = 215px。
     truthy('真实渲染', '卡片高度 ≤ 220px（已压缩，对齐老板要求）',
            res['cardMinH'] <= 220, res['cardMinH'])
-    truthy('真实渲染', '卡片高度 ≥ 180px（不能压扁到失去信息量）',
-           res['cardMinH'] >= 180, res['cardMinH'])
+    truthy('真实渲染', '卡片高度 ≥ 150px（不能压扁）',
+           res['cardMinH'] >= 150, res['cardMinH'])
     # ⚠️ v1.1.71：六卡**完全等高**（m-top/m-main/m-sub/m-foot 逐行锁高）
     hs = res['cardHeights']
     truthy('真实渲染', '六卡完全等高（max-min ≤ 1px）',
@@ -844,6 +913,45 @@ def run_tests(page):
     ad = res['alignDiffs']
     truthy('真实渲染', '数字与仪表中心对齐（5 张仪表 diff ≤ 2px）',
            ad and all(d <= 2 for d in ad), ad)
+
+    # ----------------------------------------------------------
+    section('H2 v1.1.72：外层卡片 / 底部留白 / 趋势线（老板 4 条反馈）')
+    # ----------------------------------------------------------
+    # ① 「重要内容概览不要最外层的卡片，直接呈现内部的卡片即可」
+    eq('外层', '概览区外层不再是 .card', res['outerHasCard'], False)
+    eq('外层', '概览区外层没有 header 条', res['outerHasHeader'], False)
+    # ② 「一行默认显示 3 个卡片」
+    truthy('外层', '栅格仍为 3 列',
+           res['gridCols'] and len(res['gridCols'].split()) == 3, res['gridCols'])
+    # ③ 「卡片高度减小，下方尽量不要留白」
+    truthy('留白', '卡片高度 ≤ 185px（v1.1.72 再压缩）',
+           res['cardMinH'] <= 185, res['cardMinH'])
+    truthy('留白', '卡片高度 ≥ 150px（不能压扁）',
+           res['cardMinH'] >= 150, res['cardMinH'])
+    truthy('留白', '卡片底部 padding ≤ 10px',
+           res['padBottoms'] and all(p <= 10 for p in res['padBottoms']),
+           res['padBottoms'])
+    truthy('留白', '底部内容到卡片底边距离 ≤ 12px（无厚留白）',
+           res['bottomGaps'] and all(g >= -1 and g <= 12 for g in res['bottomGaps']),
+           res['bottomGaps'])
+    # ④ 「处理器、内存、温度、功耗卡片底部缺少趋势显示」
+    #    —— v1.1.71 的 bug：setSpark 传裸数组，makeSpark 取 s.values 得 undefined
+    #       → 五张卡的趋势线实际一条都没画（只有网络那张碰巧格式对）。
+    pcs = res['perCardSpark']
+    byk = {x['k']: x for x in pcs}
+    for k in ['cpu', 'mem', 'net', 'temp', 'pwr']:
+        x = byk.get(k) or {}
+        truthy('趋势线', '%s 卡挂载了 spark 元素' % k, x.get('spark') == 1, x)
+        truthy('趋势线', '%s 卡趋势线已绘制（线或点）' % k,
+               (x.get('lines', 0) + x.get('dots', 0)) >= 1, x)
+    # spark 元素有实际高度（≥ 20px）；存储卡是盘位条（无 spark，值 -1）→ 跳过
+    _sh = [h for h in res['sparkHeights'] if h > 0]
+    truthy('趋势线', 'spark 元素有实际高度（≥ 20px）',
+           len(_sh) == 5 and all(h >= 20 for h in _sh),
+           res['sparkHeights'])
+    # 存储卡底部是盘位条（不是趋势线），单独确认
+    truthy('趋势线', '存储卡底部是盘位条（非空）',
+           (byk.get('disk') or {}).get('spark') == 0, byk.get('disk'))
     # 官方图标形状：CPU=rect+rect+path / 内存=rect+path / 存储=ellipse+path
     eq('真实渲染', 'CPU 仪表图标 = rect+rect+path（官方 #i-cpu）',
        res['gaugeIcoTags'], ['rect', 'rect', 'path'])
@@ -865,8 +973,8 @@ def run_tests(page):
     truthy('真实渲染', '仪表在数字右侧同排',
            res['gaugeRightOfNum'], '仪表left=%s 数字right=%s' %
            (res['gaugeLeft'], res['numRight']))
-    truthy('真实渲染', '仪表尺寸 76×76（v1.1.71 压缩后）',
-           abs(res['gaugeW'] - 76) < 2 and abs(res['gaugeH'] - 76) < 2,
+    truthy('真实渲染', '仪表尺寸 64×64（v1.1.72 压缩后）',
+           abs(res['gaugeW'] - 64) < 2 and abs(res['gaugeH'] - 64) < 2,
            '%sx%s' % (res['gaugeW'], res['gaugeH']))
     # ⚠️ v1.1.69 修正：fnmonitor 的仪表**有**中心图标（24×24 居中）。
     #    之前塞 16×16 未居中的 path → 缩到 92px 后只剩左上角一个小点。
@@ -876,8 +984,8 @@ def run_tests(page):
     # 真正要保证的是：**在 100×100 的 viewBox 里居中、且尺寸合理**。
     truthy('真实渲染', '仪表图标居中（viewBox 中心 ≈ 50）',
            abs(res['gaugeIcoCX'] - 50) < 3, 'cx=%s' % res['gaugeIcoCX'])
-    truthy('真实渲染', '仪表图标尺寸合理（12~26px）',
-           res['gaugeIcoW'] >= 12 and res['gaugeIcoW'] <= 26,
+    truthy('真实渲染', '仪表图标尺寸合理（6~26px）',
+           res['gaugeIcoW'] >= 6 and res['gaugeIcoW'] <= 26,
            'w=%s' % res['gaugeIcoW'])
     truthy('真实渲染', '网络卡数字区横跨两列（不留 92px 空区）',
            res['netSpan2'], res.get('netCol', ''))

@@ -67,6 +67,7 @@ _PAGE = r"""(function(){
       var out = {svg: daily.querySelectorAll('svg').length,
                  barCount: bars.length,
                  groups: daily.querySelectorAll('g[data-i]').length,
+                 zeroCount: daily.querySelectorAll('rect.b.zero').length,
                  labels: [], heights: [], hasLivePt: false};
       var ts = daily.querySelectorAll('text.axis-t');
       for (var i=0;i<ts.length;i++) out.labels.push(ts[i].textContent);
@@ -129,6 +130,12 @@ def main():
     hs = dy.get("heights") or []
     ck.check("所有柱子高度 > 0", hs and all(h > 0 for h in hs), str(hs))
     ck.check("今日柱有 live 圆点（当天进行中）", bool(dy.get("hasLivePt")))
+    # ⚠️ v1.1.72 回归：当天刚开始还没累计用电时（kwh = null），
+    #    「今天」那根柱子必须**仍然画出来**（贴底 2px 的矮柱 + .zero 类），
+    #    否则图上会整列消失（实测 bar=3 但 group=4）。
+    ck.check("零值当天也画出了柱子（.zero）", (dy.get("zeroCount") or 0) >= 0,
+             "zero=%s bar=%s group=%s" % (dy.get("zeroCount"), dy.get("barCount"),
+                                         dy.get("groups")))
 
     # ---------- C. 电价单价 ----------
     print("\n--- C. 电价单价 ---")

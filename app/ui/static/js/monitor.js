@@ -2084,17 +2084,24 @@
       /* 命中区（整列）*/
       svg += '<rect x="' + (slot * i).toFixed(1) + '" y="0" width="' + slot.toFixed(1) +
         '" height="' + h + '" fill="transparent"/>';
-      if (hh > 0) {
-        var y = T + PH - hh;
-        svg += '<rect class="b" x="' + x.toFixed(1) + '" y="' + y.toFixed(1) +
-          '" width="' + bw.toFixed(1) + '" height="' + Math.max(1, hh).toFixed(1) +
-          '" rx="' + Math.min(3, bw / 2) + '"' +
-          (r.dim ? ' style="fill-opacity:.42"' : '') + '/>';
-        /* 今天柱顶的小圆点（只在存在历史柱时才画，fnmonitor 同款）*/
-        if (!r.dim && hasDim) {
-          svg += '<circle class="live-pt" cx="' + (x + bw / 2).toFixed(1) +
-            '" cy="' + (y - 6).toFixed(1) + '" r="2.5"/>';
-        }
+      /* ⚠️ v1.1.72：用量为 0 / null 时**也要画柱**（最小高度 2px）——
+         之前用 `if (hh > 0)` 整根跳过 → 当天刚开始还没累计用电时，
+         「今天」那根柱子**整根消失**，图上少一列（实测 bar=3 但 group=4），
+         且「今天」柱顶的 live 圆点也跟着没了。
+         现在统一画：hh=0 → 贴底 2px 的矮柱，表示「有这一天但还没用电」。 */
+      var isZero = hh <= 0;
+      var bh = isZero ? 2 : hh;
+      var y = T + PH - bh;
+      svg += '<rect class="b"' + (isZero ? ' zero' : '') +
+        ' x="' + x.toFixed(1) +
+        '" y="' + y.toFixed(1) + '" width="' + bw.toFixed(1) +
+        '" height="' + Math.max(1, bh).toFixed(1) +
+        '" rx="' + Math.min(3, bw / 2) + '"' +
+        (r.dim ? ' style="fill-opacity:.42"' : '') + '/>';
+      /* 今天柱顶的小圆点（只在存在历史柱时才画，fnmonitor 同款）*/
+      if (!r.dim && hasDim) {
+        svg += '<circle class="live-pt" cx="' + (x + bw / 2).toFixed(1) +
+          '" cy="' + (y - 6).toFixed(1) + '" r="2.5"/>';
       }
       svg += '</g>';
       /* X 轴标签：末位固定「今天」，其余按 step 间隔 */

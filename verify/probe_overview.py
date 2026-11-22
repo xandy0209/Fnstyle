@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""probe_overview.py —— 「系统重要内容概览」实机 CDP 探针（v1.1.69）
+"""probe_overview.py —— 「系统重要内容概览」实机 CDP 探针（v1.1.72）
 
 在真实 NAS 上跑（Chrome 带 --remote-debugging-port=9222），
 逐项核对概览六卡片区块的**真实渲染结果与真实数据**：
@@ -11,10 +11,11 @@
   4. 交互层：点「处理器」卡能打开对应抽屉（data-sheet 白名单生效）
   5. 布局层：概览区块是否真的在存储卡片上方（比较 getBoundingClientRect）
   6. 趋势层：趋势线是否有路径（跑满两个采样点后）
-  7. 截图留证
+  7. v1.1.72 专项：外层无 .card 卡片 / 底部留白 / 五张卡趋势线均已绘制
+  8. 截图留证
 
 前置：
-  · 已把 v1.1.69 部署到 NAS
+  · 已把 v1.1.72 部署到 NAS
   · Chrome 已开 --remote-debugging-port=9222 且打开了 NAS 应用页
     （或先跑 verify/cdp_open_tab.py）
 
@@ -31,7 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from probe_base import CDP, Checker, api, connect  # noqa: E402
 
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                   'shot_overview_v1171.png')
+                   'shot_overview_v1172.png')
 
 
 def snap_overview(c):
@@ -44,11 +45,19 @@ def snap_overview(c):
       function a(s){ var e = host.querySelector(s);
                      return e ? e.textContent : null; }
       var ovCard = document.getElementById('monOverview');
-      var wrap = ovCard ? ovCard.closest('.card') : null;
-      /* 存储卡片：概览之后的下一个 .card */
+      /* ⚠️ v1.1.72：概览区外层不再是 .card（老板：「不要最外层的卡片」）
+         → closest('.card') 会返回 null。改成用 .ov-wrap，
+         并按 DOM 顺序找**概览之后的第一张 .card**（存储卡）。 */
+      var wrap = ovCard ? ovCard.closest('.ov-wrap') : null;
       var cards2 = [].slice.call(document.querySelectorAll('.card'));
-      var wi = cards2.indexOf(wrap);
-      var nextCard = (wi >= 0 && wi + 1 < cards2.length) ? cards2[wi + 1] : null;
+      var nextCard = null;
+      if (ovCard) {
+        /* 用 compareDocumentPosition 判断「在概览之后」 */
+        for (var ci = 0; ci < cards2.length; ci++) {
+          if (ovCard.compareDocumentPosition(cards2[ci]) &
+              Node.DOCUMENT_POSITION_FOLLOWING) { nextCard = cards2[ci]; break; }
+        }
+      }
       return JSON.stringify({
         err: null,
         n: cards.length,
@@ -117,6 +126,42 @@ def snap_overview(c):
         gaugeW: (function(){
           var e = host.querySelector('[data-ov-gauge-el="cpu"]');
           return e ? Math.round(e.getBoundingClientRect().width) : -1;
+        })(),
+        /* ⚠️ v1.1.72：概览区**外层不再是 .card 卡片**
+           （老板：「不要最外层的卡片，直接呈现内部的卡片即可」） */
+        outerHasCard: (function(){
+          var w = document.querySelector('#panel-monitor .ov-wrap');
+          return w ? w.classList.contains('card') : null;
+        })(),
+        outerHasHeader: (function(){
+          var w = document.querySelector('#panel-monitor .ov-wrap');
+          return w ? !!w.querySelector(':scope > header') : null;
+        })(),
+        /* ⚠️ v1.1.72：底部留白（padding-bottom 与实际视觉留白） */
+        padBottoms: (function(){
+          return [...host.querySelectorAll('.ov-metric')].map(function(c){
+            return Math.round(parseFloat(getComputedStyle(c).paddingBottom)*10)/10;
+          });
+        })(),
+        bottomGaps: (function(){
+          return [...host.querySelectorAll('.ov-metric')].map(function(c){
+            var cr = c.getBoundingClientRect();
+            var foot = c.querySelector('.ov-m-foot');
+            if (!foot) return -1;
+            var pb = parseFloat(getComputedStyle(c).paddingBottom) || 0;
+            return Math.round((cr.bottom - pb - foot.getBoundingClientRect().bottom)*10)/10;
+          });
+        })(),
+        /* ⚠️ v1.1.72：五张带趋势线的卡是否**真的画出了内容** */
+        perCardSpark: (function(){
+          return [...host.querySelectorAll('.ov-metric')].map(function(c){
+            var k = c.getAttribute('data-ov');
+            var sp = c.querySelector('[data-ov-spark]');
+            if (!sp) return {k:k, spark:0, lines:0, dots:0};
+            return {k:k, spark:1,
+                    lines: sp.querySelectorAll('.ov-spark-line').length,
+                    dots:  sp.querySelectorAll('.ov-spark-dot').length};
+          });
         })(),
       });
     })()""")
@@ -329,8 +374,28 @@ def main():
     ad = ov.get('alignDiffs') or []
     ck.check('数字与仪表中心对齐（5 张仪表 diff ≤ 2px）',
              len(ad) == 5 and all(d <= 2 for d in ad), str(ad))
-    ck.check('仪表尺寸 76×76（已压缩）',
-             abs((ov.get('gaugeW') or 0) - 76) < 2, str(ov.get('gaugeW')))
+    ck.check('仪表尺寸 64×64（v1.1.72 压缩后）',
+             abs((ov.get('gaugeW') or 0) - 64) < 2, str(ov.get('gaugeW')))
+
+    # ----------------------------------------------------------
+    ck.section('5c. v1.1.72：外层卡片 / 底部留白 / 趋势线')
+    # ----------------------------------------------------------
+    ck.check('概览区外层不再是 .card 卡片',
+             ov.get('outerHasCard') is False, str(ov.get('outerHasCard')))
+    ck.check('概览区外层没有 header 条',
+             ov.get('outerHasHeader') is False, str(ov.get('outerHasHeader')))
+    _pb = ov.get('padBottoms') or []
+    ck.check('卡片底部 padding ≤ 10px（无厚留白）',
+             bool(_pb) and all(p <= 10 for p in _pb), str(_pb))
+    _bg = ov.get('bottomGaps') or []
+    ck.check('底部内容到卡底 ≤ 12px',
+             bool(_bg) and all(g >= -1 and g <= 12 for g in _bg), str(_bg))
+    _pcs = {x['k']: x for x in (ov.get('perCardSpark') or [])}
+    for _k in ['cpu', 'mem', 'net', 'temp', 'pwr']:
+        _x = _pcs.get(_k) or {}
+        ck.check('%s 卡趋势线已绘制' % _k,
+                 _x.get('spark') == 1 and (_x.get('lines', 0) + _x.get('dots', 0)) >= 1,
+                 str(_x))
 
     # ----------------------------------------------------------
     ck.section('6. 趋势层')

@@ -253,10 +253,10 @@
     });
     g.appendChild(val);
     if (iconParts && iconParts.length) {
-      /* ⚠️ v1.1.70：仪表从 92px 缩到 76px，图标同步缩到 20×20，
-         保持官方比例（24/92 ≈ 26% → 20/76 ≈ 26%）。
-         偏移 (100-20)/2 = 40 → 正好居中。 */
-      var ig = svgEl('g', { transform: 'translate(40 40) scale(0.8333)' });
+      /* ⚠️ v1.1.72：仪表 76 → 64px，图标同步缩到 17×17，
+         保持官方比例（24/92 ≈ 26% → 17/64 ≈ 26.6%）。
+         偏移 (100-17)/2 = 41.5 → 正好居中；缩放 17/24 = 0.7083。 */
+      var ig = svgEl('g', { transform: 'translate(41.5 41.5) scale(0.7083)' });
       ig.appendChild(buildIcon(iconParts, 'ov-gauge-ico'));
       svg.appendChild(ig);
     }
@@ -315,8 +315,18 @@
     var opt = {};
     var obj = {
       el: svg,
-      set: function (s, o) { series = s || []; opt = o || {}; draw(); }
+      set: function (s, o) { series = normSeries(s); opt = o || {}; draw(); }
     };
+    /* ⚠️ v1.1.72：容错 —— series 允许传裸数组 [1,2,3] 或 {values:[...]}。
+       之前只认 {values:[]}，传裸数组就静默不画（趋势线整条消失）。 */
+    function normSeries(s) {
+      if (!s) return [];
+      var arr = Array.isArray(s) ? s : [s];
+      return arr.map(function (x) {
+        if (x && typeof x === 'object' && Array.isArray(x.values)) return x;
+        return { values: Array.isArray(x) ? x : [] };
+      });
+    }
     function draw() {
       var w = svg.clientWidth || 240;
       var h = svg.clientHeight || 40;
@@ -335,7 +345,11 @@
         var vals = s.values || [];
         var n = vals.length;
         if (!n) return;
-        var xs = vals.map(function (_, i) { return i / (n - 1) * w; });
+        var xs = vals.map(function (_, i) {
+          /* ⚠️ n=1 时 n-1=0 → 除零 → NaN → 圆点画不出来。
+             单点时直接落在最右端。 */
+          return n > 1 ? i / (n - 1) * w : w;
+        });
         var ys = vals.map(function (v) {
           return pad + (1 - (clamp(v, lo, hi) - lo) / (hi - lo)) * (h - pad * 2);
         });
@@ -801,12 +815,17 @@
     }
     pushLive('power', w);
 
-    /* ---- 迷你趋势线 ---- */
-    setSpark(host, 'cpu', [live.cpu], { min: 0, max: 100 });
-    setSpark(host, 'mem', [live.mem], { min: 0, max: 100 });
+    /* ---- 迷你趋势线 ----
+       ⚠️ v1.1.72：series 必须是 {values: [...]} 的**对象数组**。
+          之前写成 [live.cpu]（裸数组）→ makeSpark.draw() 取 s.values
+          得到 undefined → vals=[] → 一条线都不画。
+          只有网络那张碰巧用了 {values: live.rx} 才正常 ——
+          所以「只有网络卡有趋势线」。 */
+    setSpark(host, 'cpu', [{ values: live.cpu }], { min: 0, max: 100 });
+    setSpark(host, 'mem', [{ values: live.mem }], { min: 0, max: 100 });
     setSpark(host, 'net', [{ values: live.rx }, { values: live.tx }], { min: 0 });
-    setSpark(host, 'temp', [live.temp], {});
-    setSpark(host, 'pwr', [live.power], { min: 0 });
+    setSpark(host, 'temp', [{ values: live.temp }], {});
+    setSpark(host, 'pwr', [{ values: live.power }], { min: 0 });
   }
 
   /* 功耗占额定容量的百分比（对齐 fnmonitor 的 w / capW * 100）

@@ -4911,6 +4911,13 @@ html.mon-scroll-lock body {
   fill: var(--e-teal);
   transition: opacity .14s ease;
 }
+/* ⚠️ v1.1.72：用量为 0 / null 的那天（通常是「今天」刚开始还没累计）
+   画一根贴底 2px 的矮柱表示「有这一天但还没用电」——
+   之前这根柱整根消失，图上会少一列。用半透明区分。 */
+.pwr-bars rect.b.zero {
+  fill: var(--text-muted);
+  opacity: .45;
+}
 .pwr-bars.hovering rect.b { opacity: .45; }
 .pwr-bars.hovering rect.b.on { opacity: 1; }
 /* 今天柱顶的小圆点（fnmonitor 的 .live-pt）*/
@@ -5037,50 +5044,73 @@ html.mon-scroll-lock body {
 }
 
 /* =====================================================================
-   系统重要内容概览（六卡片）—— v1.1.70
+   系统重要内容概览（六卡片）—— v1.1.72
    对齐 fnmonitor 总览页的「核心指标」模块（.grid.metrics / .card.metric）。
    每张卡：m-top(标题+状态词) / m-main(大数字+环形仪表) / m-sub(副标题) / m-foot(趋势线|盘位条)
 
    ⚠️ v1.1.70 老板指示：**大数字不用点阵**，改用普通字体 ——
       与项目其它板块（能耗 / 温度 / 存储 / 对比）的 .dnum > .dm 完全同款
       （--font-display，700，tabular-nums）。
-   ⚠️ 卡片视觉：沿用 fnmonitor 的「大圆角 + 白底 + 无边框」，
-      但保留 FnStyle 的深/浅主题变量与品牌蓝。
+   ⚠️ v1.1.72 老板反馈「不要最外层的卡片，直接呈现内部的卡片即可」——
+      外层 .card > header + .body 的外壳已从 index.html 移除，
+      改成 .ov-wrap（轻量标题行）+ 直接铺六张卡。
+   ⚠️ v1.1.72「卡片高度减小，下方尽量不要留白」——
+      padding 底部收到 8px、row-gap 收到 .2rem、m-foot 收到 30px，
+      卡片总高 215 → ~176px。
    ===================================================================== */
+
+/* 轻量标题行（替代原来的 .card > header） */
+.ov-wrap { margin-bottom: .85rem; }
+.ov-wrap-head {
+  display: flex;
+  align-items: baseline;
+  gap: .6rem;
+  flex-wrap: wrap;
+  margin-bottom: .6rem;
+  padding: 0 .15rem;
+}
+.ov-wrap-title {
+  font-size: .95rem;
+  font-weight: 620;
+  color: var(--text-primary);
+  letter-spacing: .01em;
+}
+.ov-wrap-hint {
+  font-size: .78rem;
+  color: var(--text-muted);
+}
+
 .ov-metrics {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 1rem;
+  gap: .85rem;
 }
 /* ⚠️ v1.1.70：卡片用 **grid**（对齐 fnmonitor 的 .metric）——
    两列（数字区 | 仪表区），仪表在数字**右侧**同排。
    之前用 flex 纵向 → 仪表掉到数字下方单独一行，
    卡片被拉得很高、右侧大片留白，与参考实现差很多。 */
-/* ⚠️ v1.1.70 二次调整（老板反馈）：
-   ① 卡片**太高太占空间** → 从 265px 压到 ~200px：
-      - 去掉 min-height:236px（fnmonitor 的 236 是给「有 m-sub + 44px 趋势线」的
-        大屏版准备的，我们的副标题只有一行，236 纯属浪费）
-      - padding 20/20/16 → 16/18/14
-      - row-gap .5rem → .35rem
-      - 仪表 92px → 76px
-      - 趋势线高度 44 → 36px
-   ② **左侧文字与右侧图标水平对齐** →
-      原来数字区 align-self:end（沉底）、仪表 align-self:center（居中），
-      实测两者中心差 14px，看着"图标偏高、文字偏低"。
-      正解：两列都 align-self:center，且数字区内部用 align-items:baseline
-      让「数字 + 单位」共享基线 —— 图标中心与数字视觉中心在同一水平线上。 */
+/* ⚠️ v1.1.72 压缩（老板：卡片高度减小、下方尽量不要留白）：
+   ① 去掉 min-height:236px（fnmonitor 的 236 是给「有 m-sub + 44px 趋势线」的
+      大屏版准备的，我们的副标题只有一行，236 纯属浪费）
+   ② padding 16/18.4/14 → **12/14/8**（底部只留 8px，不再有厚重的下留白）
+   ③ row-gap .35rem → **.2rem**
+   ④ 仪表 76 → **64px**；大数字 38 → **32px**
+   ⑤ 趋势线 36 → **30px**；盘位条 36 → **30px**（条 20 → 18px）
+   ⑥ 逐行锁死高度（m-top 24 / m-main 62 / m-sub 18 / m-foot 30）
+      —— 不锁死的话状态词、副标题长短不一会让六卡不等高。
+   实测总高 215 → 176px。 */
 .ov-metric {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 18px;
-  padding: 1rem 1.15rem .875rem;
+  border-radius: 16px;
+  padding: .75rem .875rem .5rem;
   min-width: 0;
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   grid-template-rows: auto auto auto auto;
-  column-gap: .9rem;
-  row-gap: .35rem;
+  column-gap: .8rem;
+  row-gap: .2rem;
   align-items: center;
   transition: border-color .26s ease, transform .26s ease, box-shadow .26s ease;
 }
@@ -5108,53 +5138,43 @@ html.mon-scroll-lock body {
   justify-content: space-between;
   gap: .5rem;
   min-width: 0;
-  /* ⚠️ v1.1.70：固定行高 26px —— 状态词文案长短不一
+  /* ⚠️ v1.1.70：固定行高 —— 状态词文案长短不一
      （「正常」/「实测 + 估算」/「1 块需留意」），
      不固定会让第 1 行高度漂移 → 六张卡不等高。 */
-  height: 26px;
+  height: 24px;
 }
 .ov-m-label {
-  font-size: .95rem;
+  font-size: .9rem;
   font-weight: 600;
   color: var(--text-primary);
-  white-space: nowrap;
-}
-.ov-m-state {
-  font-size: .78rem;
-  font-weight: 550;
-  color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.ov-m-state {
+  font-size: .78rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex: none;
+}
 
-/* 主体：大数字 + 环形仪表
-   ⚠️ v1.1.70：align-self 改成 center（原来 end）——
-      数字与仪表**垂直居中对齐**，两者的视觉中心落在同一水平线上。 */
 .ov-m-main {
   grid-column: 1;
   grid-row: 2;
   align-self: center;
   display: flex;
-  /* ⚠️ v1.1.70：align-items 必须是 center（不是 baseline）——
-     baseline 会把数字按文字基线对齐，而 .ov-dm 的 line-height:.8
-     让字形比行盒高 → 数字整体下沉，与仪表中心差 19px。
-     改成 center 后，数字的**视觉中心**与仪表圆心严格同一水平线。 */
+  /* ⚠️ v1.1.71：align-items 必须是 **center**（不是 baseline）——
+     baseline 会把数字按文字基线对齐，而 .ov-dm 的 line-height < 1
+     让行盒比字形矮 → 字形相对行盒**下沉 19px**，与仪表圆心错位。 */
   align-items: center;
-  gap: .35rem;
+  gap: .3rem;
   min-width: 0;
-  /* 固定 76px（= 仪表高度）—— 让六张卡第 2 行完全等高 */
-  height: 76px;
+  height: 62px;   /* = 仪表高度 → 六卡等高 */
 }
-/* ⚠️ v1.1.70：普通字体大数字（不是点阵）。
-   复用项目通用 .dnum > .dm 体系（同能耗 / 温度 / 存储板块），
-   这里只补概览专属的 --dm-h 与单位色。
-   字号由 JS 按 rampInk() 写入的 color 决定分级。 */
+
 .ov-dnum {
-  --dm-h: 38px;
+  --dm-h: 32px;
   display: inline-flex;
-  /* ⚠️ v1.1.70：数字与单位共享**基线**（flex-end + line-height:.8），
-     但整个 .ov-dnum 盒子在 .ov-m-main 里由 align-items:center 垂直居中。 */
   align-items: flex-end;
   gap: calc(var(--dm-h) * .16);
   white-space: nowrap;
@@ -5162,11 +5182,8 @@ html.mon-scroll-lock body {
   min-width: 0;
 }
 .ov-dnum > .ov-dm {
-  /* ⚠️ v1.1.70：line-height 从 .8 改成 1。
-     .8 会让行盒比字形矮 → 字形相对行盒**下沉**，
-     数字视觉中心比仪表圆心低 19px（实测）。
-     改成 1 后行盒高度=字号，字形在盒内居中，
-     与右侧仪表圆心严格同一水平线。 */
+  /* line-height 必须 = 1（不能 < 1）——
+     .8 会让行盒比字形矮 → 字形下沉 19px，与仪表中心错位。 */
   font: 700 calc(var(--dm-h) * 1.08) / 1 var(--font-display);
   font-variant-numeric: tabular-nums;
   letter-spacing: -.04em;
@@ -5178,42 +5195,36 @@ html.mon-scroll-lock body {
   transition: color .3s ease;
 }
 .ov-dnum > .ov-unit {
-  font: 600 max(11px, calc(var(--dm-h) * .32)) / 1 var(--font-sans);
+  font: 600 max(10px, calc(var(--dm-h) * .32)) / 1 var(--font-sans);
   color: var(--text-secondary);
   margin: 0 0 -1px;
   letter-spacing: 0;
 }
 .ov-dnum > .ov-unit:empty { display: none; }
 
-/* 网络卡：上下行两行（无仪表 → 数字区横跨两列）
-   ⚠️ v1.1.70：字号分级对齐 fnmonitor 的
-   .net-vals .dnum{--dm-h:30px} / .row.sec .dnum{--dm-h:20px;color:var(--ink-2)}
-   —— 下行大字、上行小字且用次要文字色（原来两行一样大、只靠 opacity 区分）。 */
+/* 网络卡：上下行两行（对齐 fnmonitor 的 net-vals） */
 .ov-net-vals {
   grid-column: 1 / -1;
   align-self: center;
   display: grid;
-  gap: .3rem;
+  gap: .22rem;
   min-width: 0;
-  /* ⚠️ v1.1.70：网络卡无仪表，数字区横跨两列，
-     高度锁到 76px 与其他卡的仪表区一致 → 六卡等高。 */
-  height: 76px;
+  height: 62px;
   align-content: center;
 }
 .ov-net-vals .row {
   display: flex;
-  align-items: baseline;
-  gap: .55rem;
+  align-items: flex-end;
+  gap: .4rem;
   min-width: 0;
 }
-.ov-net-vals .row .ov-dnum { --dm-h: 26px; }
-.ov-net-vals .row.sec .ov-dnum { --dm-h: 17px; }
+.ov-net-vals .row .ov-dnum { --dm-h: 23px; }
+.ov-net-vals .row.sec .ov-dnum { --dm-h: 15px; }
 .ov-net-vals .row.sec .ov-dm { color: var(--text-secondary); }
-/* 箭头（fnmonitor 的 #i-down / #i-up，18×18 内联 SVG） */
 .ov-arrow {
   flex: none;
-  width: 18px;
-  height: 18px;
+  width: 15px;
+  height: 15px;
   align-self: flex-end;
   margin-bottom: 2px;
   color: var(--text-muted);
@@ -5221,17 +5232,13 @@ html.mon-scroll-lock body {
 .ov-arrow-svg { width: 100%; height: 100%; display: block; }
 .ov-arrow-ico { color: inherit; }
 
-/* 环形仪表（对齐 fnmonitor 的 .metric .m-gauge，在数字右侧）
-   ⚠️ v1.1.70：92px → 76px（卡片整体压缩），align-self:center
-      保证仪表中心与数字视觉中心在同一水平线上。
-   中心图标：fnmonitor 用 24×24 的 sprite（#i-bolt 之类），
-   这里把同样的图形内联成 SVG（translate(38 38) → 24×24 居中）。 */
+/* 环形仪表 */
 .ov-m-gauge {
   grid-column: 2;
   grid-row: 2;
   align-self: center;
-  width: 76px;
-  height: 76px;
+  width: 64px;
+  height: 64px;
   display: grid;
   place-items: center;
 }
@@ -5245,29 +5252,28 @@ html.mon-scroll-lock body {
 
 .ov-m-sub {
   grid-column: 1 / -1;
-  font-size: .8rem;
+  font-size: .78rem;
   color: var(--text-muted);
-  line-height: 1.45;
-  /* ⚠️ v1.1.70：固定高度 20px —— 副标题只有一行，
+  line-height: 1.4;
+  /* ⚠️ v1.1.70：固定高度 18px —— 副标题只有一行，
      用固定高度锁死，避免内容长短影响卡片总高。 */
-  height: 20px;
+  height: 18px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 /* 迷你趋势线（对齐 fnmonitor 的 .spark：
-   主线深色 + 面积浅灰 + 末端实心点）
-   ⚠️ v1.1.70：高度 44 → 36px（配合卡片整体压缩） */
+   主线深色 + 面积浅灰 + 末端实心点） */
 .ov-m-foot {
   grid-column: 1 / -1;
-  margin-top: .5rem;
-  /* ⚠️ v1.1.70：固定 36px —— 与 .ov-spark / .ov-pips 高度一致 */
-  height: 36px;
+  margin-top: .3rem;
+  /* ⚠️ v1.1.72：36 → 30px（配合卡片整体压缩） */
+  height: 30px;
 }
 .ov-spark {
   width: 100%;
-  height: 36px;
+  height: 30px;
   display: block;
   overflow: visible;
 }
@@ -5286,17 +5292,17 @@ html.mon-scroll-lock body {
   display: flex;
   gap: 6px;
   align-items: flex-end;
-  height: 36px;
+  height: 30px;
 }
 .ov-pips > div {
   flex: 1;
   display: grid;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
 }
 .ov-pips .ov-pip {
-  height: 20px;
-  border-radius: 6px;
+  height: 18px;
+  border-radius: 5px;
   background: var(--bg-hover);
   position: relative;
   overflow: hidden;
@@ -5311,7 +5317,7 @@ html.mon-scroll-lock body {
      与 fnmonitor 的 .drive-pips .pip>i 一致 */
 }
 .ov-pips span {
-  font: 500 10.5px/1 var(--font-mono, monospace);
+  font: 500 10px/1 var(--font-mono, monospace);
   color: var(--text-muted);
   text-align: center;
   overflow: hidden;
