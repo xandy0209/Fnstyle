@@ -198,6 +198,39 @@ start_server() {
     #      所以 install_callback 里也要先把服务拉起来（见 install_callback）。
     export FNSTYLE_SOCKET="${APP_ROOT}/fnstyle.sock"
     export FNSTYLE_GATEWAY_PREFIX="/app/${APP_NAME}"
+
+    # ⚠️⚠️ v1.1.75 修复（表现为桌面入口 502 Bad Gateway）：
+    #
+    #   服务**必须**以 root 身份运行，有两个硬性原因：
+    #     ① 网关 socket 要建在 ${APP_ROOT}/fnstyle.sock，
+    #        而 ${APP_ROOT}（= /usr/local/apps/@appcenter/fnstyle）
+    #        的 ACL 只授权了 fnstyle 用户和 root：
+    #            user::rwx / user:fnstyle:rwx / other::r-x
+    #        普通用户（含管理员 xandy0209）**没有写权限**，
+    #        bind 会直接 [Errno 13] Permission denied →
+    #        网关连不上 → 桌面入口 502，而 9910 直连一切正常。
+    #     ② 存储卡的 SMART 数据靠 `smartctl /dev/sda` 采集，
+    #        读裸块设备需要 root；降权到 fnstyle 用户会全部读失败
+    #        （实测 "Smartctl open device: /dev/sda failed: Permission denied"）。
+    #
+    #   因此：应用中心（root）调用时直接跑；被普通用户手工调用时
+    #   必须先用 sudo 提权，否则就会复现本次故障。
+    if [ "$(id -u)" -ne 0 ]; then
+        # 优先用交互式 sudo（应用中心场景下由 fnOS 自己传密码/授权）；
+        # 失败则明确报错，不要静默地以低权限跑起来。
+        if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+            exec sudo -E env \
+                FNSTYLE_PORT="${FNSTYLE_PORT}" \
+                FNSTYLE_UI_DIR="${FNSTYLE_UI_DIR}" \
+                FNSTYLE_SERVER_LOG="${FNSTYLE_SERVER_LOG}" \
+                FNSTYLE_SOCKET="${FNSTYLE_SOCKET}" \
+                FNSTYLE_GATEWAY_PREFIX="${FNSTYLE_GATEWAY_PREFIX}" \
+                bash "$0" start
+        fi
+        log_err "服务必须以 root 运行（网关 socket 目录权限 + SMART 采集需要 root）；请用 sudo 执行"
+        return 1
+    fi
+
     if command -v setsid >/dev/null 2>&1; then
         setsid nohup python3 "${SERVER}" >>"${LOG_FILE}" 2>&1 &
     else
@@ -241,6 +274,14 @@ start_server() {
 }
 
 stop_server() {
+    # ⚠️ v1.1.75：服务以 root 运行（见 start_server 的说明），
+    #    普通用户调用 stop 时 kill / rm 都会 EPERM（权限不足），
+    #    结果「停了但进程还在」，甚至把 pidfile 删了导致状态失真。
+    #    所以同样需要提权。
+    if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+        exec sudo -E bash "$0" stop
+    fi
+
     if ! is_running; then
         rm -f "${PID_FILE}" 2>/dev/null
         # 进程已被回收但 socket 文件可能还在（异常退出/被杀 -9 时服务来不及清）

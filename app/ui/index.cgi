@@ -24,7 +24,7 @@ set -uo pipefail
 # ------------------------- 版本与更新检查 -------------------------
 # ⚠️ 必须与 manifest 的 version 保持一致（自动更新靠它判断「是否比线上新」）。
 # GitHub 发布新版本时，两处都要改：manifest 的 version + 本常量。
-APP_VERSION="1.1.74"
+APP_VERSION="1.1.75"
 
 # ----------------------------- 路径配置 -----------------------------
 # APP_ROOT 是 fnOS 安装后创建的标准软链：
@@ -1939,11 +1939,25 @@ https://api.github.com/repos/xandy0209/Fnstyle/releases/latest"
             done
             rm -rf "$VBASE"
         fi
-        # 诊断日志：NAS 上可直接 cat /tmp/fnstyle_version_check.log 查看每次探测结果
+        # 诊断日志：NAS 上可直接 cat <data-share>/deskdata/version_check.log 查看每次探测结果
+        #
+        # ⚠️ v1.1.75 修复：原来写死 /tmp/fnstyle_version_check.log，
+        #    而该文件一旦被别的身份（root）先创建，CGI 以另一身份追加时
+        #    就会报 "Permission denied" 并刷进 server.log 的 CGI stderr。
+        #    /tmp 是全局共享目录、文件名又太通用，容易和别人撞车。
+        #    改写到本应用**自有**的数据目录（DATA_DIR 由 fnOS 分配、属主稳定），
+        #    并做多路径兜底：DATA_DIR → /var/apps/<app>/var → /tmp。
+        VLOG_FILE=""
+        for _vp in "${DATA_DIR}/version_check.log" \
+                   "/var/apps/${APP_NAME}/var/version_check.log"; do
+            _vd="$(dirname "$_vp")"
+            if [ -d "$_vd" ] && [ -w "$_vd" ]; then VLOG_FILE="$_vp"; break; fi
+        done
+        [ -n "${VLOG_FILE}" ] || VLOG_FILE="/tmp/fnstyle_version_check.log"
         {
             echo "[$(date '+%Y-%m-%d %H:%M:%S')] check: err=$CHECK_ERR via=$VIA"
             printf '%s' "$ATTEMPTS" | sed 's/^/    /'
-        } >> /tmp/fnstyle_version_check.log 2>/dev/null
+        } >> "${VLOG_FILE}" 2>/dev/null
         AVAIL=0
         if [ "$CHECK_ERR" = "0" ] && [ -n "$R_VERSION" ] && ver_compare "$R_VERSION" "$CUR"; then
             AVAIL=1
