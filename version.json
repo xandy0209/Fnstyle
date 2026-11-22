@@ -1,9 +1,9 @@
 {
-  "version": "1.1.15",
-  "url": "https://github.com/xandy0209/Fnstyle/releases/download/v1.1.15/fnstyle_1.1.15_all.fpk",
-  "downloadUrl": "https://github.com/xandy0209/Fnstyle/releases/download/v1.1.15/fnstyle_1.1.15_all.fpk",
-  "changelog": "1.1.15：顶栏新增箭头按钮，一键以新浏览器页面打开应用",
-  "sha256": "683ea0207d73bdd870e3a838c77c01eba5bb6c1456b4f646384151e9818e8b10",
-  "size": 1279289,
-  "publishedAt": "2026-11-17T12:36:00+08:00"
+  "version": "1.1.82",
+  "url": "https://github.com/xandy0209/Fnstyle/releases/download/v1.1.82/fnstyle_1.1.82_all.fpk",
+  "downloadUrl": "https://github.com/xandy0209/Fnstyle/releases/download/v1.1.82/fnstyle_1.1.82_all.fpk",
+  "changelog": "1.1.82：修复「个性化设置」滑块数值标签在点击「默认」按钮后丢失单位的问题。【现象】面板首次打开显示「60%」，点一次该字段旁的「默认」按钮后变成「60」——单位被吃掉，登录框水平位置/垂直位置两个滑块都会犯。【根因】滑块数值标签（.range-val）的更新逻辑散在**三处**：① 初始渲染 renderPersonalize() 里带 f.unit；② 拖动时的 input 事件里带 f.unit；③ 「默认」按钮回填时**漏了 f.unit**（只有裸的 v.textContent = input.value）。三处独立实现，必然漂移。【修复】抽出统一出口 setRangeLabel(key, f, value)，三处全部改走它；并在 verify/verify_default_values.py 增加 F 段静态回归（33 项），断言不再存在漏单位的裸 textContent 赋值。【顺带】新增 verify/probe_login_defaults.py 实机探针（21 项）：读个性化设置面板的实际值 → 改脏 → 点「默认」→ 回读 → 核对后端落盘 → 收尾还原存量配置。【本轮复查背景】老板重申「个性化设置中登录框水平位置默认为60%」，实机复查确认 v1.1.81 的三个出厂默认（60% / 隐藏 / 8）已全部生效（API 与 UI 双向核对），并顺带抓出上述单位丢失缺陷。",
+  "sha256": "203bf3fdb30ed91697c7a1399221a98a90ee57d6b22025edd82f15423be1a285",
+  "size": 1513928,
+  "publishedAt": "2026-11-22T23:26:46+08:00"
 }
