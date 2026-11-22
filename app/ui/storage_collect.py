@@ -1374,8 +1374,27 @@ def collect_raid_card():
 # ============================ 7. 硬盘分级与巡检 ============================
 
 GRADE_LABEL = {"ok": "正常", "warn": "留意", "crit": "故障", "unknown": "未知"}
-DISK_SCAN_GROWTH_CRIT = 10        # 一次巡检内缺陷增长到这个数就判故障
+# ⚠️ v1.1.79：巡检缺陷增长门限改为从统一阈值配置读取（scanGrowthCrit，默认 10）。
+#    配置模块不可用时（单文件部署 / 导入异常）回落默认值 10，保持原有行为。
+DISK_SCAN_GROWTH_CRIT_DEFAULT = 10   # 一次巡检内缺陷增长到这个数就判故障
 DISK_SCAN_LOG_KEEP_OK = 7 * 86400  # 「未见异常」保留 7 天；有变化的永久保留
+
+
+def _scan_growth_crit():
+    """取「巡检缺陷增长」门限（可配置）。
+
+    ⚠️ 每次都重新读配置 —— 用户在配置抽屉里改了门限后，
+       下一次巡检就该用新门限，而不是重启服务才生效。
+       配置读取失败时回落默认值，绝不因为配置问题让巡检功能挂掉。
+    """
+    try:
+        import monitor_thresholds as mt
+        v = mt.get_value("scanGrowthCrit", DISK_SCAN_GROWTH_CRIT_DEFAULT)
+        if v is None:
+            return DISK_SCAN_GROWTH_CRIT_DEFAULT
+        return int(v)
+    except Exception:
+        return DISK_SCAN_GROWTH_CRIT_DEFAULT
 
 # SMART 明细缓存（巡检结果，供采集循环与详情面板复用）
 _DISK_HEALTH_MEM = {}
@@ -1414,7 +1433,7 @@ def grade_disk(rec, prev=None):
         old = _nz(prev.get("defects"))
         if old is not None:
             delta = reall - old
-    if delta is not None and delta >= DISK_SCAN_GROWTH_CRIT:
+    if delta is not None and delta >= _scan_growth_crit():
         return "crit", ["重映射扇区增长 %+d 个（%d → %d）" % (delta, reall - delta, reall)]
     reasons = []
     if reall:

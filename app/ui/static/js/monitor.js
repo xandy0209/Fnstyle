@@ -108,15 +108,23 @@
     return 'ok';
   }
 
-  /* 温度阈值。
+  /* 温度阈值（v1.1.79：改为从统一阈值配置读取）
      ⚠️ 口径与 fnmonitor 对齐（ui-src/33-state.js 的 TH_SPEC）：
        diskTempWarn 50℃ / diskTempCrit 58℃ —— 硬盘的温度余量比 CPU 小得多，
        50℃ 就该留意了；早先这里写死 60/75，与 fnmonitor 差一大截。
-       通用传感器（CPU / 风扇位）沿用 60/75 的家用口径。 */
-  var TH_DISK_TEMP_WARN = 50;
-  var TH_DISK_TEMP_CRIT = 58;
-  var TH_TEMP_WARN = 60;
-  var TH_TEMP_CRIT = 75;
+       通用传感器（CPU / 风扇位）沿用 60/75 的家用口径。
+     ⚠️ 这里**不能**再用 `var TH_TEMP_WARN = 60` 这种常量 ——
+        常量在脚本加载时就固化了，后端配置异步回来后永远不生效。
+        必须走函数调用（th('tempWarn')），每次用时现取。 */
+  var THRESHOLDS = window.FnStyleThresholds || null;
+
+  /* 取阈值；thresholds.js 未就绪时退回内置默认值（保证不崩）。 */
+  function th(key, fallback) {
+    if (THRESHOLDS && typeof THRESHOLDS.get === 'function') {
+      return THRESHOLDS.get(key, fallback);
+    }
+    return fallback;
+  }
 
   /* 温度等级：返回 'ok' / 'warn' / 'high'。
      ⚠️ 注意 'ok' 也是真值 —— 判「是否超阈值」必须显式比较，
@@ -124,16 +132,16 @@
         要判是否超阈请用 tempExceed() 。 */
   function tempLevel(t) {
     if (t === null || t === undefined || isNaN(t)) return 'ok';
-    if (t >= TH_TEMP_CRIT) return 'high';
-    if (t >= TH_TEMP_WARN) return 'warn';
+    if (t >= th('tempCrit', 75)) return 'high';
+    if (t >= th('tempWarn', 60)) return 'warn';
     return 'ok';
   }
 
-  /* 硬盘温度等级：fnmonitor 的 LV.dtemp 口径（50 / 58） */
+  /* 硬盘温度等级：fnmonitor 的 LV.dtemp 口径（默认 50 / 58） */
   function diskTempLevel(t) {
     if (t === null || t === undefined || isNaN(t)) return 'ok';
-    if (t >= TH_DISK_TEMP_CRIT) return 'high';
-    if (t >= TH_DISK_TEMP_WARN) return 'warn';
+    if (t >= th('diskTempCrit', 58)) return 'high';
+    if (t >= th('diskTempWarn', 50)) return 'warn';
     return 'ok';
   }
 
@@ -158,8 +166,9 @@
 
   function bar(pct) {
     var p = Math.max(0, Math.min(100, Number(pct) || 0));
-    return '<div class="mon-bar"><div class="mon-bar-fill lv-' + level(p, 70, 90) +
-           '" style="width:' + p + '%"></div></div>';
+    return '<div class="mon-bar"><div class="mon-bar-fill lv-' +
+      level(p, th('barWarn', 70), th('barCrit', 90)) +
+      '" style="width:' + p + '%"></div></div>';
   }
 
   function emptyBox(text) {
@@ -324,12 +333,13 @@
     return 'disk';
   }
 
-  /* 容量等级：<85 正常，>=85 留意，>=95 故障（与 fnmonitor 阈值一致） */
+  /* 容量等级：默认 <85 正常，>=85 留意，>=95 故障（与 fnmonitor 阈值一致）
+     ⚠️ v1.1.79：门限改为从统一阈值配置读取（capWarn / capCrit）。 */
   function capLevel(pct) {
     var p = Number(pct);
     if (!isFinite(p)) return '';
-    if (p >= 95) return 'crit';
-    if (p >= 85) return 'warn';
+    if (p >= th('capCrit', 95)) return 'crit';
+    if (p >= th('capWarn', 85)) return 'warn';
     return '';
   }
 
@@ -342,9 +352,10 @@
   var RAMP_C = 'var(--danger)';  /* 红 */
 
   /* 容量色阶色标：0 绿 → 85%×0.8 绿 → 85%×0.5 绿 → 85% 黄绿 → 85% 橙 → 95% 红
-     与 fnmonitor 的 RAMP.pct(capWarn, capCrit) 完全一致。 */
+     与 fnmonitor 的 RAMP.pct(capWarn, capCrit) 完全一致。
+     ⚠️ v1.1.79：门限改为从统一阈值配置读取。 */
   function capRampStops() {
-    var w = 85, c = 95;
+    var w = th('capWarn', 85), c = th('capCrit', 95);
     return [[0, RAMP_G], [w * .5, RAMP_G], [w * .8, RAMP_Y], [w, RAMP_A], [Math.max(c, w), RAMP_C]];
   }
 
@@ -986,7 +997,7 @@
     if (tEx) {
       notes += '<div class="mon-dw-note warn">🌡 <span>温度 ' + esc(String(t)) +
         '℃，已超过' + (tEx === 'high' ? '严重' : '警告') + '阈值（' +
-        (tEx === 'high' ? TH_DISK_TEMP_CRIT : TH_DISK_TEMP_WARN) + '℃）。</span></div>';
+        (tEx === 'high' ? th('diskTempCrit', 58) : th('diskTempWarn', 50)) + '℃）。</span></div>';
     }
     if (notes) html += '<div class="mon-dw-stack">' + notes + '</div>';
 
@@ -1270,7 +1281,8 @@
           (smText ? ' · SMART 告警：' + smText : '') +
           (hasCap ? ' · 已用 ' + Math.round(pct) + '%' : '') +
           (ago ? '（巡检于 ' + ago + '）' : '') +
-          (capLv ? ' · 容量占用超 ' + (capLv === 'crit' ? 95 : 85) + '%' : '');
+          (capLv ? ' · 容量占用超 ' +
+            (capLv === 'crit' ? th('capCrit', 95) : th('capWarn', 85)) + '%' : '');
 
         return '<div class="mon-bay" data-st="' + esc(lv) + '" data-kind="' + esc(kind) +
           '" data-dev="' + esc(d.name) + '" data-clickable="1" tabindex="0"' +
@@ -1563,8 +1575,8 @@
      fnmonitor 的温度条用**渐变**填充（rampGrad + background-size 裁切），
      而不是纯色 —— 这里同样输出渐变，视觉更接近。 */
   function ovTempStops(kind) {
-    var w = (kind === 'disk') ? TH_DISK_TEMP_WARN : TH_TEMP_WARN;
-    var c = (kind === 'disk') ? TH_DISK_TEMP_CRIT : TH_TEMP_CRIT;
+    var w = (kind === 'disk') ? th('diskTempWarn', 50) : th('tempWarn', 60);
+    var c = (kind === 'disk') ? th('diskTempCrit', 58) : th('tempCrit', 75);
     var RG = 'var(--r-g)', RY = 'var(--r-y)';
     return (kind === 'disk')
       ? [[Math.min(20, w - 13), RG], [w - 12, RG], [w - 4, RY], [w, 'var(--warning)'], [c, 'var(--danger)']]
@@ -1657,7 +1669,7 @@
        ⚠️ v1.1.48：主页只显示重要部件（CPU / 主板 / 硬盘），
        其余传感器全部移到详情抽屉（用户要求），slice(0,6) 上限随之移除。 */
     var rows = '';
-    var marks = [TH_TEMP_WARN, TH_TEMP_CRIT];
+    var marks = [th('tempWarn', 60), th('tempCrit', 75)];
     var list = [];
     if (cpuTemp !== null && !isNaN(cpuTemp)) {
       list.push({ label: 'CPU', value: cpuTemp, marks: marks, kind: 'cpu' });
@@ -1690,7 +1702,7 @@
         var lbl = diskLbls[di] || String(x.name || '');
         if (sleeping) lbl += ' · 休眠';
         diskRows += ovThermoRow(lbl, Number(x.temp),
-          [TH_DISK_TEMP_WARN, TH_DISK_TEMP_CRIT], 'disk', sleeping ? 'faint' : '');
+          [th('diskTempWarn', 50), th('diskTempCrit', 58)], 'disk', sleeping ? 'faint' : '');
       }
     });
     if (!diskRows) {
@@ -2219,8 +2231,8 @@
       '</div>' +
       '<div class="mon-hero-right">' +
         '<div class="mon-hero-eyebrow">阈值</div>' +
-        '<div class="mon-hero-side">CPU ' + TH_TEMP_WARN + ' / ' + TH_TEMP_CRIT +
-        '℃ · 硬盘 ' + TH_DISK_TEMP_WARN + ' / ' + TH_DISK_TEMP_CRIT + '℃</div>' +
+        '<div class="mon-hero-side">CPU ' + th('tempWarn', 60) + ' / ' + th('tempCrit', 75) +
+        '℃ · 硬盘 ' + th('diskTempWarn', 50) + ' / ' + th('diskTempCrit', 58) + '℃</div>' +
       '</div>' +
     '</div>';
 
@@ -2296,10 +2308,10 @@
         var marks = [];
         var lv;
         if (p.kind === 'cpu') {
-          marks = [TH_TEMP_WARN, TH_TEMP_CRIT];
+          marks = [th('tempWarn', 60), th('tempCrit', 75)];
           lv = tempLevel(p.v);
         } else if (p.kind === 'disk') {
-          marks = [TH_DISK_TEMP_WARN, TH_DISK_TEMP_CRIT];
+          marks = [th('diskTempWarn', 50), th('diskTempCrit', 58)];
           lv = diskTempLevel(p.v);
         } else {
           marks = [p.max, p.crit].filter(function (v) {

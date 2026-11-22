@@ -247,6 +247,13 @@ body {
   display: block;
   stroke: currentColor;
 }
+/* v1.1.79：阈值配置「配置管理」按钮的齿轮图标（描边，与 ext-ico 同规格） */
+.btn.icon-btn .cfg-ico {
+  width: 15px;
+  height: 15px;
+  display: block;
+  stroke: currentColor;
+}
 .btn.icon-btn.spinning .upd-ico {
   animation: upd-spin 1s linear infinite;
 }
@@ -3145,6 +3152,138 @@ html.mon-scroll-lock body {
 .mon-drawer-body > .mon-cmp-charts { margin-top: 14px; }
 .mon-drawer-body > .mon-stack-wrap { margin-top: 14px; }
 .mon-drawer-body > .mon-cmp-sec { margin-top: 20px; }
+
+/* ==========================================================================
+   阈值门限配置抽屉（v1.1.79）
+   --------------------------------------------------------------------------
+   入口：顶栏「配置管理」按钮；内容由 thresholds-ui.js 渲染。
+   风格沿用电价面板（.tariff-*）的表单语汇，但信息量更大 ——
+   每个门限一行：名称 + 输入框 + 单位 + 默认值 + 说明。
+   ========================================================================== */
+
+.thr-intro {
+  font-size: .72rem;
+  line-height: 1.65;
+  color: var(--text-secondary);
+  padding: .95rem 1.05rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  margin-top: 1rem;
+}
+
+.thr-sec { margin-top: 1.25rem; }
+.thr-sec-t {
+  margin: 0 0 .5rem;
+  font-size: .78rem;
+  font-weight: 650;
+  letter-spacing: .02em;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: .45rem;
+}
+/* 分节标题左侧的一小段强调色 —— 与抽屉主体的蓝色主题呼应 */
+.thr-sec-t::before {
+  content: "";
+  width: 3px;
+  height: .9em;
+  border-radius: 2px;
+  background: var(--accent);
+  opacity: .75;
+}
+
+.thr-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.thr-row {
+  background: var(--bg-card);
+  padding: .62rem 1.05rem;
+}
+/* ⚠️ 布局：名称在左、控件在右，同一行。
+   label 用 flex:1 吃掉剩余宽度，控件组 flex:none 靠右。
+   ⚠️ 这里必须**禁止换行**（nowrap）—— 否则控件组会被挤到下一行，
+      实机截图里「%」「默认 85」全部掉到第二行去了。 */
+.thr-row-main {
+  display: flex;
+  align-items: center;
+  gap: .7rem;
+  flex-wrap: nowrap;
+}
+.thr-lbl {
+  font-size: .78rem;
+  color: var(--text-primary);
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.thr-ctl {
+  display: flex;
+  align-items: center;
+  gap: .45rem;
+  flex: none;
+}
+/* ⚠️ 全局 input[type="number"] 有 width:100%（优先级 0,1,0），
+   这里必须用更高优先级把宽度压回去，否则输入框撑满整行。 */
+.thr-row input.thr-input[type="number"] {
+  width: 72px;
+  flex: none;
+  height: 28px;
+  padding: 0 .5rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.thr-unit {
+  font-size: .72rem;
+  color: var(--text-secondary);
+  min-width: 1.2em;
+}
+.thr-def {
+  font-size: .68rem;
+  color: var(--text-secondary);
+  opacity: .75;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.thr-desc {
+  margin: .3rem 0 0;
+  font-size: .68rem;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.thr-actions {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  margin-top: 1.35rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+.thr-msg {
+  font-size: .74rem;
+  color: var(--text-secondary);
+}
+/* 保存成功时短暂高亮一下提示文字 */
+.thr-msg.ok { color: var(--success); }
+.thr-msg.err { color: var(--danger); }
+
+/* ⚠️ 窄抽屉 / 窄屏：控件组换到下一行，避免被挤压变形。
+   抽屉宽度是 min(520px, 100vw)，窄屏时只有几百像素宽。 */
+@media (max-width: 460px) {
+  .thr-row-main { flex-wrap: wrap; }
+  .thr-lbl { flex: 1 1 100%; }
+  .thr-ctl { flex: 1 1 100%; justify-content: flex-start; }
+}
 
 /* ---- 卡片容器（对齐 fnmonitor 的 .card.pad）---- */
 .mon-dw-card {

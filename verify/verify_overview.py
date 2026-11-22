@@ -199,8 +199,9 @@ def run_tests(page):
       r.capWarn = I.rampInk(85, 'cap');
       r.capCrit = I.rampInk(95, 'cap');
       r.tempOk = I.rampInk(40, 'temp');
-      r.tempWarn = I.rampInk(80, 'temp');
-      r.tempCrit = I.rampInk(90, 'temp');
+      // ⚠️ v1.1.79：温度门限统一为 60/75（原来 overview.js 写死 80/90）
+      r.tempWarn = I.rampInk(60, 'temp');
+      r.tempCrit = I.rampInk(75, 'temp');
       // rampAt：连续取色
       r.atLow = I.rampAt(5, 'cpu');
       r.atHigh = I.rampAt(95, 'cpu');
@@ -266,8 +267,11 @@ def run_tests(page):
            res['atHigh'] != '', res['atHigh'])
     eq('着色', '阈值 CPU 告警 85', res['th']['cpuWarn'], 85)
     eq('着色', '阈值 CPU 严重 95', res['th']['cpuCrit'], 95)
-    eq('着色', '阈值 温度告警 80', res['th']['tempWarn'], 80)
-    eq('着色', '阈值 温度严重 90', res['th']['tempCrit'], 90)
+    # ⚠️ v1.1.79：温度门限统一为 60/75（与 monitor.js 一致）。
+    #    原来 overview.js 写死 80/90（照抄 fnmonitor 默认值），
+    #    而 monitor.js 用 60/75 —— 同一台机器两处结论不同，已统一。
+    eq('着色', '阈值 温度告警 60', res['th']['tempWarn'], 60)
+    eq('着色', '阈值 温度严重 75', res['th']['tempCrit'], 75)
     truthy('着色', 'inkTo 幂等（同色不重复写）', res['inkStable'])
     # ⚠️ v1.1.71 防回归：色阶不得返回半透明背景色变量
     #    （--warning-soft 是 12% 透明度背景色，当文字色用 → 发灰发淡）
@@ -395,14 +399,14 @@ def run_tests(page):
               I.lvCPU(95), I.lvCPU(null)],
         mem: [I.lvMem(84.9), I.lvMem(85), I.lvMem(95)],
         cap: [I.lvCap(84.9), I.lvCap(85), I.lvCap(95)],
-        tmp: [I.lvTemp(79.9), I.lvTemp(80), I.lvTemp(90)],
+        tmp: [I.lvTemp(59.9), I.lvTemp(60), I.lvTemp(75)],
       };
     }""")
     eq('阈值', 'CPU 分级（fnmonitor 口径 85/95）', res['cpu'],
        ['', '', 'warn', 'warn', 'crit', ''])
     eq('阈值', '内存分级（85/95）', res['mem'], ['', 'warn', 'crit'])
     eq('阈值', '容量分级（85/95）', res['cap'], ['', 'warn', 'crit'])
-    eq('阈值', '温度分级（80/90）', res['tmp'], ['', 'warn', 'crit'])
+    eq('阈值', '温度分级（60/75，已与 monitor.js 统一）', res['tmp'], ['', 'warn', 'crit'])
 
     # ----------------------------------------------------------
     section('E 温度取值')

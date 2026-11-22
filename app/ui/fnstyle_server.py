@@ -462,6 +462,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_monitor()
         if p == "/api/monitor/history":
             return self._handle_monitor_history()
+        if p == "/api/monitor/thresholds":
+            if self.command == "POST":
+                return self._handle_thresholds_save()
+            return self._handle_thresholds_get()
         if p == "/api/power/stats":
             return self._handle_power_stats()
         if p == "/api/power/daily":
@@ -743,6 +747,56 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(400, {"success": False, "error": msg})
             return True
         data = pt.describe()
+        data["success"] = True
+        data["message"] = msg
+        self._send_json(200, data)
+        return True
+
+    def _handle_thresholds_get(self):
+        """读取系统监控阈值门限配置：GET /api/monitor/thresholds
+
+        ⚠️ v1.1.79：阈值门限从各文件的硬编码常量收拢到 monitor_thresholds.py，
+           这是唯一权威来源。本接口返回完整的门限清单（含默认值、区间、说明），
+           供前端配置抽屉渲染表单。
+        """
+        try:
+            import monitor_thresholds as mt
+        except Exception as e:
+            self._send_json(500, {"success": False, "error": str(e)})
+            return True
+        try:
+            data = mt.describe()
+            data["success"] = True
+            self._send_json(200, data)
+        except Exception as e:
+            self._send_json(500, {"success": False, "error": str(e)})
+        return True
+
+    def _handle_thresholds_save(self):
+        """保存系统监控阈值门限配置：POST /api/monitor/thresholds
+
+        body = {"cpuWarn": 80, "cpuCrit": 90, ...}（只提交要改的键即可）
+        ⚠️ v1.1.79：body 里也可以带 {"__reset": true} 表示恢复默认。
+        """
+        try:
+            import monitor_thresholds as mt
+        except Exception as e:
+            self._send_json(500, {"success": False, "error": str(e)})
+            return True
+
+        body = self._read_json_body()
+        if not isinstance(body, dict):
+            self._send_json(400, {"success": False, "error": "请求体格式错误"})
+            return True
+
+        if body.get("__reset"):
+            ok, msg = mt.reset_config()
+        else:
+            ok, msg = mt.save_config(body)
+        if not ok:
+            self._send_json(400, {"success": False, "error": msg})
+            return True
+        data = mt.describe()
         data["success"] = True
         data["message"] = msg
         self._send_json(200, data)

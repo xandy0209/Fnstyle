@@ -35,7 +35,7 @@
     </div>
     <!-- 顶栏右侧：当前版本号 + 检查更新入口 + 新页面打开 -->
     <div class="topbar-right" id="topbarUpdate">
-      <span class="ver-pill" id="verPill" title="当前版本">v1.1.78</span>
+      <span class="ver-pill" id="verPill" title="当前版本">v1.1.79</span>
       <span class="ub-status" id="tbUpdateStatus"></span>
       <button class="btn sm icon-btn" id="tbCheckUpdate" type="button" title="检查更新" aria-label="检查更新">
         <svg class="upd-ico" viewBox="0 0 24 24" aria-hidden="true">
@@ -47,6 +47,17 @@
              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M7 17 17 7"/>
           <path d="M9 7h8v8"/>
+        </svg>
+      </button>
+      <!-- v1.1.79：系统监控阈值门限「配置管理」入口。
+           抽屉内容见 thresholds-ui.js；门限清单来自
+           GET api/monitor/thresholds（后端 monitor_thresholds.py 是唯一权威来源）。 -->
+      <button class="btn sm icon-btn" id="tbOpenThresholds" type="button"
+              title="配置管理" aria-label="配置管理">
+        <svg class="cfg-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
         </svg>
       </button>
     </div>
@@ -435,7 +446,30 @@
   </aside>
 </div>
 
+<!-- ================== 阈值门限配置抽屉（右侧滑出） ==================
+     v1.1.79：入口是顶栏的「配置管理」按钮（#tbOpenThresholds）。
+     内容由 thresholds-ui.js 渲染（表单清单来自 GET api/monitor/thresholds）。 -->
+<div class="mon-drawer-overlay" id="monThresholdOverlay" hidden>
+  <aside class="mon-drawer" role="dialog" aria-modal="true"
+         aria-labelledby="monThresholdTitle">
+    <header class="mon-drawer-head">
+      <div class="mon-drawer-head-main">
+        <h3 id="monThresholdTitle"><span class="mon-drawer-ico" aria-hidden="true">⚙️</span>配置管理</h3>
+        <p class="mon-drawer-sub" id="monThresholdSub">系统监控阈值门限</p>
+      </div>
+      <button type="button" class="mon-drawer-close" id="btnCloseMonThreshold"
+              title="关闭（Esc）" aria-label="关闭">✕</button>
+    </header>
+    <div class="mon-drawer-body" id="monThresholdBody"></div>
+  </aside>
+</div>
+
 <script src="static/js/app.js"></script>
+<!-- ⚠️ v1.1.79：thresholds.js 必须**先于** monitor.js / compute.js / overview.js
+     加载 —— 后三者要在顶层取 TH（阈值 getter），thresholds.js 负责在
+     window 上挂 window.FnStyleThresholds。即使顺序反了也不会崩
+     （本文件加载时会立刻塞一个带默认值的桩），但会先用默认值再更新。 -->
+<script src="static/js/thresholds.js"></script>
 <script src="static/js/monitor.js"></script>
 <script src="static/js/chart.js"></script>
 <script src="static/js/compute.js"></script>
@@ -444,6 +478,10 @@
      window.FnStyleOverview.render()，而脚本是顺序执行的，
      反过来会报「概览模块未加载」。 -->
 <script src="static/js/overview.js"></script>
+<!-- ⚠️ v1.1.79：阈值配置抽屉 UI —— 必须放在 thresholds.js 之后
+     （它要用 window.FnStyleThresholds），但可放在 overview.js 之后，
+     因为它只在用户点击顶栏按钮时才工作。 -->
+<script src="static/js/thresholds-ui.js"></script>
 
 </body>
 </html>

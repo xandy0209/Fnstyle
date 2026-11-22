@@ -83,28 +83,57 @@
     cpu: function () { return RAMP.pct(TH.cpuWarn, TH.cpuCrit); },
     mem: function () { return RAMP.pct(TH.memWarn, TH.memCrit); },
     cap: function () { return RAMP.pct(TH.capWarn, TH.capCrit); },
-    gen: function () { return RAMP.pct(70, 90); },
-    /* 温度：起点 30℃ 即为正常段末尾，70℃ 起橙，85℃ 起红 */
+    /* v1.1.79：通用色阶改用 barWarn / barCrit（原来写死 70/90） */
+    gen: function () { return RAMP.pct(th('barWarn', 70), th('barCrit', 90)); },
+    /* 温度：30℃ 正常 → tempWarn 橙 → tempCrit 红
+       ⚠️ v1.1.79：中间档位置改为**按 warn 门限的比例**推导，
+          不再用写死的绝对偏移（-26 / -25 / -10）。
+          为什么改：原来 tempWarn=80 时偏移量恰好合适，
+          但统一到 60/75 后「w-25 = 35℃」就成了蓝色段末尾 ——
+          40℃ 的正常 CPU 温度被染成中间色（实测 rampInk(40) 变米色）。
+          改成比例后：warn 前 3/4 为正常段、warn 前 1/5 起进入过渡色，
+          与百分比型色阶（RAMP.pct 的 0.5 / 0.8 倍）同一套语义。 */
     temp: function () {
       var w = TH.tempWarn, c = TH.tempCrit;
+      var base = Math.min(45, w * 0.75);     /* 正常段末尾 */
       return [
-        [Math.min(30, w - 26), 'var(--accent)'],
-        [w - 25, 'var(--accent)'],
-        [w - 10, 'var(--ramp-mid)'],
+        [base, 'var(--accent)'],
+        [Math.max(base, w * 0.85), 'var(--accent)'],
+        [Math.max(base, w * 0.92), 'var(--ramp-mid)'],
         [w, 'var(--warning)'],
-        [c, 'var(--danger)']
+        [Math.max(c, w), 'var(--danger)']
       ];
     }
   };
 
-  /* 阈值（对齐 fnmonitor 的 TH_SPEC 默认值：
-     cpuWarn 85 / cpuCrit 95 / memWarn 85 / memCrit 95 /
-     capWarn 85 / capCrit 95 / tempWarn 80 / tempCrit 90） */
+  /* 阈值（v1.1.79：改为从统一阈值配置读取）
+     ⚠️ 原来这里是**普通对象** `var TH = { cpuWarn: 85, ... }`，
+        脚本加载时就固化了 —— 后端配置异步回来后概览卡仍按旧门限判等级，
+        永远不生效。现在改成 **getter 属性**：每次读 TH.cpuWarn 都现取当前值。
+
+     ⚠️ 口径分歧（v1.1.79 一并修正）：
+        这里原本写 tempWarn: 80 / tempCrit: 90（照抄 fnmonitor 默认值），
+        而 monitor.js 用的是 60 / 75（真正在用的家用口径）——
+        同一台机器，概览卡按 80℃ 才变黄、主板板块按 60℃ 就变黄。
+        现在统一到 monitor.js 的 60 / 75（即后端 SPEC 的默认值）。 */
+  var THRESHOLDS = window.FnStyleThresholds || null;
+
+  function th(key, fallback) {
+    if (THRESHOLDS && typeof THRESHOLDS.get === 'function') {
+      return THRESHOLDS.get(key, fallback);
+    }
+    return fallback;
+  }
+
   var TH = {
-    cpuWarn: 85, cpuCrit: 95,
-    memWarn: 85, memCrit: 95,
-    capWarn: 85, capCrit: 95,
-    tempWarn: 80, tempCrit: 90
+    get cpuWarn() { return th('cpuWarn', 85); },
+    get cpuCrit() { return th('cpuCrit', 95); },
+    get memWarn() { return th('memWarn', 85); },
+    get memCrit() { return th('memCrit', 95); },
+    get capWarn() { return th('capWarn', 85); },
+    get capCrit() { return th('capCrit', 95); },
+    get tempWarn() { return th('tempWarn', 60); },
+    get tempCrit() { return th('tempCrit', 75); }
   };
 
   function rampStops(k) {

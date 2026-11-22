@@ -24,7 +24,7 @@ set -uo pipefail
 # ------------------------- 版本与更新检查 -------------------------
 # ⚠️ 必须与 manifest 的 version 保持一致（自动更新靠它判断「是否比线上新」）。
 # GitHub 发布新版本时，两处都要改：manifest 的 version + 本常量。
-APP_VERSION="1.1.78"
+APP_VERSION="1.1.79"
 
 # ----------------------------- 路径配置 -----------------------------
 # APP_ROOT 是 fnOS 安装后创建的标准软链：
@@ -2341,6 +2341,38 @@ PY
             http_json "503 Service Unavailable" '{"success":false,"error":"监控服务未就绪，请确认应用服务已启动"}'
         fi
         rm -f "$MH_FILE"
+        exit 0
+        ;;
+
+    /api/monitor/thresholds)
+        # 系统监控阈值门限配置：GET 读 / POST 写
+        # 同样转发给本机 9910 —— 配置文件的读写在采集服务那边（要 root 才能写 var 目录）。
+        TH_FILE="${TMPDIR:-/tmp}/fnstyle_th.$$"
+        if [ "$REQ_METHOD" = "POST" ]; then
+            TH_BODY="$(read_body)"
+            if [ -z "$TH_BODY" ]; then
+                http_json "400 Bad Request" '{"success":false,"error":"请求体为空"}'
+                rm -f "$TH_FILE"
+                exit 0
+            fi
+            printf '%s' "$TH_BODY" > "$TH_FILE.req"
+            if curl -s --max-time 15 -X POST \
+                   -H "Content-Type: application/json" \
+                   --data-binary "@$TH_FILE.req" \
+                   -o "$TH_FILE" "http://127.0.0.1:9910/api/monitor/thresholds" 2>/dev/null && [ -s "$TH_FILE" ]; then
+                http_json_file_nobom "200 OK" "$TH_FILE"
+            else
+                http_json "503 Service Unavailable" '{"success":false,"error":"监控服务未就绪，请确认应用服务已启动"}'
+            fi
+            rm -f "$TH_FILE" "$TH_FILE.req"
+        else
+            if curl -s --max-time 15 -o "$TH_FILE" "http://127.0.0.1:9910/api/monitor/thresholds" 2>/dev/null && [ -s "$TH_FILE" ]; then
+                http_json_file_nobom "200 OK" "$TH_FILE"
+            else
+                http_json "503 Service Unavailable" '{"success":false,"error":"监控服务未就绪，请确认应用服务已启动"}'
+            fi
+            rm -f "$TH_FILE"
+        fi
         exit 0
         ;;
 

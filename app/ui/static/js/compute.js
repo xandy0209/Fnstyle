@@ -89,10 +89,33 @@
   /* ---------------------------------------------------------------------
      色阶（对齐 fnmonitor 的 rampAt / rampInk）
      —— 用 CSS 变量做插值，避免在 JS 里硬编码色值。
-     --------------------------------------------------------------------- */
+
+     ⚠️ v1.1.79：色阶档位改为从统一阈值配置读取。
+        这里的 70/90 是**显示色阶**（进度条由绿转橙/转红的位置），
+        对应阈值配置里的 barWarn / barCrit；
+        而 cpuWarn / cpuCrit 是**告警门限**（判「繁忙 / 高负载」文案），
+        两者语义不同，不要混用。
+        ⚠️ 必须走函数调用 —— 常量快照会导致配置异步回来后不生效。 */
+  var THRESHOLDS = window.FnStyleThresholds || null;
+
+  function th(key, fallback) {
+    if (THRESHOLDS && typeof THRESHOLDS.get === 'function') {
+      return THRESHOLDS.get(key, fallback);
+    }
+    return fallback;
+  }
+
+  /* 取某个对象的色阶档位：cpu → cpuWarn/cpuCrit，mem → memWarn/memCrit */
+  function rampStopsFor(kind) {
+    if (kind === 'mem') return [th('memWarn', 85), th('memCrit', 95)];
+    if (kind === 'cpu') return [th('cpuWarn', 85), th('cpuCrit', 95)];
+    /* 其余（gen 等）用通用进度条色阶 */
+    return [th('barWarn', 70), th('barCrit', 90)];
+  }
+
   function rampAt(v, kind) {
     var pct = Math.max(0, Math.min(100, Number(v) || 0));
-    var stops = kind === 'mem' ? [70, 90] : kind === 'cpu' ? [70, 90] : [70, 90];
+    var stops = rampStopsFor(kind);
     var warn = stops[0];
     var crit = stops[1];
     if (pct <= warn * 0.5) return 'var(--success)';
@@ -104,9 +127,13 @@
 
   function rampInk(v, kind) {
     var pct = Math.max(0, Math.min(100, Number(v) || 0));
-    if (pct >= 90) return 'var(--danger)';
-    if (pct >= 70) return 'var(--warning)';
-    if (pct >= 35) return 'color-mix(in srgb, var(--success) 55%, var(--warning))';
+    var stops = rampStopsFor(kind);
+    var warn = stops[0];
+    var crit = stops[1];
+    if (pct >= crit) return 'var(--danger)';
+    if (pct >= warn) return 'var(--warning)';
+    /* 绿 → 黄 的中段：与 rampAt 的第一段保持同一口径（warn 的一半处） */
+    if (pct >= warn * 0.5) return 'color-mix(in srgb, var(--success) 55%, var(--warning))';
     return 'var(--success)';
   }
 
@@ -563,9 +590,8 @@
         后端会附加当前实时值兜底，曲线不会空着。
      --------------------------------------------------------------------- */
 
-  /* 阈值：与 fnmonitor 的 TH_SPEC 默认值一致（cpuWarn 85 / cpuCrit 95） */
-  var CPU_WARN = 85;
-  var CPU_CRIT = 95;
+  /* 阈值：与 fnmonitor 的 TH_SPEC 默认值一致（cpuWarn 85 / cpuCrit 95）
+     ⚠️ v1.1.79：改为从统一阈值配置读取（函数调用，不能做成常量快照）。 */
 
   /* 图表定义（与 fnmonitor 的 TREND_DEFS[0] 及 SHEETS.cpu 对应） */
   var CPU_CHARTS = [
@@ -576,7 +602,7 @@
       yTick: function (v) { return v + '%'; },
       peak: true,
       thresholds: function () {
-        return [{ v: CPU_WARN, lv: 'warn' }, { v: CPU_CRIT, lv: 'crit' }];
+        return [{ v: th('cpuWarn', 85), lv: 'warn' }, { v: th('cpuCrit', 95), lv: 'crit' }];
       },
       series: [{
         m: 'cpu', label: 'CPU', color: 'var(--spark-1)',
@@ -627,7 +653,7 @@
       yMin: 0,
       yTick: function (v) { return v + '°'; },
       thresholds: function () {
-        return [{ v: 60, lv: 'warn' }, { v: 75, lv: 'crit' }];
+        return [{ v: th('tempWarn', 60), lv: 'warn' }, { v: th('tempCrit', 75), lv: 'crit' }];
       },
       series: [
         {
