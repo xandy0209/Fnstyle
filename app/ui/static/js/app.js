@@ -214,6 +214,17 @@
   }
 
   /* ------------------------- 个性化设置渲染 ------------------------- */
+  /* 滑块右侧数值标签的**唯一**更新出口。
+     ⚠️ v1.1.82：原先这条逻辑散在三处（初始渲染 / 拖动实时 / 点「默认」回填），
+        其中「默认」那一处漏了单位 → 面板首次显示「60%」，
+        点一次「默认」就变成「60」，看着像单位被吃掉。
+        三处同源抽到这里，以后改格式只改一处。 */
+  function setRangeLabel(key, f, value) {
+    var v = $('#v_' + key);
+    if (!v) return;
+    v.textContent = value + (f && f.unit ? f.unit : '');
+  }
+
   function renderPersonalize(cfg) {
     var body = $('#personalizeBody');
     if (!body) return;
@@ -294,8 +305,7 @@
                   '" min="' + f.min + '" max="' + f.max + '" step="' + f.step +
                   '" value="' + esc(val === '' ? DEFAULTS[f.key] : val) + '">';
           html += '<span class="range-val" id="v_' + f.key + '">' +
-                  esc(val === '' ? DEFAULTS[f.key] : val) + (f.unit || '') + '</span>';
-          html += '</div>';
+                  esc(val === '' ? DEFAULTS[f.key] : val) + (f.unit || '') + '</span>';          html += '</div>';
           html += '<button class="btn sm" data-default="' + f.key + '" title="恢复默认值">默认</button>';
 
         } else if (f.type === 'media') {
@@ -327,8 +337,7 @@
       el.addEventListener('input', function () {
         var key = el.getAttribute('data-key');
         var f = FIELDS.filter(function (x) { return x.key === key; })[0];
-        var v = $('#v_' + key);
-        if (v) v.textContent = el.value + (f && f.unit ? f.unit : '');
+        setRangeLabel(key, f, el.value);
       });
     });
 
@@ -379,8 +388,13 @@
         var def = DEFAULTS[key] === undefined ? '' : DEFAULTS[key];
         input.value = def;
         if (input.type === 'range') {
-          var v = $('#v_' + key);
-          if (v) v.textContent = input.value;
+          /* ⚠️ v1.1.82：这里原来漏了单位 —— 初始渲染（render 里）
+             和拖动实时显示（input 事件）都带 f.unit，
+             只有「默认」按钮回填这一条路径丢了。
+             症状：面板首次打开显示「60%」，点一次「默认」就变成「60」，
+             看起来像单位被吃掉了。
+             现在三处都走 setRangeLabel()，同源。 */
+          setRangeLabel(key, f, input.value);
         }
         /* 上传过图后 state.preview 缓存的 CGI 预览地址优先级高于配置路径，
            不清掉的话配置已恢复出厂、缩略图却还停在上一次上传的图上。 */
@@ -1536,7 +1550,7 @@
   var AUTOINSTALL_KEY = 'fnstyle_autoinstall_update_v1';
   /* 当前版本号：与 manifest 的 version 保持一致，发版时同步修改。
      顶栏版本胶囊与「发现新版本」提示都基于它展示。 */
-  var APP_VERSION = '1.1.81';
+  var APP_VERSION = '1.1.82';
 
   /* 顶栏右侧更新控件：版本胶囊 + 检查/下载按钮 + 状态文字。
      reason：error 态下展示在状态文字与悬停提示里的诊断摘要（可省略）。

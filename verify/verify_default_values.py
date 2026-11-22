@@ -250,6 +250,25 @@ console.log(JSON.stringify({
              mm is not None and int(mm.group(1)) <= 8 <= int(mm.group(2)),
              "范围=%s..%s" % (mm.group(1) if mm else "?", mm.group(2) if mm else "?"))
 
+    # ---- F 段：滑块数值标签的三条路径必须同源（v1.1.82 新增）----
+    # 背景：v1.1.81 复查时发现「默认」按钮回填漏了单位 ——
+    #      面板首次打开显示「60%」，点一次「默认」就变成「60」。
+    #      根因：标签更新逻辑散在三处（初始渲染 / 拖动实时 / 默认回填），
+    #      其中一处漏了 f.unit。
+    # 现在三处统一走 setRangeLabel() → 静态断言「不再有裸 textContent 赋值」。
+    ck = Checker("F. 滑块数值标签三路径同源")
+    appjs_code = re.sub(r"/\*.*?\*/", " ", appjs, flags=re.S)
+    appjs_code = re.sub(r"//[^\n]*", " ", appjs_code)
+    ck.check("app.js 已定义 setRangeLabel() 统一出口",
+             "function setRangeLabel(" in appjs_code)
+    n_calls = len(re.findall(r"setRangeLabel\(", appjs_code))
+    ck.check("setRangeLabel() 调用点 ≥ 2（拖动实时 + 默认回填）",
+             n_calls >= 3, "调用/定义共 %d 处" % n_calls)
+    # 不应再有「漏单位」的裸赋值：v.textContent = xxx.value（不带 unit）
+    naked = re.findall(r"\.textContent\s*=\s*[\w\.]+\.value\s*;", appjs_code)
+    ck.check("没有漏单位的裸 textContent 赋值", not naked,
+             "发现 %d 处：%s" % (len(naked), naked[:3]))
+
     return ck.summary()
 
 

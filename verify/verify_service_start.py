@@ -41,6 +41,7 @@ CGI = os.path.join(ROOT, "app", "ui", "index.cgi")
 MANIFEST = os.path.join(ROOT, "manifest")
 APPJS = os.path.join(ROOT, "app", "ui", "static", "js", "app.js")
 MONCOL = os.path.join(ROOT, "app", "ui", "monitor_collect.py")
+INDEXHTML = os.path.join(ROOT, "app", "ui", "index.html")
 
 _ok = 0
 _fail = 0
@@ -69,6 +70,7 @@ def main():
     manifest = read(MANIFEST)
     appjs = read(APPJS)
     moncol = read(MONCOL)
+    indexhtml = read(INDEXHTML)
 
     # ---------------- A. start 必须强制 root ----------------
     print("\n[A] cmd/main start 的 root 强制")
@@ -190,10 +192,15 @@ def main():
     ver_js = m_js.group(1) if m_js else ""
     m_col = re.search(r'COLLECT_VERSION\s*=\s*"([^"]+)"', moncol)
     ver_col = m_col.group(1) if m_col else ""
-    check("manifest / index.cgi / app.js / monitor_collect.py 版本号一致",
-          ver_manifest == ver_cgi == ver_js == ver_col,
-          "manifest=%s cgi=%s js=%s col=%s"
-          % (ver_manifest, ver_cgi, ver_js, ver_col))
+    # ⚠️ v1.1.82：补上 index.html 的 verPill —— 之前这条断言只覆盖 4 处，
+    #    漏了页面上的版本徽标，导致「index.html 显示 v1.1.82 但 /api/version
+    #    报 1.1.81」这种不一致能溜过验证。
+    m_pill = re.search(r'id="verPill"[^>]*>\s*v?([0-9][0-9.]*)', indexhtml)
+    ver_pill = m_pill.group(1) if m_pill else ""
+    check("manifest / index.cgi / app.js / monitor_collect.py / index.html 版本号一致",
+          ver_manifest == ver_cgi == ver_js == ver_col == ver_pill,
+          "manifest=%s cgi=%s js=%s col=%s pill=%s"
+          % (ver_manifest, ver_cgi, ver_js, ver_col, ver_pill))
 
     # ---------------- 汇总 ----------------
     print("\n" + "=" * 62)

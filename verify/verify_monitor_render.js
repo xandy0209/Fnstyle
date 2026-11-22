@@ -307,8 +307,8 @@ const patched2 = patched.replace(
   '  window.__diskTempLevel = diskTempLevel;\n' +
   '  window.__tempExceed = tempExceed;\n' +
   '  window.__tempLevel = tempLevel;\n' +
-  '  window.__TH_DISK_TEMP_WARN = TH_DISK_TEMP_WARN;\n' +
-  '  window.__TH_DISK_TEMP_CRIT = TH_DISK_TEMP_CRIT;\n' +
+  '  window.__th = th;\n' +
+
   '  window.__feedDiskBuf = feedDiskBuf;\n' +
   '  window.__monoPath = monoPath;\n' +
   '  window.__drawSpark = drawSpark;\n' +
@@ -356,8 +356,13 @@ const dwKvRow = global.__dwKvRow;
 const diskTempLevel = global.__diskTempLevel;
 const tempExceed = global.__tempExceed;
 const tempLevel = global.__tempLevel;
-const TH_DISK_TEMP_WARN = global.__TH_DISK_TEMP_WARN;
-const TH_DISK_TEMP_CRIT = global.__TH_DISK_TEMP_CRIT;
+/* ⚠️ v1.1.82：硬盘温度阈值不再是「模块级常量」——
+   v1.1.79 起改为后端可配置（monitor_thresholds.py），
+   monitor.js 内部统一走 th(key, fallback) 函数调用。
+   → 这里导出 th 函数本身，断言「未配置时的回退值」是否仍是 fnmonitor 的 50/58℃。
+   （旧写法直接引用 TH_DISK_TEMP_WARN 常量，v1.1.79 后该常量已不存在
+     ⇒ 整个脚本 ReferenceError 崩掉，等于这个回归脚本已经失修很久了。） */
+const th = global.__th;
 const setLastData = global.__setLastData;
 const feedDiskBuf = global.__feedDiskBuf;
 const monoPath = global.__monoPath;
@@ -748,10 +753,21 @@ if (html) {
   console.log('\n--- 硬盘温度阈值（对齐 fnmonitor 50/58℃）---');
   let bad = 0;
 
-  /* 1. 阈值常量必须是 fnmonitor 的 diskTempWarn / diskTempCrit */
+  /* 1. 阈值回退值必须是 fnmonitor 的 diskTempWarn / diskTempCrit
+     ⚠️ v1.1.82：这里断言的是**生产代码的调用点**，
+        不是 th() 自己的返回值 ——
+        传 fallback 进去再断言等于恒真（fallback 被原样返回），
+        测不出「生产代码用的是不是 50/58」。
+        正确做法：查 monitor.js 源码里确实写着 th('diskTempWarn', 50)。 */
+  const monSrcForTh = fs.readFileSync(
+    path.join(__dirname, '..', 'app', 'ui', 'static', 'js', 'monitor.js'), 'utf8');
   const thRules = [
-    ['警告阈值 = 50℃（fnmonitor diskTempWarn）', TH_DISK_TEMP_WARN === 50],
-    ['严重阈值 = 58℃（fnmonitor diskTempCrit）', TH_DISK_TEMP_CRIT === 58],
+    ['警告阈值回退 = 50℃（fnmonitor diskTempWarn）',
+      /th\('diskTempWarn',\s*50\)/.test(monSrcForTh)],
+    ['严重阈值回退 = 58℃（fnmonitor diskTempCrit）',
+      /th\('diskTempCrit',\s*58\)/.test(monSrcForTh)],
+    ['th() 无配置时返回 fallback（不崩）',
+      typeof th('diskTempWarn', 50) === 'number' && th('diskTempWarn', 50) === 50],
   ];
   thRules.forEach(function ([label, ok]) {
     console.log((ok ? '  ✓ ' : '  ✗ ') + label);
@@ -1901,9 +1917,12 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     ['compute.js 定义两张趋势图', /var CPU_CHARTS = \[[\s\S]{0,600}key: 'cpu'[\s\S]{0,600}key: 'load1'/],
     ['CPU 图 0~100 固定刻度', /key: 'cpu'[\s\S]{0,200}yMin: 0, yMax: 100/],
     ['CPU 图带峰值标注', /key: 'cpu'[\s\S]{0,300}peak: true/],
-    ['CPU 图阈值 85/95', /thresholds: function[\s\S]{0,200}CPU_WARN[\s\S]{0,120}CPU_CRIT/],
-    ['CPU_WARN = 85', /var CPU_WARN = 85/],
-    ['CPU_CRIT = 95', /var CPU_CRIT = 95/],
+    /* ⚠️ v1.1.82：阈值不再是模块级常量（v1.1.79 起改为后端可配置），
+       统一走 th(key, fallback) 函数调用。
+       断言要跟着改 —— 查「调用了 th('cpuWarn', 85)」而不是「var CPU_WARN = 85」。 */
+    ['CPU 图阈值 85/95', /thresholds: function[\s\S]{0,200}cpuWarn[\s\S]{0,120}cpuCrit/],
+    ['CPU_WARN 回退 = 85', /th\('cpuWarn',\s*85\)/],
+    ['CPU_CRIT 回退 = 95', /th\('cpuCrit',\s*95\)/],
     ['负载图起点为 0', /key: 'load1'[\s\S]{0,200}yMin: 0/],
     ['抽屉插入趋势图容器', /secHtml\('每核使用率'\) \+ cores \+[\s\S]{0,80}chartsHtml\('cpu'\)/],
     ['initCharts 创建 LineChart 实例', /new window\.FnStyleChart\.LineChart\(host/],
@@ -3083,9 +3102,11 @@ renderCase('缺失字段的盘', { storage: { available: true, volumes: [], disk
     ['窄屏降为 2 列（fnmonitor 640px 断点）',
       /@media \(max-width: 760px\)[\s\S]*?\.mon-cells \{[^}]*repeat\(2,\s*minmax\(0,\s*1fr\)\)/.test(cssSrc44)],
     /* ---- ② hero 阈值单行 ---- */
+    /* ⚠️ v1.1.82：TH_TEMP_WARN/CRIT 常量已随 v1.1.79 的阈值配置化改为
+       th('tempWarn', 60) / th('tempCrit', 75) 调用 → 断言同步更新。 */
     ['hero 阈值单行（无 <br>）',
-      /mon-hero-side">CPU ' \+ TH_TEMP_WARN \+ ' \/ ' \+ TH_TEMP_CRIT \+[\s\S]{0,60}'℃ · 硬盘 '/.test(monSrc44) &&
-      !/TH_TEMP_CRIT \+ '℃<br>'/.test(monSrc44)],
+      /mon-hero-side">CPU ' \+ th\('tempWarn',\s*60\) \+ ' \/ ' \+ th\('tempCrit',\s*75\) \+[\s\S]{0,60}'℃ · 硬盘 '/.test(monSrc44) &&
+      !/th\('tempCrit',\s*75\) \+ '℃<br>'/.test(monSrc44)],
     ['hero eyebrow 文案为「CPU」（fnmonitor 原文）',
       /<div class="mon-hero-eyebrow">CPU<\/div>/.test(monSrc44)],
     /* ---- ③ hero 大数字 --dm-h 驱动 ---- */
