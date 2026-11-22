@@ -590,9 +590,19 @@ def run_tests(page):
                          .getAttribute('data-sheet'),
         netHasSheet: !!host.querySelector('[data-ov="net"]')
                         .getAttribute('data-sheet'),
-        cpuTap: host.querySelector('[data-ov="cpu"]').classList.contains('ov-tap'),
+        /* ⚠️ v1.1.78：存储卡走**独立通道** data-ov-action（复用硬盘详情抽屉），
+           绝不能带 data-sheet —— 否则会掉进 openCompute 的 else 兜底
+           误开「处理器」抽屉。 */
+        diskAction: host.querySelector('[data-ov="disk"]')
+                      .getAttribute('data-ov-action'),
+        netAction: host.querySelector('[data-ov="net"]')
+                     .getAttribute('data-ov-action'),
         diskTap: host.querySelector('[data-ov="disk"]').classList.contains('ov-tap'),
         netTap: host.querySelector('[data-ov="net"]').classList.contains('ov-tap'),
+        cpuTap: host.querySelector('[data-ov="cpu"]').classList.contains('ov-tap'),
+        diskRole: host.querySelector('[data-ov="disk"]').getAttribute('role'),
+        diskTabIndex: host.querySelector('[data-ov="disk"]').getAttribute('tabindex'),
+        diskAria: host.querySelector('[data-ov="disk"]').getAttribute('aria-label'),
         cardRect: (() => {
           const r = host.querySelector('[data-ov="cpu"]').getBoundingClientRect();
           return { w: Math.round(r.width), h: Math.round(r.height) };
@@ -1234,20 +1244,28 @@ def run_tests(page):
     # ----------------------------------------------------------
     section('I 可点性白名单')
     # ----------------------------------------------------------
+    # ⚠️ v1.1.78：存储卡改为可点，但走**独立通道** data-ov-action
+    #   （复用已有的硬盘详情抽屉），而不是 data-sheet。
     eq('白名单', '带 data-sheet 的卡片 = 4', res['sheetN'], 4)
     eq('白名单', '带 data-sheet 的是 cpu/mem/pwr/temp',
        res['sheets'], ['cpu', 'mem', 'pwr', 'temp'])
     bad = []
     if res['diskHasSheet']:
-        bad.append('存储卡带 data-sheet')
+        bad.append('存储卡带 data-sheet（会误开处理器抽屉）')
     if res['netHasSheet']:
         bad.append('网络卡带 data-sheet')
-    if res['diskTap']:
-        bad.append('存储卡带 ov-tap')
+    if res['netAction']:
+        bad.append('网络卡带 data-ov-action')
     if res['netTap']:
         bad.append('网络卡带 ov-tap')
-    eq('白名单', '存储/网络卡无 data-sheet 且无 ov-tap', bad, [])
+    eq('白名单', '存储卡无 data-sheet；网络卡两种通道都无', bad, [])
     truthy('白名单', '处理器卡有 ov-tap', res['cpuTap'])
+    # --- 存储卡：独立动作通道 ---
+    eq('白名单', '存储卡 data-ov-action = disk', res['diskAction'], 'disk')
+    truthy('白名单', '存储卡有 ov-tap（可点样式）', res['diskTap'])
+    eq('白名单', '存储卡 role=button', res['diskRole'], 'button')
+    eq('白名单', '存储卡 tabindex=0（键盘可达）', res['diskTabIndex'], '0')
+    truthy('白名单', '存储卡有 aria-label', bool(res['diskAria']))
 
     # ----------------------------------------------------------
     section('J 告警态')

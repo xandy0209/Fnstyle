@@ -1,5 +1,5 @@
 appname               = fnstyle
-version           = 1.1.77
+version           = 1.1.78
 display_name          = FnStyle
 desc                  = 集中管理飞牛个性化设置与丰富主题库：网站标题、登录框、LOGO、壁纸、毛玻璃、任务栏等独立配置，内置多源主题库，支持一键应用到 fnOS 系统，卸载后自动还原系统默认样式。
 platform              = all
@@ -15,5 +15,5 @@ desktop_applaunchname = fnstyle.main
 service_port          = 9910
 checkport             = false
 ctl_stop              = true
-changelog         = 1.1.77：概览卡片右侧环形图**再下移 10px**（老板第二次反馈）。【改动】.ov-m-gauge top: calc(.75rem + 22px) → calc(.75rem + 32px)，环形图相对卡顶 35px → **45px**（基线链：v1.1.74 的 25 → v1.1.76 第一次 35 → 本次 45）。【为什么数字与副标题这次**不跟随**下移】① 老板只要求动环形图；② 空间不允许：卡片高 163px，仪表 84px，副标题底在 121px、底部趋势区从 124px 起；若副标题也下移 10px → 底到 131px，会压到底部趋势线 7px，比环形图更糟；③ 而环形图是右侧独立列（副标题有 padding-right: 92px 让开），下移后只是靠近趋势区，视觉上仍是镂空圆环、不遮挡趋势线。【代价】数字中心与仪表圆心的 diff 从 0 变为 **10px** —— v1.1.73 老板定的「数字与环形图水平居中」不再成立，这是老板明确要求（只动环形图）的取舍，相关断言同步放宽至 ≤ 12px。【实测】卡片高度仍 163px、六卡完全等高、数字相对卡顶仍 61px、副标题仍 103px、数字与仪表圆心 diff = 10px。【测试】verify/verify_overview.py 283 → **287/287**（新增 4 项：二次下移位置/数字未跟随/副标题未跟随/卡高不变/diff=10px）；verify/probe_overview.py 实机探针断言同步更新（环形图 45px、diff ≤ 12px）；既有全套回归全绿。
-checksum              = eceb13214d17d002133646c010c56881
+changelog         = 1.1.78：概览「存储」卡片**加点击事件**（老板反馈「存储卡片没有点击事件，请添加」）。【关键决策 · 复用现成抽屉】老板截图指出「这不是存储的抽屉吗」—— 硬盘详情抽屉（monDrawerOverlay：顶部盘位下拉 / 容量条 / SMART 明细 / 实时读写曲线）**早就存在**（存储板块点盘位卡片即打开它），所以**不另造**新抽屉，直接复用。【实现】① app/ui/static/js/overview.js：存储卡新增 `data-ov-action="disk"` + `ov-tap` + `role="button"` + `tabindex="0"` + aria-label；② app/ui/static/js/monitor.js：新增 `bindOverviewAction()`（**document 级事件委托** —— 概览区是懒加载的，直接给元素绑监听会漏掉后渲染的卡片）+ `openOverviewAction('disk')` + `pickOverviewDiskDev()`。【⚠️ 关键坑 · 绝不能给存储卡加 data-sheet】monitor.js 的 bindSheetDrawer 会把任何 [data-sheet] 交给 compute.js 的 openCompute，而 openCompute 只有 cpu/mem/temp/power 四个分支，storage 会掉进 else 兜底 → **误开「处理器」抽屉**（张冠李戴）。所以另开独立的 data-ov-action 通道，与 data-sheet 完全隔离。【默认打开哪块盘】按「问题优先」挑：① grade=crit 的盘 → ② 有 SMART warn 级告警的盘 → ③ 容量偏满（capLevel ≥85）的盘 → ④ 兜底第一块盘（按盘位排序）—— 点「存储」卡能直接看到有问题的那块盘，而不是随便一块；实机 sdc（UDMA CRC 60）会被优先选中。【测试】verify/verify_overview.py 白名单段改写（存储卡无 data-sheet / 有 data-ov-action=disk / ov-tap / role / tabindex / aria-label 共 7 项新增断言）；verify/probe_overview.py 新增 7b 段实机交互断言（点存储卡 → 硬盘抽屉打开 / 内容非空 / 盘位下拉已填充 / **没有**误开处理器抽屉）。既有全套回归全绿。
+checksum              = 2cc10a08093f89f32f1b24d31fa09503

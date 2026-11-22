@@ -88,6 +88,21 @@ def snap_overview(c):
         },
         sheets: [].slice.call(host.querySelectorAll('[data-sheet]'))
                   .map(function(x){ return x.getAttribute('data-ov'); }).sort(),
+        /* ⚠️ v1.1.78：存储卡走独立通道 data-ov-action（复用硬盘详情抽屉），
+           绝不能带 data-sheet —— 否则掉进 openCompute 的 else 兜底
+           误开「处理器」抽屉。 */
+        diskAction: (function(){
+          var e = host.querySelector('[data-ov="disk"]');
+          return e ? e.getAttribute('data-ov-action') : null; })(),
+        diskHasSheet: (function(){
+          var e = host.querySelector('[data-ov="disk"]');
+          return e ? !!e.getAttribute('data-sheet') : null; })(),
+        diskTap: (function(){
+          var e = host.querySelector('[data-ov="disk"]');
+          return e ? e.classList.contains('ov-tap') : null; })(),
+        netAction: (function(){
+          var e = host.querySelector('[data-ov="net"]');
+          return e ? e.getAttribute('data-ov-action') : null; })(),
         gauges: host.querySelectorAll('[data-ov-gauge-el]').length,
         sparks: host.querySelectorAll('[data-ov-spark]').length,
         sparkPaths: host.querySelectorAll('.ov-spark-line').length,
@@ -603,7 +618,71 @@ def main():
     ck.check('抽屉标题含「处理器」', '处理器' in (d2.get('title') or ''),
              str(d2.get('title')))
     # 关掉抽屉
-    c.js("(function(){var b=document.querySelector('#monComputeClose');"
+    # ⚠️ v1.1.78 修正：关闭按钮的 id 是 **btnCloseMonCompute**，
+    #    原来写的 #monComputeClose 根本不存在 → 点不到 → 处理器抽屉
+    #    一直开着，残留到 7b 段 → 「误开处理器抽屉」误报为失败。
+    c.js("(function(){var b=document.querySelector('#btnCloseMonCompute');"
+         "if(b)b.click();return 'ok';})()")
+    c.pump(1.5)
+
+    # ----------------------------------------------------------
+    ck.section('7b. 交互：点存储卡打开硬盘详情抽屉（v1.1.78）')
+    # ----------------------------------------------------------
+    ck.check('存储卡 data-ov-action = disk',
+             ov.get('diskAction') == 'disk', str(ov.get('diskAction')))
+    ck.check('存储卡**没有** data-sheet（否则会误开处理器抽屉）',
+             ov.get('diskHasSheet') is False, str(ov.get('diskHasSheet')))
+    ck.check('存储卡带 ov-tap（可点样式）',
+             ov.get('diskTap') is True, str(ov.get('diskTap')))
+    ck.check('网络卡没有 data-ov-action（仍不可点）',
+             ov.get('netAction') is None, str(ov.get('netAction')))
+
+    # ⚠️ v1.1.78：**先确认处理器抽屉已关闭**再点存储卡。
+    #    否则上一段残留的处理器抽屉会让「没有误开处理器抽屉」误判。
+    pre = c.js("""(function(){
+      var cm = document.getElementById('monComputeOverlay');
+      return !!(cm && !cm.hasAttribute('hidden'));
+    })()""")
+    ck.check('点存储卡前处理器抽屉处于关闭状态', pre is False, str(pre))
+
+    c.js("""(function(){
+      var card = document.querySelector('#monOverview [data-ov="disk"]');
+      if (!card) return 'NO_CARD';
+      card.click();
+      return 'ok';
+    })()""")
+    c.pump(3)
+    st3 = c.js("""(function(){
+      var ov = document.getElementById('monDrawerOverlay');
+      var body = document.getElementById('monDrawerBody');
+      var sel = document.getElementById('monDrawerDiskSel');
+      var compute = document.getElementById('monComputeOverlay');
+      return JSON.stringify({
+        drawerOpen: !!(ov && !ov.hasAttribute('hidden')),
+        bodyLen: body ? body.innerText.replace(/\\s+/g,' ').trim().length : 0,
+        bodyText: body ? body.innerText.replace(/\\s+/g,' ').trim().slice(0,160) : null,
+        selVal: sel ? sel.value : null,
+        selOpts: sel ? sel.options.length : 0,
+        computeOpen: !!(compute && !compute.hasAttribute('hidden')),
+        computeTitle: (function(){
+          var t = document.querySelector('#monComputeTitleText');
+          return t ? t.textContent.trim() : null; })()
+      });
+    })()""")
+    try:
+        d3 = json.loads(st3 or "{}")
+    except Exception:
+        d3 = {}
+    ck.check('点击存储卡打开了硬盘详情抽屉', d3.get('drawerOpen') is True,
+             str(d3.get('drawerOpen')))
+    ck.check('硬盘抽屉内容非空', (d3.get('bodyLen') or 0) > 50,
+             'len=%s text=%s' % (d3.get('bodyLen'), d3.get('bodyText')))
+    ck.check('硬盘抽屉盘位下拉已填充', (d3.get('selOpts') or 0) >= 1,
+             'opts=%s val=%s' % (d3.get('selOpts'), d3.get('selVal')))
+    ck.check('**没有**误开处理器抽屉',
+             d3.get('computeOpen') is False, str(d3.get('computeOpen')))
+    # 关掉抽屉
+    c.js("(function(){var b=document.querySelector('#btnCloseMonDrawer');"
          "if(b)b.click();return 'ok';})()")
     c.pump(1.5)
 

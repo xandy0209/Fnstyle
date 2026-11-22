@@ -3278,6 +3278,85 @@
 
   /* ---------------- 初始化 ---------------- */
 
+  /* --------------------------------------------------------------------------
+     概览「存储」卡的点击入口（v1.1.78）
+     --------------------------------------------------------------------------
+     老板需求：「存储卡片没有点击事件，请添加」。
+     实现：**复用已有的硬盘详情抽屉**（monDrawerOverlay）—— 它已经有
+     顶部盘位下拉、容量条、SMART 明细、实时读写曲线，没必要另造一个。
+
+     ⚠️ 为什么不走 data-sheet：
+        bindSheetDrawer 会把任何 [data-sheet] 交给 compute.js 的 openCompute，
+        而 openCompute 只有 cpu/mem/temp/power 四个分支，storage 会掉进
+        else 兜底 → **误开「处理器」抽屉**（张冠李戴）。
+        所以概览存储卡用独立的 data-ov-action="disk" 属性。
+
+     默认打开哪块盘？按「问题优先」挑：
+       ① 有故障分级（crit）的盘
+       ② 有 SMART 告警（warn）的盘
+       ③ 容量偏满（≥ capWarn）的盘
+       ④ 都正常 → 第一块盘（按盘位排序）
+     这样点「存储」卡能**直接看到有问题的那块盘**，而不是随便一块。 */
+  function pickOverviewDiskDev() {
+    var st = lastData && lastData.storage ? lastData.storage : null;
+    var disks = (st && st.disks) || [];
+    if (!disks.length) return '';
+
+    var sorted = disks.slice().sort(byVol);
+
+    /* ① crit 分级 */
+    for (var i = 0; i < sorted.length; i++) {
+      if (String(sorted[i].grade || '').toLowerCase() === 'crit') return sorted[i].name;
+    }
+    /* ② SMART 告警（warn 级计数非零） */
+    for (var j = 0; j < sorted.length; j++) {
+      if (smartAlerts(sorted[j]).lv === 'warn') return sorted[j].name;
+    }
+    /* ③ 容量偏满（复用现成的 capLevel：≥85 留意 / ≥95 故障） */
+    for (var k = 0; k < sorted.length; k++) {
+      if (capLevel(sorted[k].percent)) return sorted[k].name;
+    }
+    /* ④ 兜底：第一块盘 */
+    return sorted[0].name;
+  }
+
+  /* 概览卡的动作入口：action → 具体行为 */
+  function openOverviewAction(action) {
+    if (action === 'disk') {
+      var dev = pickOverviewDiskDev();
+      if (!dev) return false;
+      openDiskDrawer(dev);
+      return true;
+    }
+    return false;
+  }
+
+  /* 事件绑定：概览「存储」卡点击 / 键盘可达。
+     用**事件委托**挂在 document 上 —— 概览区是懒加载的（切到监控标签才渲染），
+     直接给元素绑监听会漏掉后渲染出来的卡片。 */
+  function bindOverviewAction() {
+    if (bindOverviewAction._done) return;
+    bindOverviewAction._done = true;
+
+    document.addEventListener('click', function (e) {
+      var el = e.target.closest ? e.target.closest('[data-ov-action]') : null;
+      if (!el) return;
+      var action = el.getAttribute('data-ov-action');
+      if (!action) return;
+      e.preventDefault();
+      e.stopPropagation();
+      openOverviewAction(action);
+    });
+
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      var el = e.target.closest ? e.target.closest('.ov-tap[data-ov-action]') : null;
+      if (!el) return;
+      e.preventDefault();
+      openOverviewAction(el.getAttribute('data-ov-action'));
+    });
+  }
+
   function init() {
     if (inited) return;
     inited = true;
@@ -3299,6 +3378,8 @@
     bindScanLogDrawer();
     /* 温度 / 能耗的「详情 ›」按钮 + 整张总览卡片可点 */
     bindSheetDrawer();
+    /* 概览「存储」卡点击 → 打开硬盘详情抽屉（v1.1.78） */
+    bindOverviewAction();
     var auto = $('#monAuto');
     if (auto) {
       auto.addEventListener('change', function () {

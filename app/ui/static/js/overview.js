@@ -498,15 +498,23 @@
      --------------------------------------------------------------------- */
   /* 可打开详情抽屉的卡片 kind —— 与 compute.js 的 openCompute 支持的一致
      （cpu / mem / temp / power 四种）。
-     ⚠️ 存储与网络**没有**对应的计算抽屉：若硬塞 data-sheet，
-        openCompute 会掉进 else 分支打开「处理器」抽屉 —— 属于张冠李戴。
-        这两张卡改为可点击滚动到下方对应板块。 */
+     ⚠️ **存储卡不能用 data-sheet**（v1.1.78）：
+        monitor.js 的 bindSheetDrawer 会把任何 [data-sheet] 交给
+        compute.js 的 openCompute，而 openCompute 只有 cpu/mem/temp/power
+        四个分支，storage 会掉进 else 兜底 → **误开「处理器」抽屉**。
+        存储卡走独立的 data-ov-action（见下），由 monitor.js 复用
+        已有的「硬盘详情抽屉」（monDrawerOverlay）打开。
+     ⚠️ 网络卡仍不可点 —— 还没有对应的网络详情抽屉。 */
   var SHEET_KINDS = { cpu: 1, mem: 1, temp: 1, power: 1 };
+
+  /* 走「非计算抽屉」通道的卡片动作（v1.1.78）。
+     action = 'disk' → 打开硬盘详情抽屉（monitor.js 的 openDiskDrawer）。 */
+  var ACTION_KINDS = { disk: 'disk' };
 
   var CARDS = [
     { k: 'cpu', label: '处理器', unit: '%', gauge: 'cpu', sheet: 'cpu' },
     { k: 'mem', label: '内存', unit: '%', gauge: 'mem', sheet: 'mem' },
-    { k: 'disk', label: '存储', unit: '%', gauge: 'storage', sheet: '' },
+    { k: 'disk', label: '存储', unit: '%', gauge: 'storage', sheet: '', action: 'disk' },
     { k: 'net', label: '网络', unit: '', gauge: '', sheet: '' },
     { k: 'temp', label: '温度', unit: '℃', gauge: 'temp', sheet: 'temp' },
     { k: 'pwr', label: '功耗', unit: 'W', gauge: 'power', sheet: 'power' }
@@ -527,13 +535,22 @@
   function buildCards(host) {
     var html = '<div class="ov-metrics">';
     CARDS.forEach(function (c) {
-      /* 只有真正有详情抽屉的卡片才可点（ov-tap + data-sheet）；
-         存储 / 网络没有对应抽屉，不加 data-sheet —— 否则会误开处理器抽屉。 */
+      /* 只有真正有详情抽屉的卡片才可点（ov-tap）：
+         · sheet 通道 → data-sheet（处理器/内存/温度/能耗，走计算抽屉）
+         · action 通道 → data-ov-action（存储，v1.1.78，走硬盘详情抽屉）
+         网络卡两种通道都没有 → 不可点。
+         ⚠️ 存储卡**绝不能**用 data-sheet —— openCompute 没有 storage 分支，
+            会掉进 else 兜底误开「处理器」抽屉。 */
       var canOpen = !!SHEET_KINDS[c.sheet];
-      html += '<article class="ov-metric' + (canOpen ? ' ov-tap' : '') +
+      var action = ACTION_KINDS[c.action];
+      var tapCls = (canOpen || action) ? ' ov-tap' : '';
+      html += '<article class="ov-metric' + tapCls +
         '" data-ov="' + c.k + '"' +
         (canOpen ? ' data-sheet="' + c.sheet + '" tabindex="0" role="button" ' +
-          'aria-label="' + c.label + '，查看详情"' : '') + '>' +
+          'aria-label="' + c.label + '，查看详情"' : '') +
+        (action ? ' data-ov-action="' + action + '" tabindex="0" role="button" ' +
+          'aria-label="' + c.label + '，查看详情"' : '') +
+        '>' +
         '<div class="ov-m-top"><span class="ov-m-label">' + c.label + '</span>' +
         '<span class="ov-m-state"><span data-ov-state="' + c.k + '"></span></span></div>' +
         '<div class="ov-m-main">';
