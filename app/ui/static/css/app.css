@@ -1772,6 +1772,14 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
   gap: .75rem;
   flex-wrap: wrap;
 }
+/* ⚠️ v1.1.80：.spacer 在这里原本**没有** flex 规则。
+   全局只有 .card>header / .fitem-body / .sync-bar / .tabs / .tp-footer 给
+   .spacer 定义了 flex:1 1 auto（或 flex:1），.mon-toolbar-row 不在其列。
+   ⇒ .spacer 在状态条里算出来是 `0 1 auto`（flex 初始值）→ 不撑开空间，
+     右侧的「更新时间 / 立即刷新 / 自动刷新」全都贴着左侧文字排，
+     卡片右端留下大片空白（实测按钮距卡片右边缘 492px）。
+   补上这条后：左侧状态文字靠左，右侧控件组靠右，与监控工具条的常规布局一致。 */
+.mon-toolbar-row .spacer { flex: 1 1 auto; }
 .mon-status {
   display: inline-flex;
   align-items: center;
@@ -1796,6 +1804,31 @@ textarea.lib-input { resize: vertical; line-height: 1.45; }
   user-select: none;
 }
 .mon-auto input { accent-color: var(--accent); cursor: pointer; }
+
+/* v1.1.80：阈值「配置管理」齿轮按钮（从顶栏移到监控状态条右端）。
+   .btn.icon-btn 与 .btn.sm 同为 (0,2,0)，后者在样式表更靠后 → padding 取 .btn.sm 的值；
+   这里显式钉住尺寸，避免被 .btn.sm 的 padding 撑变形，同时保证垂直居中。 */
+.mon-cfg-btn {
+  flex: none;
+  align-self: center;
+  padding: .3rem .45rem;
+  line-height: 0;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.mon-cfg-btn .cfg-ico {
+  width: 15px;
+  height: 15px;
+  display: block;
+  stroke: currentColor;
+}
+.mon-cfg-btn:hover {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  color: var(--accent);
+}
 
 /* ---- 板块内网格 ---- */
 .mon-grid {

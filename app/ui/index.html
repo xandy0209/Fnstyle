@@ -35,7 +35,7 @@
     </div>
     <!-- 顶栏右侧：当前版本号 + 检查更新入口 + 新页面打开 -->
     <div class="topbar-right" id="topbarUpdate">
-      <span class="ver-pill" id="verPill" title="当前版本">v1.1.79</span>
+      <span class="ver-pill" id="verPill" title="当前版本">v1.1.80</span>
       <span class="ub-status" id="tbUpdateStatus"></span>
       <button class="btn sm icon-btn" id="tbCheckUpdate" type="button" title="检查更新" aria-label="检查更新">
         <svg class="upd-ico" viewBox="0 0 24 24" aria-hidden="true">
@@ -47,17 +47,6 @@
              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M7 17 17 7"/>
           <path d="M9 7h8v8"/>
-        </svg>
-      </button>
-      <!-- v1.1.79：系统监控阈值门限「配置管理」入口。
-           抽屉内容见 thresholds-ui.js；门限清单来自
-           GET api/monitor/thresholds（后端 monitor_thresholds.py 是唯一权威来源）。 -->
-      <button class="btn sm icon-btn" id="tbOpenThresholds" type="button"
-              title="配置管理" aria-label="配置管理">
-        <svg class="cfg-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <circle cx="12" cy="12" r="3"/>
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
         </svg>
       </button>
     </div>
@@ -150,6 +139,19 @@
             <input type="checkbox" id="monAuto" checked>
             <span>自动刷新</span>
           </label>
+          <!-- v1.1.80：系统监控阈值门限「配置管理」入口。
+               从顶栏移到监控状态条右端（老板 2026-11-22 反馈）：
+               阈值只对系统监控生效，放在监控面板里语义更贴合。
+               抽屉内容见 thresholds-ui.js；门限清单来自
+               GET api/monitor/thresholds（后端 monitor_thresholds.py 是唯一权威来源）。 -->
+          <button class="btn sm icon-btn mon-cfg-btn" id="tbOpenThresholds" type="button"
+                  title="配置管理" aria-label="配置管理">
+            <svg class="cfg-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+          </button>
         </div>
       </div>
     </div>
@@ -448,6 +450,7 @@
 
 <!-- ================== 阈值门限配置抽屉（右侧滑出） ==================
      v1.1.79：入口是顶栏的「配置管理」按钮（#tbOpenThresholds）。
+     v1.1.80：入口移到监控面板状态条右端（老板反馈：按钮放在下方状态条右侧）。
      内容由 thresholds-ui.js 渲染（表单清单来自 GET api/monitor/thresholds）。 -->
 <div class="mon-drawer-overlay" id="monThresholdOverlay" hidden>
   <aside class="mon-drawer" role="dialog" aria-modal="true"

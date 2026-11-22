@@ -73,19 +73,24 @@ def main():
         visible: r.width > 0 && r.height > 0,
         w: Math.round(r.width), h: Math.round(r.height),
         inTopbar: !!b.closest('.topbar'),
+        inToolbarRow: !!b.closest('.mon-toolbar-row'),
         hasIcon: !!b.querySelector('svg'),
         siblings: b.parentElement ? b.parentElement.children.length : 0
       });
     })()""")
     b = json.loads(btn) if btn else {}
-    ck.check('顶栏存在「配置管理」按钮', bool(b.get('exists')))
+    ck.check('存在「配置管理」按钮', bool(b.get('exists')))
     ck.check('按钮 title = 配置管理', b.get('title') == '配置管理', b.get('title'))
     ck.check('按钮有 aria-label', b.get('aria') == '配置管理', b.get('aria'))
-    ck.check('按钮在 .topbar 内', bool(b.get('inTopbar')))
+    # ⚠️ v1.1.80：按钮从顶栏移到了监控状态条右端（老板反馈）。
+    #    旧的「按钮在 .topbar 内」断言已过时 —— 顶栏现在只剩
+    #    「检查更新」「在新页面打开」两个按钮。
+    ck.check('按钮已不在 .topbar 内', not b.get('inTopbar'))
+    ck.check('按钮在监控状态条 .mon-toolbar-row 内', bool(b.get('inToolbarRow')))
     ck.check('按钮可见（非零尺寸）', bool(b.get('visible')),
              '%sx%s' % (b.get('w'), b.get('h')))
     ck.check('按钮含 SVG 图标', bool(b.get('hasIcon')))
-    ck.check('按钮与其它顶栏按钮同排', (b.get('siblings') or 0) >= 3,
+    ck.check('按钮与状态条其它控件同排', (b.get('siblings') or 0) >= 3,
              '同排元素数=' + str(b.get('siblings')))
 
     # ---------------------------------------------------------------
