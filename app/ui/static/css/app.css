@@ -5359,7 +5359,15 @@ html.mon-scroll-lock body {
 .ov-metric[data-ov="disk"] .ov-m-gauge,
 .ov-metric[data-ov="temp"] .ov-m-gauge,
 .ov-metric[data-ov="pwr"] .ov-m-gauge {
-  top: calc(.75rem + 22px);
+  /* ⚠️ v1.1.76 老板第二次反馈「卡片右侧的环形图再下移10PX显示」
+     → 22 + 10 = **32px**（相对卡顶 35 → 45px）。
+     ⚠️ 本次**数字与副标题不再跟随下移**：
+     - 老板只要求动环形图；
+     - 若数字/副标题也下移，副标题底会到 131px，
+       反而压到底部趋势区（124px 起）7px，比环形图更糟。
+     - 代价：数字中心与仪表圆心的 diff 从 0 变成 10px
+       （v1.1.73 定的「水平居中」不再成立），这是老板明确要求的取舍。 */
+  top: calc(.75rem + 32px);
 }
 .ov-gauge { width: 100%; height: 100%; display: block; }
 .ov-gauge-track { stroke: var(--bg-hover); }

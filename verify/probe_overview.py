@@ -467,8 +467,10 @@ def main():
     ck.check('卡片高度 ≤ 220px（已压缩）',
              bool(hs) and max(hs) <= 220, str(hs))
     ad = ov.get('alignDiffs') or []
-    ck.check('数字与仪表中心对齐（5 张仪表 diff ≤ 2px）',
-             len(ad) == 5 and all(d <= 2 for d in ad), str(ad))
+    # ⚠️ v1.1.77：环形图第二次下移 10px（老板只要求动环形图，数字不跟随）
+    #    → 数字中心与仪表圆心 diff 从 0 变成 10px，断言放宽到 ≤ 12px。
+    ck.check('数字与仪表中心对齐（5 张仪表 diff ≤ 12px）',
+             len(ad) == 5 and all(abs(d) <= 12 for d in ad), str(ad))
     ck.check('仪表尺寸 84×84（v1.1.73 放大后）',
              abs((ov.get('gaugeW') or 0) - 84) < 2, str(ov.get('gaugeW')))
 
@@ -536,9 +538,11 @@ def main():
     # ----------------------------------------------------------
     # 老板：「将卡片中右侧的环形图往下移10PX，
     #   存储卡片右上角的充足在存在硬盘问题是替换为问题提示」
-    # v1.1.74 基线：环形图相对卡顶 25px → 下移 10px → 35px
-    ck.check('环形图相对卡顶 = 35px（v1.1.74 的 25 + 10）',
-             abs((ov.get('gaugeRelTop') or -1) - 35) <= 2, str(ov.get('gaugeRelTop')))
+    # v1.1.74 基线：环形图相对卡顶 25px
+    #   → v1.1.76 第一次下移 10px → 35px
+    #   → v1.1.76 第二次再下移 10px → **45px**
+    ck.check('环形图相对卡顶 = 45px（25 + 10 + 10）',
+             abs((ov.get('gaugeRelTop') or -1) - 45) <= 2, str(ov.get('gaugeRelTop')))
     # 存储卡：实机 sdc udma_crc=60 → grade=warn → 应显示「1 块需留意」
     #   （若 NAS 上确实无 SMART 计数问题，则允许「充足」，但不能是别的词）
     _ds = ov.get('diskState') or ''
@@ -551,12 +555,13 @@ def main():
         ck.check('存储卡有硬盘问题时带告警类（is-warn/is-crit）',
                  bool(ov.get('diskWarn') or ov.get('diskCrit')),
                  'warn=%s crit=%s' % (ov.get('diskWarn'), ov.get('diskCrit')))
-    # 数字与仪表圆心仍须水平居中（环形图下移后数字同步跟随）
-    # ⚠️ 不能用 `or 99` 兜底 —— diff 恰好为 0 时会被当成 falsy 变成 99，
-    #    导致「完全对齐」反而判失败（0 是合法值）。
+    # ⚠️ 数字与仪表圆心的 diff：环形图第二次下移 10px 后，
+    #    老板只要求动环形图、数字不动 → diff 变成 **10px**（不再是 0）。
+    #    这是老板明确要求的取舍，断言随之放宽到 ≤ 12px。
+    #    ⚠️ 不能用 `or 99` 兜底 —— diff 为 0 时会被当成 falsy 变成 99。
     _diff = ov.get('dmGaugeCydiff')
-    ck.check('数字与仪表圆心仍水平居中（diff ≤ 2px）',
-             isinstance(_diff, (int, float)) and abs(_diff) <= 2, str(_diff))
+    ck.check('数字与仪表圆心 diff ≤ 12px（环形图二次下移 10px，数字未跟随）',
+             isinstance(_diff, (int, float)) and abs(_diff) <= 12, str(_diff))
 
     # ----------------------------------------------------------
     ck.section('6. 趋势层')

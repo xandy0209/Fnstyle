@@ -1,5 +1,5 @@
 appname               = fnstyle
-version           = 1.1.76
+version           = 1.1.77
 display_name          = FnStyle
 desc                  = 集中管理飞牛个性化设置与丰富主题库：网站标题、登录框、LOGO、壁纸、毛玻璃、任务栏等独立配置，内置多源主题库，支持一键应用到 fnOS 系统，卸载后自动还原系统默认样式。
 platform              = all
@@ -15,5 +15,5 @@ desktop_applaunchname = fnstyle.main
 service_port          = 9910
 checkport             = false
 ctl_stop              = true
-changelog         = 1.1.76：概览卡环形图下移 10px + 存储卡「硬盘问题」判定补全（老板 2 条反馈）。【反馈①】「将卡片中右侧的环形图往下移10PX」——环形仪表 top 由 calc(.75rem + 12px) 改为 calc(.75rem + 22px)（下移 10px）；为保持 v1.1.73 定的「数字与环形图水平居中」，数字（.ov-dnum top 3→13px）与副标题（.ov-m-sub top -5→5px）**同步下移 10px**，「数字字形底 → 副标题顶 = 10px」的间距保持不变；网络卡虽无仪表，但其副标题在第二行，必须同步下移以保持两行卡片基线一致，故 .ov-net-vals 也加 position:relative; top:10px。全部用相对定位实现 → **不改变行高，卡片高度仍是 163px、六卡仍完全等高**。【反馈②】「存储卡片右上角的充足在存在硬盘问题是替换为问题提示」——实机 bug：SMART 全 PASSED 仍显示「充足」，因为「硬盘问题」判定漏了两类：① SMART **计数 > 0**（含 udma_crc）——后端 grade_disk 漏判 udma_crc，实机 sdc（WalkDisk SSD）udma_crc=60 却判成 grade=ok，把真实问题完全掩盖；② **单盘 / 单池容量**超阈值——实机 sdb 85.9% / vol3 86% 已过 capWarn=85，但汇总容量只有 69%，汇总口径把紧张的单盘完全掩盖。【后端修复】storage_collect.grade_disk 纳入 udma_crc：任一 SMART 计数 > 0 即 warn（对齐 fnmonitor 的 _THRESHOLD_SMART_KEYS 口径），reasons 里带出「UDMA CRC 错误 N 个」。【前端修复】overview.js 存储卡状态判定改为四级优先：crit 盘「N 块故障」→ warn 盘「N 块需留意」→ 容量 crit「N 块将满」→ 容量 warn「N 块偏满」→ 汇总 crit/warn「将满/偏满」→ 兜底「充足」；新增：SMART 任一计数 > 0 即计入需留意（后端 grade 仍是 ok 时也生效）；新增：单盘/单池容量逐项比对 capWarn/capCrit，且与汇总用量差 ≤ 0.5% 的不重复提醒（对齐 fnmonitor 的 smartState 规则）；单盘与单池容量问题数取**较大者**不相加（避免同一池被双重计数）。【测试】verify/verify_overview.py 267 → **283/283**（新增 J3 段 15 项：SMART 计数/单盘容量/单池容量/不重复提醒/优先级/环形图下移 10px）；verify/verify_storage_collect.py 112 → **117/117**（新增 5 项：CRC 分级/文案）；既有全套回归全绿。
-checksum              = 171ee87ea8577e5355e548eee16a2a2f
+changelog         = 1.1.77：概览卡片右侧环形图**再下移 10px**（老板第二次反馈）。【改动】.ov-m-gauge top: calc(.75rem + 22px) → calc(.75rem + 32px)，环形图相对卡顶 35px → **45px**（基线链：v1.1.74 的 25 → v1.1.76 第一次 35 → 本次 45）。【为什么数字与副标题这次**不跟随**下移】① 老板只要求动环形图；② 空间不允许：卡片高 163px，仪表 84px，副标题底在 121px、底部趋势区从 124px 起；若副标题也下移 10px → 底到 131px，会压到底部趋势线 7px，比环形图更糟；③ 而环形图是右侧独立列（副标题有 padding-right: 92px 让开），下移后只是靠近趋势区，视觉上仍是镂空圆环、不遮挡趋势线。【代价】数字中心与仪表圆心的 diff 从 0 变为 **10px** —— v1.1.73 老板定的「数字与环形图水平居中」不再成立，这是老板明确要求（只动环形图）的取舍，相关断言同步放宽至 ≤ 12px。【实测】卡片高度仍 163px、六卡完全等高、数字相对卡顶仍 61px、副标题仍 103px、数字与仪表圆心 diff = 10px。【测试】verify/verify_overview.py 283 → **287/287**（新增 4 项：二次下移位置/数字未跟随/副标题未跟随/卡高不变/diff=10px）；verify/probe_overview.py 实机探针断言同步更新（环形图 45px、diff ≤ 12px）；既有全套回归全绿。
+checksum              = eceb13214d17d002133646c010c56881

@@ -1059,9 +1059,11 @@ def run_tests(page):
     truthy('真实渲染', '六卡完全等高（max-min ≤ 1px）',
            hs and (max(hs) - min(hs)) <= 1, hs)
     # ⚠️ v1.1.71：数字与仪表**同一水平线**（中心差 = 0）
+    # ⚠️ v1.1.76 第二次：老板只要求环形图再下移 10px，数字**不跟随**
+    #    → diff 变成 10px，断言放宽到 ≤ 12px。
     ad = res['alignDiffs']
-    truthy('真实渲染', '数字与仪表中心对齐（5 张仪表 diff ≤ 2px）',
-           ad and all(d <= 2 for d in ad), ad)
+    truthy('真实渲染', '数字与仪表中心对齐（5 张仪表 diff ≤ 12px）',
+           ad and all(abs(d) <= 12 for d in ad), ad)
 
     # ----------------------------------------------------------
     section('H2 v1.1.72：外层卡片 / 底部留白 / 趋势线（老板 4 条反馈）')
@@ -1189,9 +1191,9 @@ def run_tests(page):
     # ⑤ 「左侧的值和统计之间的间距调小，并统计上移一点与右侧的环形图水平居中显示」
     truthy('数字居中', '数字与单位间距 ≤ 3px（v1.1.73 调小）',
            0 <= res['numUnitGap'] <= 3, res['numUnitGap'])
-    truthy('数字居中', '数字与仪表圆心同一水平线（5 张卡 diff ≤ 3px）',
+    truthy('数字居中', '数字与仪表圆心同一水平线（5 张卡 diff ≤ 12px）',
            res['numCenterVsGauge'] and
-           all(abs(d) <= 3 for d in res['numCenterVsGauge']),
+           all(abs(d) <= 12 for d in res['numCenterVsGauge']),
            res['numCenterVsGauge'])
     truthy('数字居中', '数字区行高 = 48px（v1.1.74 锁高，六卡等高）',
            res['mainRowH'] and abs(res['mainRowH'] - 48) < 2, res['mainRowH'])
@@ -1225,9 +1227,9 @@ def run_tests(page):
     # 仪表改绝对定位 → 脱离 grid 流，不再撑高卡片
     eq('卡高', '仪表是绝对定位（不参与 grid 行高计算）',
        res['gaugePos'], 'absolute')
-    # 数字与仪表圆心仍然水平居中
-    truthy('卡高', '数字中心与仪表圆心 diff ≤ 2px',
-           abs(res['dmGaugeCydiff']) <= 2, res['dmGaugeCydiff'])
+    # 数字与仪表圆心：v1.1.76 二次下移后 diff = 10px（老板只动环形图）
+    truthy('卡高', '数字中心与仪表圆心 diff ≤ 12px（二次下移的预期代价）',
+           abs(res['dmGaugeCydiff']) <= 12, res['dmGaugeCydiff'])
 
     # ----------------------------------------------------------
     section('I 可点性白名单')
@@ -1460,6 +1462,7 @@ def run_tests(page):
        r['state'], '1 块需留意')
 
     # ⑨ 环形图下移 10px（v1.1.76）
+    #    基线链：v1.1.74 = 25px → 第一次下移 = 35px → 第二次下移 = **45px**
     res = page.evaluate("""() => {
       const host = document.getElementById('monOverview');
       const out = {};
@@ -1472,11 +1475,33 @@ def run_tests(page):
       }
       return out;
     }""")
-    # v1.1.74 是 +25px（.75rem=12px + 12px 偏移 = 24 + 1px 边框）；
-    # v1.1.76 再下移 10px → +35px 左右
     for k in ['cpu', 'mem', 'disk', 'temp', 'pwr']:
-        truthy('环形图', '%s 卡环形图已下移 10px（%d → %d）'
-               % (k, res[k] - 10, res[k]), abs(res[k] - 35) <= 2)
+        truthy('环形图', '%s 卡环形图二次下移后相对卡顶 = 45px（25+10+10）'
+               % k, abs(res[k] - 45) <= 2)
+
+    # ⑪ 数字与副标题**不跟随**环形图二次下移（老板只要求动环形图）
+    #    数字相对卡顶仍 61px、副标题仍 103px、卡高仍 163px
+    res2 = page.evaluate("""() => {
+      const host = document.getElementById('monOverview');
+      const c = host.querySelector('[data-ov="cpu"]');
+      const d = c.querySelector('[data-ov-val="cpuV"]');
+      const s = c.querySelector('[data-ov-sub="cpu"]');
+      const g = c.querySelector('.ov-m-gauge');
+      const cb = c.getBoundingClientRect();
+      const dr = d.getBoundingClientRect(), sr = s.getBoundingClientRect();
+      const gr = g.getBoundingClientRect();
+      return { dm: Math.round(dr.top - cb.top), sub: Math.round(sr.top - cb.top),
+               h: Math.round(cb.height),
+               diff: Math.round((dr.top + dr.height/2) - (gr.top + gr.height/2)) };
+    }""")
+    truthy('环形图', '数字未跟随下移（相对卡顶仍 61px）',
+           abs(res2['dm'] - 61) <= 2, res2['dm'])
+    truthy('环形图', '副标题未跟随下移（相对卡顶仍 103px）',
+           abs(res2['sub'] - 103) <= 2, res2['sub'])
+    truthy('环形图', '卡片高度仍 163px',
+           abs(res2['h'] - 163) <= 2, res2['h'])
+    truthy('环形图', '数字与仪表圆心 diff = 10px（二次下移的预期代价）',
+           abs(abs(res2['diff']) - 10) <= 2, res2['diff'])
 
     # ⚠️ J2 段反复重渲染会污染后面「告警态大数字着色」断言读取的 DOM ——
     #    这里把页面恢复成 J 段的告警快照，让后续断言读到正确状态。
