@@ -376,6 +376,9 @@ print("=" * 60)
 print("9. StorageMonitor 完整快照")
 print("=" * 60)
 # 桩掉所有重量级采集
+# ⚠️ v1.1.73：先保存**真实实现**，下面的 stub 只覆盖模块属性，
+#    回归测试需要拿到未被 stub 的原函数。
+_REAL_COLLECT_DISKS_DETAIL = sc.collect_disks_detail
 sc.collect_volumes = lambda: [{
     "name": "vol1", "path": "/vol1", "total": 500 * GIB, "used": 312 * GIB,
     "free": 188 * GIB, "percent": 62, "totalText": "500.0 GB",
@@ -418,9 +421,93 @@ check("summary 分级统计", s.get("grades") == {"ok": 1, "warn": 1, "crit": 1,
 check("summary 告警盘列表", len(s.get("warnDisks") or []) == 2, s.get("warnDisks"))
 check("summary RAID 数", s.get("raidCount") == 1, s.get("raidCount"))
 
+# ================================================================
+# 10. v1.1.73 回归：collect_disks_detail(with_states=False) 不再崩
+# ================================================================
+# ⚠️ v1.1.73 修的真实 bug：
+#   with_states=False 且 SMART 缓存未命中时 sd 为 None，
+#   下面 sd.get("standby") 抛 AttributeError，
+#   而 monitor_collect.collect_disks() 用 `except Exception: return []` 吞掉
+#   → **监控页存储卡拿不到任何磁盘数据**
+#   （老板要的「一块需留意」永远显示不出来）。
+# 这里直接调真实实现，验证不抛异常且能返回盘位。
 print()
 print("=" * 60)
-print("10. JSON 可序列化")
+print("10. v1.1.73 回归：with_states=False 不抛 AttributeError")
+print("=" * 60)
+try:
+    _real = sc.collect_disks_detail
+    # 绕过上方 stub，直接用真实实现（清空 SMART 缓存模拟冷启动）
+    import importlib
+    _mod = importlib.import_module("storage_collect") if False else sc
+    # storage_collect 模块里真实函数在被 stub 之前已存在，这里取原函数
+    _orig = _mod._COLLECT_DISKS_DETAIL_ORIG if hasattr(_mod, "_COLLECT_DISKS_DETAIL_ORIG") else None
+except Exception as e:
+    _orig = None
+
+# 用可控的方式重跑真实实现：临时还原 collect_disks_detail
+try:
+    import storage_collect as _sc_mod
+    _real_fn = _REAL_COLLECT_DISKS_DETAIL
+except Exception:
+    _real_fn = None
+
+if _real_fn is not None:
+    # 构造一个可控环境：lsblk 返回 2 块盘，SMART 缓存空，smart_detail 抛错
+    _saved = {
+        "lsblk": _sc_mod._lsblk_json,
+        "mem": dict(_sc_mod._DISK_HEALTH_MEM),
+        "smart": _sc_mod.smart_detail,
+        "disks": _sc_mod.collect_disks,
+        "states": _sc_mod.disk_power_states,
+    }
+    try:
+        _sc_mod._DISK_HEALTH_MEM.clear()
+        _sc_mod._lsblk_json = lambda: [
+            {"name": "sda", "type": "disk", "size": 1000, "ro": False,
+             "model": "M1", "vendor": "V", "serial": "S1", "rota": 1,
+             "mountpoint": None, "children": [
+                 {"name": "sda1", "type": "part", "size": 1000,
+                  "mountpoint": "/vol1", "children": []}]},
+            {"name": "sdb", "type": "disk", "size": 2000, "ro": False,
+             "model": "M2", "vendor": "V", "serial": "S2", "rota": 1,
+             "mountpoint": None, "children": []},
+        ]
+        _sc_mod.collect_disks = lambda: [
+            {"mount": "/vol1", "total": 1000, "used": 500, "percent": 50}]
+        _sc_mod.disk_power_states = lambda: {"sda": "active", "sdb": "active"}
+        # smart_detail 抛异常 → 模拟 SMART 不可读
+        def _boom(name):
+            raise OSError("smartctl unavailable")
+        _sc_mod.smart_detail = _boom
+
+        _ds = _real_fn(with_states=False)
+        check("with_states=False 不抛异常", True, "返回 %d 块盘" % len(_ds))
+        check("返回盘位数量正确", len(_ds) == 2, len(_ds))
+        check("每块盘都有 name 字段",
+              all(isinstance(d.get("name"), str) and d.get("name") for d in _ds),
+              [d.get("name") for d in _ds])
+        check("每块盘都有 grade 字段",
+              all(d.get("grade") in ("ok", "warn", "crit", "unknown") for d in _ds),
+              [d.get("grade") for d in _ds])
+        check("gradeLabel 已填充",
+              all(d.get("gradeLabel") for d in _ds),
+              [d.get("gradeLabel") for d in _ds])
+    except Exception as e:
+        check("with_states=False 不抛异常", False, repr(e))
+    finally:
+        _sc_mod._lsblk_json = _saved["lsblk"]
+        _sc_mod._DISK_HEALTH_MEM.clear()
+        _sc_mod._DISK_HEALTH_MEM.update(_saved["mem"])
+        _sc_mod.smart_detail = _saved["smart"]
+        _sc_mod.collect_disks = _saved["disks"]
+        _sc_mod.disk_power_states = _saved["states"]
+else:
+    check("with_states=False 不抛异常", False, "拿不到 storage_collect 模块")
+
+print()
+print("=" * 60)
+print("11. JSON 可序列化")
 print("=" * 60)
 try:
     txt = json.dumps(snap, ensure_ascii=False)

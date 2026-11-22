@@ -817,6 +817,12 @@ def collect_disks_detail(prev=None, with_states=True, health_prev=None):
                 sd = smart_detail(name) if len(result) < 8 else {}
                 if sd and not sd.get("standby"):
                     _DISK_HEALTH_MEM[name] = sd
+            # ⚠️ v1.1.73 修复：sd 可能是 None —— with_states=False 且 SMART 缓存未命中时，
+            #   下面 sd.get("standby") 会抛 AttributeError，
+            #   而 monitor_collect.collect_disks() 用 `except Exception: return []` 吞掉，
+            #   → **监控页存储卡拿不到任何磁盘数据**（老板要的「一块需留意」永远显示不出来）。
+            if not sd:
+                sd = {}
             if sd.get("standby"):
                 entry["state"] = "standby"
                 entry["standby"] = True

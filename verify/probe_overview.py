@@ -127,6 +127,72 @@ def snap_overview(c):
           var e = host.querySelector('[data-ov-gauge-el="cpu"]');
           return e ? Math.round(e.getBoundingClientRect().width) : -1;
         })(),
+        /* ⚠️ v1.1.73：仪表中心图标**实际绘制尺寸**（getBBox 是局部坐标，
+           测不出 transform 缩放 → 必须乘 getScreenCTM 的矩阵） */
+        gaugeIcoVisual: (function(){
+          var e = host.querySelector('[data-ov-gauge-el="cpu"] .ov-gauge-ico');
+          if (!e) return null;
+          var bb = null;
+          try { bb = e.getBBox(); } catch (err) { return null; }
+          if (!bb || !bb.width) return null;
+          var ctm = e.getScreenCTM();
+          if (!ctm) return null;
+          return { w: Math.round(bb.width * ctm.a * 10) / 10,
+                   h: Math.round(bb.height * ctm.d * 10) / 10 };
+        })(),
+        /* ⚠️ v1.1.73：容器查询是否生效（container-type + 实际容器宽） */
+        wrapContainerType: (function(){
+          var w = document.querySelector('#panel-monitor .ov-wrap');
+          return w ? getComputedStyle(w).containerType : null;
+        })(),
+        wrapWidth: (function(){
+          var w = document.querySelector('#panel-monitor .ov-wrap');
+          return w ? Math.round(w.getBoundingClientRect().width) : null;
+        })(),
+        /* ⚠️ v1.1.73：六卡的行 top（验证 3 列换行） */
+        rowTops: (function(){
+          return [...host.querySelectorAll('.ov-metric')]
+                 .map(function(c){ return Math.round(c.getBoundingClientRect().top); });
+        })(),
+        /* ⚠️ v1.1.73：存储卡右上角状态词 */
+        diskStateText: (function(){
+          var e = host.querySelector('[data-ov-state="disk"]');
+          return e ? e.textContent.trim() : null;
+        })(),
+        /* ⚠️ v1.1.73：数字与单位的间距 */
+        numUnitGap: (function(){
+          var v = host.querySelector('[data-ov-val="cpuV"]');
+          var u = host.querySelector('[data-ov-unit="cpuU"]');
+          if (!v || !u) return -1;
+          var vr = v.getBoundingClientRect(), ur = u.getBoundingClientRect();
+          return Math.round((ur.left - vr.right) * 10) / 10;
+        })(),
+        /* ⚠️ v1.1.74：标题行已删除 / 数字与副标题间距 / 相对卡顶偏移 */
+        hasTitleRow: !!document.querySelector('.ov-wrap-head'),
+        dmToSubGap: (function(){
+          var c = host.querySelector('[data-ov="cpu"]');
+          var d = c.querySelector('[data-ov-val="cpuV"]');
+          var s = c.querySelector('[data-ov-sub="cpu"]');
+          if (!d || !s) return -1;
+          var dr = d.getBoundingClientRect(), sr = s.getBoundingClientRect();
+          return Math.round((sr.top - dr.bottom) * 10) / 10;
+        })(),
+        dmRelTop: (function(){
+          var c = host.querySelector('[data-ov="cpu"]');
+          var d = c.querySelector('[data-ov-val="cpuV"]');
+          if (!c || !d) return -1;
+          return Math.round(d.getBoundingClientRect().top - c.getBoundingClientRect().top);
+        })(),
+        subRelTop: (function(){
+          var c = host.querySelector('[data-ov="cpu"]');
+          var s = c.querySelector('[data-ov-sub="cpu"]');
+          if (!c || !s) return -1;
+          return Math.round(s.getBoundingClientRect().top - c.getBoundingClientRect().top);
+        })(),
+        gaugePos: (function(){
+          var e = host.querySelector('[data-ov="cpu"] .ov-m-gauge');
+          return e ? getComputedStyle(e).position : null;
+        })(),
         /* ⚠️ v1.1.72：概览区**外层不再是 .card 卡片**
            （老板：「不要最外层的卡片，直接呈现内部的卡片即可」） */
         outerHasCard: (function(){
@@ -374,8 +440,8 @@ def main():
     ad = ov.get('alignDiffs') or []
     ck.check('数字与仪表中心对齐（5 张仪表 diff ≤ 2px）',
              len(ad) == 5 and all(d <= 2 for d in ad), str(ad))
-    ck.check('仪表尺寸 64×64（v1.1.72 压缩后）',
-             abs((ov.get('gaugeW') or 0) - 64) < 2, str(ov.get('gaugeW')))
+    ck.check('仪表尺寸 84×84（v1.1.73 放大后）',
+             abs((ov.get('gaugeW') or 0) - 84) < 2, str(ov.get('gaugeW')))
 
     # ----------------------------------------------------------
     ck.section('5c. v1.1.72：外层卡片 / 底部留白 / 趋势线')
@@ -396,6 +462,45 @@ def main():
         ck.check('%s 卡趋势线已绘制' % _k,
                  _x.get('spark') == 1 and (_x.get('lines', 0) + _x.get('dots', 0)) >= 1,
                  str(_x))
+
+    # ----------------------------------------------------------
+    ck.section('5d. v1.1.73：3 列 / 存储状态 / 仪表放大 / 数字居中')
+    # ----------------------------------------------------------
+    ck.check('概览容器挂了 container-type（容器查询生效）',
+             ov.get('wrapContainerType') in ('inline-size', 'size'),
+             str(ov.get('wrapContainerType')))
+    ck.check('容器宽度 ≥ 780px（软件默认宽度下应 3 列）',
+             (ov.get('wrapWidth') or 0) >= 780, str(ov.get('wrapWidth')))
+    ck.check('默认宽度下栅格 = 3 列',
+             ov.get('gridCols') and len(ov['gridCols'].split()) == 3,
+             str(ov.get('gridCols')))
+    _rt = ov.get('rowTops') or []
+    ck.check('第 1/2/3 张卡同一行、第 4 张换行（3 列验证）',
+             len(_rt) >= 4 and _rt[0] == _rt[1] == _rt[2] and _rt[3] != _rt[0],
+             str(_rt))
+    ck.check('存储卡右上角有状态词', bool(ov.get('diskStateText')),
+             str(ov.get('diskStateText')))
+    _iv = ov.get('gaugeIcoVisual') or {}
+    ck.check('仪表中心图标实际绘制尺寸 ≥ 20px（v1.1.73 放大）',
+             (_iv.get('w') or 0) >= 20, str(_iv))
+    ck.check('数字与单位间距 ≤ 3px（v1.1.73 调小）',
+             0 <= (ov.get('numUnitGap') or -1) <= 3, str(ov.get('numUnitGap')))
+
+    # ----------------------------------------------------------
+    ck.section('5e. v1.1.74：删标题行 / 上下移 15px / 间距 10px / 缩小卡高')
+    # ----------------------------------------------------------
+    ck.check('概览区标题行已删除（.ov-wrap-head 不存在）',
+             ov.get('hasTitleRow') is False, str(ov.get('hasTitleRow')))
+    ck.check('数字相对卡顶 = 51px（v1.1.73 的 66 - 15）',
+             abs((ov.get('dmRelTop') or -1) - 51) <= 2, str(ov.get('dmRelTop')))
+    ck.check('副标题相对卡顶 = 93px',
+             abs((ov.get('subRelTop') or -1) - 93) <= 2, str(ov.get('subRelTop')))
+    ck.check('数字字形底 → 副标题顶 = 10px',
+             abs((ov.get('dmToSubGap') or -1) - 10) <= 1, str(ov.get('dmToSubGap')))
+    ck.check('卡片高度 ≤ 175px（v1.1.73 是 192px）',
+             bool(hs) and max(hs) <= 175, str(hs))
+    ck.check('仪表是绝对定位（不撑高卡片）',
+             ov.get('gaugePos') == 'absolute', str(ov.get('gaugePos')))
 
     # ----------------------------------------------------------
     ck.section('6. 趋势层')

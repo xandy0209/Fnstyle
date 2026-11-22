@@ -5060,30 +5060,36 @@ html.mon-scroll-lock body {
    ===================================================================== */
 
 /* 轻量标题行（替代原来的 .card > header） */
-.ov-wrap { margin-bottom: .85rem; }
-.ov-wrap-head {
-  display: flex;
-  align-items: baseline;
-  gap: .6rem;
-  flex-wrap: wrap;
-  margin-bottom: .6rem;
-  padding: 0 .15rem;
-}
-.ov-wrap-title {
-  font-size: .95rem;
-  font-weight: 620;
-  color: var(--text-primary);
-  letter-spacing: .01em;
-}
-.ov-wrap-hint {
-  font-size: .78rem;
-  color: var(--text-muted);
-}
+/* ⚠️ v1.1.74 老板反馈「第一个红框中的内容删除」——
+   删掉概览区顶部的标题行（「系统重要内容概览 六项核心指标 · 点击卡片查看详情」）。
+   .ov-wrap 现在只作为**容器查询的锚点**（container-type: inline-size），
+   不再有标题行，margin-bottom 收到 .5rem。 */
+.ov-wrap { margin-bottom: .5rem; }
 
 .ov-metrics {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: .85rem;
+}
+/* ⚠️ v1.1.73 老板反馈「软件最新宽度显示就默认为3个卡片一行显示，目前还是2个」——
+   根因：v1.1.72 的窄屏断点是 **max-width: 1100px（按视口）**，
+   老板窗口宽度落在 1100~1180 之间 → 触发断点 → 只显示 2 列。
+   而概览容器本身有 max-width:1180px（内容宽 1135px），三列各 369px 完全放得下。
+
+   正解：**按容器宽度**决定列数（container query），而不是视口宽度 ——
+   视口窄不代表容器窄（容器有 max-width 上限），视口断点会误伤。
+   ① 主规则用 @container，容器 ≥ 780px → 3 列；
+   ② 保留视口断点作为**兜底**（不支持 container query 的老浏览器），
+      阈值从 1100 下调到 **860**（跟全站 .wrap 的 860 断点对齐）。 */
+.ov-wrap { container-type: inline-size; container-name: ovwrap; }
+@container ovwrap (min-width: 780px) {
+  .ov-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@container ovwrap (max-width: 779px) {
+  .ov-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container ovwrap (max-width: 520px) {
+  .ov-metrics { grid-template-columns: 1fr; }
 }
 /* ⚠️ v1.1.70：卡片用 **grid**（对齐 fnmonitor 的 .metric）——
    两列（数字区 | 仪表区），仪表在数字**右侧**同排。
@@ -5107,12 +5113,12 @@ html.mon-scroll-lock body {
   min-width: 0;
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
+  /* ⚠️ v1.1.74：仪表脱离 grid 流后只剩 4 个在流内的子元素
+     （m-top / m-main / m-sub / m-foot）→ 4 行。 */
   grid-template-rows: auto auto auto auto;
-  column-gap: .8rem;
   row-gap: .2rem;
-  align-items: center;
-  transition: border-color .26s ease, transform .26s ease, box-shadow .26s ease;
+  align-items: start;  transition: border-color .26s ease, transform .26s ease, box-shadow .26s ease;
 }
 .ov-metric:hover {
   border-color: var(--border-strong);
@@ -5158,25 +5164,79 @@ html.mon-scroll-lock body {
   flex: none;
 }
 
+/* ⚠️ v1.1.74 老板反馈「第二个红框和第三个红框的内容都往上移动 15px，
+   同时第三红框与第二个红框的间距调整为 10px。整体缩小卡片的高度」——
+   ① 去掉固定 height:84px（那是为了跟仪表等高才加的），
+      数字区改为**流式高度**（内容多高就多高），
+      卡片总高由内容决定 → 可以大幅缩小；
+   ② 仪表改为**绝对定位**（top/right），彻底脱离 grid 流，
+      不再参与行高计算 —— 这是能缩小卡片高度的关键；
+   ③ 数字与副标题的间距由 row-gap(3.2px) 提到 **10px**。
+   （原 grid 行锁高：m-top 24 / m-main 84 / m-sub 18 / m-foot 30 = 156px + padding 20 + gap = 192px） */
 .ov-m-main {
   grid-column: 1;
   grid-row: 2;
-  align-self: center;
+  align-self: start;
   display: flex;
   /* ⚠️ v1.1.71：align-items 必须是 **center**（不是 baseline）——
      baseline 会把数字按文字基线对齐，而 .ov-dm 的 line-height < 1
      让行盒比字形矮 → 字形相对行盒**下沉 19px**，与仪表圆心错位。 */
   align-items: center;
-  gap: .3rem;
+  gap: .25rem;
   min-width: 0;
-  height: 62px;   /* = 仪表高度 → 六卡等高 */
+  /* ⚠️ v1.1.74：锁高 **48px**（不是 32px）。
+     为什么要 48：六张卡的 m-main 在 .ov-metrics 里**共享 grid 行高** ——
+     网络卡内部是上下两行（net-vals，实测内容高 ~42px），
+     它会把这一行的 grid 行撑高，而同排的其余卡也一起被撑高
+     → 实测出现 147px vs 211px 的分裂。
+     统一锁 48px → 六卡 m-main 行高一致 → 卡片等高，
+     且 48px 仍装得下网络卡的两行（42px）。 */
+  height: 48px;
+  /* ⚠️ v1.1.74：右侧留出仪表的位置（84px + 间距），
+     避免长数字（如 100%）被仪表压住 */
+  padding-right: 92px;
+}
+/* ⚠️ v1.1.74 老板反馈「第二个红框和第三个红框的内容都往上移动 15px，
+   同时第三红框与第二个红框的间距调整为 10px」——
+   精确换算（以卡片顶为基准）：
+   · v1.1.73：数字相对卡顶 66px、副标题相对卡顶 128px；
+     数字底(66+32=98) → 副标题顶(128) 的间距 = **30px**；
+   · 目标：数字 66 - 15 = **51px**；
+     副标题 = 51 + 32(数字高) + 10(新间距) = **93px**；
+   · 当前实现实测：数字 48px（差 +3）、副标题 98px（差 **-5**）。
+   用**相对定位**做像素级微调（不改变行高 → 卡片总高不受影响）。 */
+.ov-metric[data-ov="cpu"] .ov-dnum,
+.ov-metric[data-ov="mem"] .ov-dnum,
+.ov-metric[data-ov="disk"] .ov-dnum,
+.ov-metric[data-ov="temp"] .ov-dnum,
+.ov-metric[data-ov="pwr"] .ov-dnum {
+  position: relative;
+  top: 3px;
+}
+.ov-metric[data-ov="cpu"] .ov-m-sub,
+.ov-metric[data-ov="mem"] .ov-m-sub,
+.ov-metric[data-ov="disk"] .ov-m-sub,
+.ov-metric[data-ov="temp"] .ov-m-sub,
+.ov-metric[data-ov="pwr"] .ov-m-sub,
+.ov-metric[data-ov="net"] .ov-m-sub {
+  position: relative;
+  top: -5px;
+}
+/* ⚠️ v1.1.74：网络卡**没有仪表**（仪表只有 cpu/mem/disk/temp/pwr 五张），
+   它的 .ov-m-main 里装的是 .ov-net-vals（上下行两行，横跨整列），
+   不需要给仪表留位置 → 去掉 padding-right，否则会被双重收窄。
+   高度也不锁 32px（net-vals 是两行，要 ~64px）。 */
+.ov-metric[data-ov="net"] .ov-m-main {
+  padding-right: 0;
+  height: 48px;
 }
 
 .ov-dnum {
   --dm-h: 32px;
   display: inline-flex;
   align-items: flex-end;
-  gap: calc(var(--dm-h) * .16);
+  /* ⚠️ v1.1.73：数字与单位间距 .16 → .06（老板：「间距调小」） */
+  gap: calc(var(--dm-h) * .06);
   white-space: nowrap;
   line-height: 1;
   min-width: 0;
@@ -5202,21 +5262,40 @@ html.mon-scroll-lock body {
 }
 .ov-dnum > .ov-unit:empty { display: none; }
 
-/* 网络卡：上下行两行（对齐 fnmonitor 的 net-vals） */
+/* 网络卡：上下行两行（对齐 fnmonitor 的 net-vals）
+   ⚠️ v1.1.73：高度 62 → 84px（与新仪表高度一致，六卡等高）
+   ⚠️ v1.1.74：仪表改绝对定位后，网络卡**没有仪表**，
+      不需要给仪表留位置 → padding-right 归零。
+      高度改回流式（上下两行内容自然撑开）。 */
 .ov-net-vals {
   grid-column: 1 / -1;
-  align-self: center;
+  align-self: start;
   display: grid;
+  /* ⚠️ v1.1.74：显式声明两行，且**不让行被拉伸**——
+     grid 行默认按内容均分剩余空间，
+     .row 会被拉伸到 46px（内容只有 23px），
+     导致网络卡比其余五卡高 64px、六卡不等高。
+     grid-auto-rows: auto + align-content:start → 每行贴合内容。 */
+  grid-template-rows: auto auto;
+  grid-auto-rows: auto;
   gap: .22rem;
   min-width: 0;
-  height: 62px;
-  align-content: center;
+  height: auto;
+  align-content: start;
+  /* ⚠️ v1.1.74：与副标题的间距 10px（同样抵消 row-gap 3.2px） */
+  margin-top: 6.8px;
 }
 .ov-net-vals .row {
   display: flex;
   align-items: flex-end;
   gap: .4rem;
   min-width: 0;
+  /* ⚠️ v1.1.74：`.row` 是 .ov-net-vals（grid）的 item，
+     默认 align-self:stretch → 会被 grid 行高拉伸
+     （实测行高 46px，而内容只有 23px），
+     导致网络卡比其余五卡高 64px、六卡不等高。
+     这里改成 start → 行高贴合内容。 */
+  align-self: start;
 }
 .ov-net-vals .row .ov-dnum { --dm-h: 23px; }
 .ov-net-vals .row.sec .ov-dnum { --dm-h: 15px; }
@@ -5232,15 +5311,38 @@ html.mon-scroll-lock body {
 .ov-arrow-svg { width: 100%; height: 100%; display: block; }
 .ov-arrow-ico { color: inherit; }
 
-/* 环形仪表 */
+/* 环形仪表
+   ⚠️ v1.1.73 老板反馈「每个卡片中右侧环形图中间的图标需放大，目前太小一点都不协调，
+   同时放大一些环形图」——
+   仪表 64 → **84px**，中心图标 17 → **26px**
+   （官方图标本身就是 24×24 viewBox，26px 基本原尺寸，不再缩得太小看不清）。 */
+/* ⚠️ v1.1.74：仪表改为**绝对定位**（右上角）——
+   之前是 grid 的第 2 列（grid-column:2 / grid-row:2），
+   它的 84px 高度会**撑高第 2 行** → 卡片总高被仪表绑架（192px）。
+   老板要求「整体缩小卡片的高度」→ 必须让仪表脱离 grid 流，
+   改为 position:absolute 锚在卡片右上角。
+   top: .75rem 对齐卡片 padding-top，与标题行基线视觉齐平。 */
 .ov-m-gauge {
-  grid-column: 2;
-  grid-row: 2;
-  align-self: center;
-  width: 64px;
-  height: 64px;
+  position: absolute;
+  top: .75rem;
+  right: .875rem;
+  width: 84px;
+  height: 84px;
   display: grid;
   place-items: center;
+  pointer-events: none;
+}
+/* ⚠️ v1.1.74：数字区锁高 48px 后，数字的字形中心比仪表圆心**低** 9px
+   （dm.cy=1649 vs gauge.cy=1640）→ 仪表要**下移** 9px 才能同一水平线。
+   ⚠️ 之后又把数字用 relative 下移了 3px（对齐「上移 15px」），
+      所以仪表这里改成下移 9 + 3 = **12px**。
+   （老板：「与右侧的环形图水平居中显示」） */
+.ov-metric[data-ov="cpu"] .ov-m-gauge,
+.ov-metric[data-ov="mem"] .ov-m-gauge,
+.ov-metric[data-ov="disk"] .ov-m-gauge,
+.ov-metric[data-ov="temp"] .ov-m-gauge,
+.ov-metric[data-ov="pwr"] .ov-m-gauge {
+  top: calc(.75rem + 12px);
 }
 .ov-gauge { width: 100%; height: 100%; display: block; }
 .ov-gauge-track { stroke: var(--bg-hover); }
@@ -5261,6 +5363,14 @@ html.mon-scroll-lock body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* ⚠️ v1.1.74 老板反馈「第三红框与第二个红框的间距调整为 10px」——
+     数字区与副标题的间距：原来靠 grid 的 row-gap(3.2px)，
+     现在用 margin-top 精确给到 **10px**。
+     ⚠️ margin-top 与 row-gap 会**叠加**（实际 = 10 + 3.2 = 13.2px），
+        所以这里用负 margin 把 row-gap 抵消掉 → 净间距正好 10px。 */
+  margin-top: 6.8px;
+  /* 右侧同样留出仪表位置 */
+  padding-right: 92px;
 }
 
 /* 迷你趋势线（对齐 fnmonitor 的 .spark：
@@ -5325,8 +5435,12 @@ html.mon-scroll-lock body {
   white-space: nowrap;
 }
 
-/* 窄屏：两列 / 一列 */
-@media (max-width: 1100px) {
+/* 窄屏：两列 / 一列
+   ⚠️ v1.1.73：阈值 1100 → **860**。
+   原 1100px 断点按**视口**判断，但概览容器有 max-width:1180px 的上限 ——
+   视口 1100~1180 时容器仍是 1135px（放得下三列），却被误判成窄屏 → 只显示 2 列。
+   860px 跟全站 .wrap 的断点对齐，且真正的窄屏由上面的 @container 兜底。 */
+@media (max-width: 860px) {
   .ov-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 680px) {

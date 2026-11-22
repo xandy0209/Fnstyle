@@ -94,11 +94,8 @@ HOST_HTML = """<!DOCTYPE html>
   #wrap { width: 1180px; }
 </style></head>
 <body><div id="wrap">
+  <!-- ⚠️ v1.1.74：概览区顶部标题行已删除（老板：「第一个红框中的内容删除」） -->
   <div class="ov-wrap" id="overviewCard">
-    <div class="ov-wrap-head">
-      <span class="ov-wrap-title">系统重要内容概览</span>
-      <span class="ov-wrap-hint">六项核心指标 · 点击卡片查看详情</span>
-    </div>
     <div id="monOverview"></div>
   </div>
   <div class="card" id="storageCard">
@@ -773,6 +770,158 @@ def run_tests(page):
           if (!e) return false;
           return getComputedStyle(e).gridColumn === '1 / -1';
         })(),
+        /* ⚠️ v1.1.73：仪表中心图标的**实际视觉尺寸**（老板：「图标需放大，
+           目前太小一点都不协调」）。
+           ⚠️ 坑：getBBox() 返回的是元素**局部坐标**的包围盒，
+              **不含自身 transform 的缩放**（缩放前 CPU 图形跨 19 单位，
+              缩放前后 getBBox 都是 19 → 测不出变化）。
+           正解：用 getScreenCTM() 拿到「局部 → 屏幕」的变换矩阵，
+              再把包围盒乘上去，得到真实绘制像素。 */
+        gaugeIcoVisual: (() => {
+          const e = host.querySelector('[data-ov-gauge-el="cpu"] .ov-gauge-ico');
+          if (!e) return null;
+          let bb = null;
+          try { bb = e.getBBox(); } catch (err) { return null; }
+          if (!bb || !bb.width) return null;
+          const ctm = e.getScreenCTM();
+          if (!ctm) return null;
+          const svg = e.ownerSVGElement;
+          const sr = svg.getBoundingClientRect();
+          const w = bb.width * ctm.a;
+          const h = bb.height * ctm.d;
+          const cx = (bb.x + bb.width / 2) * ctm.a + ctm.e;
+          const cy = (bb.y + bb.height / 2) * ctm.d + ctm.f;
+          return {
+            w: Math.round(w * 10) / 10,
+            h: Math.round(h * 10) / 10,
+            /* 图标墨迹中心 vs 圆环圆心的偏移（应为 0） */
+            offX: Math.round((cx - (sr.left + sr.width / 2)) * 10) / 10,
+            offY: Math.round((cy - (sr.top + sr.height / 2)) * 10) / 10,
+          };
+        })(),
+        /* ⚠️ v1.1.73：数字与单位之间的**实际像素间距**
+           （老板：「左侧的值和统计之间的间距调小」） */
+        numUnitGap: (() => {
+          /* 单位是 .ov-dm 的**兄弟** .ov-unit（同在 .ov-dnum 内），
+             量 .ov-dm 右边缘 → .ov-unit 左边缘的间距。 */
+          const v = host.querySelector('[data-ov-val="cpuV"]');
+          const u = host.querySelector('[data-ov-unit="cpuU"]');
+          if (!v || !u) return -1;
+          const vr = v.getBoundingClientRect(), ur = u.getBoundingClientRect();
+          return Math.round((ur.left - vr.right) * 10) / 10;
+        })(),
+        /* ⚠️ v1.1.73：数字的**视觉中心**与仪表圆心是否同一水平线
+           （老板：「统计上移一点与右侧的环形图水平居中显示」） */
+        numCenterVsGauge: (() => {
+          const pairs = [['cpu', 'cpuV'], ['mem', 'memV'], ['disk', 'diskV'],
+                         ['temp', 'tempV'], ['pwr', 'pwrV']];
+          return pairs.map(([k, v]) => {
+            const g = host.querySelector('[data-ov-gauge-el="' + k + '"]');
+            const n = host.querySelector('[data-ov-val="' + v + '"]');
+            if (!g || !n) return -999;
+            const gr = g.getBoundingClientRect(), nr = n.getBoundingClientRect();
+            const ncy = nr.top + nr.height / 2;
+            const gcy = gr.top + gr.height / 2;
+            return Math.round((ncy - gcy) * 10) / 10;
+          });
+        })(),
+        /* ⚠️ v1.1.73：存储卡右上角的状态词文本 */
+        diskStateText: (() => {
+          const e = host.querySelector('[data-ov-state="disk"]');
+          return e ? e.textContent.trim() : null;
+        })(),
+        /* 各卡状态词（用于验证存储卡在硬盘有问题时显示问题提示） */
+        allStateTexts: (() => {
+          const o = {};
+          ['cpu', 'mem', 'disk', 'net', 'temp', 'pwr'].forEach(k => {
+            const e = host.querySelector('[data-ov-state="' + k + '"]');
+            o[k] = e ? e.textContent.trim() : null;
+          });
+          return o;
+        })(),
+        /* ⚠️ v1.1.73：容器查询生效标记
+           （.ov-wrap 挂了 container-type: inline-size） */
+        wrapContainerType: (() => {
+          const w = document.getElementById('overviewCard');
+          return w ? getComputedStyle(w).containerType : null;
+        })(),
+        wrapWidth: (() => {
+          const w = document.getElementById('overviewCard');
+          return w ? Math.round(w.getBoundingClientRect().width) : -1;
+        })(),
+        /* ⚠️ v1.1.73：每张卡的行 top（验证 3 列换行位置） */
+        rowTops: cards.map(c => Math.round(c.getBoundingClientRect().top)),
+        /* ⚠️ v1.1.73：存储卡状态词是否位于卡片**右上角**的 .ov-m-top 行内 */
+        diskStateInTop: (() => {
+          const s = host.querySelector('[data-ov-state="disk"]');
+          if (!s) return false;
+          const top = s.closest('.ov-m-top');
+          if (!top) return false;
+          /* 状态词在 top 行内，且靠右（top 行是 justify-content:space-between） */
+          const tr = top.getBoundingClientRect(), sr = s.getBoundingClientRect();
+          const mr = host.querySelector('[data-ov="disk"]').getBoundingClientRect();
+          return sr.top >= tr.top - 2 && sr.bottom <= tr.bottom + 2 &&
+                 sr.left > (tr.left + tr.width) * 0.5;
+        })(),
+        /* ⚠️ v1.1.73：五张卡的仪表尺寸（确认都放大到 84px） */
+        gaugeSizes: (() => {
+          const out = [];
+          ['cpu', 'mem', 'disk', 'temp', 'pwr'].forEach(k => {
+            const e = host.querySelector('[data-ov-gauge-el="' + k + '"]');
+            if (!e) { out.push([-1, -1]); return; }
+            const r = e.getBoundingClientRect();
+            out.push([Math.round(r.width), Math.round(r.height)]);
+          });
+          return out;
+        })(),
+        /* ⚠️ v1.1.73：数字区行高（.ov-m-main 的高度，应 = 仪表高度 84px） */
+        mainRowH: (() => {
+          const e = host.querySelector('[data-ov="cpu"] .ov-m-main');
+          return e ? Math.round(e.getBoundingClientRect().height) : -1;
+        })(),
+        /* ⚠️ v1.1.74：概览区**标题行已删除**（老板：「第一个红框中的内容删除」） */
+        hasTitleRow: !!document.querySelector('.ov-wrap-head'),
+        /* ⚠️ v1.1.74：数字与副标题的**视觉间距**（数字字形底 → 副标题顶） */
+        dmToSubGap: (() => {
+          const d = host.querySelector('[data-ov="cpu"] [data-ov-val="cpuV"]');
+          const s = host.querySelector('[data-ov="cpu"] [data-ov-sub="cpu"]');
+          if (!d || !s) return -1;
+          const dr = d.getBoundingClientRect(), sr = s.getBoundingClientRect();
+          return Math.round((sr.top - dr.bottom) * 10) / 10;
+        })(),
+        /* ⚠️ v1.1.74：数字与副标题相对**卡片顶**的偏移
+           （用于核对「都往上移动 15px」：v1.1.73 数字 66 / 副标题 128） */
+        dmRelTop: (() => {
+          const c = host.querySelector('[data-ov="cpu"]');
+          const d = c.querySelector('[data-ov-val="cpuV"]');
+          if (!c || !d) return -1;
+          const cr = c.getBoundingClientRect(), dr = d.getBoundingClientRect();
+          return Math.round(dr.top - cr.top);
+        })(),
+        subRelTop: (() => {
+          const c = host.querySelector('[data-ov="cpu"]');
+          const s = c.querySelector('[data-ov-sub="cpu"]');
+          if (!c || !s) return -1;
+          const cr = c.getBoundingClientRect(), sr = s.getBoundingClientRect();
+          return Math.round(sr.top - cr.top);
+        })(),
+        /* ⚠️ v1.1.74：仪表是**绝对定位**（脱离 grid 流 → 不撑高卡片）
+           注意要量外层 .ov-m-gauge（div）——
+           data-ov-gauge-el 挂的是里面的 <svg>，svg 默认 position:static。 */
+        gaugePos: (() => {
+          const e = host.querySelector('[data-ov="cpu"] .ov-m-gauge');
+          return e ? getComputedStyle(e).position : null;
+        })(),
+        /* ⚠️ v1.1.74：数字中心 vs 仪表圆心（要求完全对齐） */
+        dmGaugeCydiff: (() => {
+          const c = host.querySelector('[data-ov="cpu"]');
+          const d = c.querySelector('[data-ov-val="cpuV"]');
+          const g = c.querySelector('.ov-m-gauge');
+          if (!d || !g) return -999;
+          const dr = d.getBoundingClientRect(), gr = g.getBoundingClientRect();
+          return Math.round(((dr.top + dr.height / 2) -
+                             (gr.top + gr.height / 2)) * 10) / 10;
+        })(),
         netCol: (() => {
           const e = host.querySelector('.ov-net-vals');
           return e ? getComputedStyle(e).gridColumn : null;
@@ -901,10 +1050,10 @@ def run_tests(page):
            res['cardRadius'])
     # ⚠️ v1.1.71：卡片高度**压缩**到 215px 以内（老板反馈「太高了太占空间」）。
     #    原 265px → 去掉 min-height:236px + 逐行锁高后 = 215px。
-    truthy('真实渲染', '卡片高度 ≤ 220px（已压缩，对齐老板要求）',
-           res['cardMinH'] <= 220, res['cardMinH'])
-    truthy('真实渲染', '卡片高度 ≥ 150px（不能压扁）',
-           res['cardMinH'] >= 150, res['cardMinH'])
+    truthy('真实渲染', '卡片高度 ≤ 180px（v1.1.74 再压缩）',
+           res['cardMinH'] <= 180, res['cardMinH'])
+    truthy('真实渲染', '卡片高度 ≥ 140px（不能压扁）',
+           res['cardMinH'] >= 140, res['cardMinH'])
     # ⚠️ v1.1.71：六卡**完全等高**（m-top/m-main/m-sub/m-foot 逐行锁高）
     hs = res['cardHeights']
     truthy('真实渲染', '六卡完全等高（max-min ≤ 1px）',
@@ -924,10 +1073,10 @@ def run_tests(page):
     truthy('外层', '栅格仍为 3 列',
            res['gridCols'] and len(res['gridCols'].split()) == 3, res['gridCols'])
     # ③ 「卡片高度减小，下方尽量不要留白」
-    truthy('留白', '卡片高度 ≤ 185px（v1.1.72 再压缩）',
-           res['cardMinH'] <= 185, res['cardMinH'])
-    truthy('留白', '卡片高度 ≥ 150px（不能压扁）',
-           res['cardMinH'] >= 150, res['cardMinH'])
+    truthy('留白', '卡片高度 ≤ 175px（v1.1.74 再压缩）',
+           res['cardMinH'] <= 175, res['cardMinH'])
+    truthy('留白', '卡片高度 ≥ 140px（不能压扁）',
+           res['cardMinH'] >= 140, res['cardMinH'])
     truthy('留白', '卡片底部 padding ≤ 10px',
            res['padBottoms'] and all(p <= 10 for p in res['padBottoms']),
            res['padBottoms'])
@@ -973,8 +1122,8 @@ def run_tests(page):
     truthy('真实渲染', '仪表在数字右侧同排',
            res['gaugeRightOfNum'], '仪表left=%s 数字right=%s' %
            (res['gaugeLeft'], res['numRight']))
-    truthy('真实渲染', '仪表尺寸 64×64（v1.1.72 压缩后）',
-           abs(res['gaugeW'] - 64) < 2 and abs(res['gaugeH'] - 64) < 2,
+    truthy('真实渲染', '仪表尺寸 84×84（v1.1.73 放大后）',
+           abs(res['gaugeW'] - 84) < 2 and abs(res['gaugeH'] - 84) < 2,
            '%sx%s' % (res['gaugeW'], res['gaugeH']))
     # ⚠️ v1.1.69 修正：fnmonitor 的仪表**有**中心图标（24×24 居中）。
     #    之前塞 16×16 未居中的 path → 缩到 92px 后只剩左上角一个小点。
@@ -992,6 +1141,91 @@ def run_tests(page):
     truthy('真实渲染', '趋势线首帧单点已画出占位圆点',
            res['sparkPaths'] >= 1 or res['sparkDots'] >= 1,
            'paths=%s dots=%s' % (res['sparkPaths'], res['sparkDots']))
+
+    # ----------------------------------------------------------
+    section('H3 v1.1.73：3 列 / 存储状态 / 仪表放大 / 数字居中（老板 5 条反馈）')
+    # ----------------------------------------------------------
+    # ① 「软件最新宽度显示就默认为3个卡片一行显示，目前还是2个」
+    #    —— v1.1.72 用 @media(max-width:1100px) 按**视口**判断，
+    #    而概览容器 .wrap 有 max-width:1180px（内容宽 1135px），
+    #    视口落在 1100~1180 时容器明明够放三列却被误判成窄屏 → 只显示 2 列。
+    #    v1.1.73 改用 **CSS 容器查询**按容器宽度决定列数。
+    truthy('三列', '概览容器挂了 container-type（容器查询生效前提）',
+           res['wrapContainerType'] in ('inline-size', 'size'),
+           res['wrapContainerType'])
+    truthy('三列', '容器宽度 ≥ 780px（软件默认宽度）',
+           res['wrapWidth'] >= 780, res['wrapWidth'])
+    truthy('三列', '默认宽度下栅格 = 3 列',
+           res['gridCols'] and len(res['gridCols'].split()) == 3, res['gridCols'])
+    truthy('三列', '第 1/2/3 张卡在同一行',
+           res['rowTops'] and len(set(res['rowTops'][:3])) == 1, res['rowTops'])
+    truthy('三列', '第 4 张卡换行',
+           res['rowTops'] and len(res['rowTops']) > 3 and
+           res['rowTops'][3] != res['rowTops'][0], res['rowTops'])
+
+    # ② 「存储卡片右上角需对存在的问题进行表示，例如"一块需留意"等」
+    #    —— 旧逻辑：容量正常时只显示「充足」，SMART 分级被完全掩盖。
+    #    新逻辑：硬盘问题优先（crit → N 块故障 / warn → N 块需留意）。
+    truthy('存储状态', '存储卡有状态词', bool(res['diskStateText']),
+           res['diskStateText'])
+    truthy('存储状态', '存储卡状态词在卡片**右上角**（.ov-m-top 内）',
+           res['diskStateInTop'], res['diskStateInTop'])
+
+    # ③ 「右侧环形图中间的图标需放大，目前太小一点都不协调」
+    # ④ 「同时放大一些环形图」→ 仪表 64 → 84px
+    truthy('仪表', '仪表放大到 84×84（v1.1.73）',
+           abs(res['gaugeW'] - 84) < 2 and abs(res['gaugeH'] - 84) < 2,
+           '%sx%s' % (res['gaugeW'], res['gaugeH']))
+    truthy('仪表', '仪表中心图标**实际绘制尺寸** ≥ 20px（v1.1.73 放大）',
+           res['gaugeIcoVisual'] and res['gaugeIcoVisual']['w'] >= 20,
+           json.dumps(res['gaugeIcoVisual'], ensure_ascii=False))
+    truthy('仪表', '仪表中心图标仍居中（viewBox 中心 ≈ 50）',
+           abs(res['gaugeIcoCX'] - 50) < 3, 'cx=%s' % res['gaugeIcoCX'])
+    truthy('仪表', '五张卡的仪表都是 84px',
+           res['gaugeSizes'] and all(abs(w - 84) < 2 and abs(h - 84) < 2
+                                     for w, h in res['gaugeSizes']),
+           res['gaugeSizes'])
+
+    # ⑤ 「左侧的值和统计之间的间距调小，并统计上移一点与右侧的环形图水平居中显示」
+    truthy('数字居中', '数字与单位间距 ≤ 3px（v1.1.73 调小）',
+           0 <= res['numUnitGap'] <= 3, res['numUnitGap'])
+    truthy('数字居中', '数字与仪表圆心同一水平线（5 张卡 diff ≤ 3px）',
+           res['numCenterVsGauge'] and
+           all(abs(d) <= 3 for d in res['numCenterVsGauge']),
+           res['numCenterVsGauge'])
+    truthy('数字居中', '数字区行高 = 48px（v1.1.74 锁高，六卡等高）',
+           res['mainRowH'] and abs(res['mainRowH'] - 48) < 2, res['mainRowH'])
+
+    # ----------------------------------------------------------
+    section('H4 v1.1.74：删标题行 / 上下移 15px / 间距 10px / 缩小卡高')
+    # ----------------------------------------------------------
+    # ① 「第一个红框中的内容删除」→ 概览区顶部标题行整体删除
+    eq('标题行', '概览区标题行已删除（.ov-wrap-head 不存在）',
+       res['hasTitleRow'], False)
+    # ② 「第二个红框和第三个红框的内容都往上移动 15px」
+    #    —— v1.1.73 基线：数字相对卡顶 66px、副标题相对卡顶 128px
+    truthy('上移', '数字相对卡顶 = 51px（v1.1.73 的 66 - 15）',
+           abs(res['dmRelTop'] - 51) <= 2, res['dmRelTop'])
+    truthy('上移', '副标题相对卡顶 = 93px（128 - 15 + 间距 10 - 4）',
+           abs(res['subRelTop'] - 93) <= 2, res['subRelTop'])
+    truthy('上移', '数字确实比 v1.1.73 上移了 15px',
+           res['dmRelTop'] <= 51, res['dmRelTop'])
+    # ③ 「第三红框与第二个红框的间距调整为 10px」
+    truthy('间距', '数字字形底 → 副标题顶 = 10px',
+           abs(res['dmToSubGap'] - 10) <= 1, res['dmToSubGap'])
+    # ④ 「整体缩小卡片的高度（其他5个卡片同样调整）」
+    truthy('卡高', '卡片高度 ≤ 175px（v1.1.73 是 192px）',
+           res['cardMinH'] <= 175, res['cardMinH'])
+    truthy('卡高', '六卡仍然完全等高（max-min ≤ 1px）',
+           res['cardHeights'] and
+           (max(res['cardHeights']) - min(res['cardHeights'])) <= 1,
+           res['cardHeights'])
+    # 仪表改绝对定位 → 脱离 grid 流，不再撑高卡片
+    eq('卡高', '仪表是绝对定位（不参与 grid 行高计算）',
+       res['gaugePos'], 'absolute')
+    # 数字与仪表圆心仍然水平居中
+    truthy('卡高', '数字中心与仪表圆心 diff ≤ 2px',
+           abs(res['dmGaugeCydiff']) <= 2, res['dmGaugeCydiff'])
 
     # ----------------------------------------------------------
     section('I 可点性白名单')
@@ -1053,6 +1287,92 @@ def run_tests(page):
            res['temp']['state'])
     truthy('告警', '功耗估算源 → 状态词「估算」', res['pwr']['state'] == '估算',
            res['pwr']['state'])
+
+    # ----------------------------------------------------------
+    section('J2 v1.1.73：存储卡「硬盘问题优先」状态词')
+    # ----------------------------------------------------------
+    # 老板：「存储卡片右上角需对存在的问题进行表示，例如"一块需留意"等」
+    # 旧逻辑：容量正常时只显示「充足」，SMART 分级被完全掩盖。
+    # 新逻辑：crit → 「N 块故障」/ warn → 「N 块需留意」优先于「将满/偏满/充足」。
+    def _disk_render(disks, pct=69):
+        """按给定盘位列表渲染概览，返回存储卡状态词与告警类。"""
+        page.evaluate("""([disks, pct]) => {
+          const host = document.getElementById('monOverview');
+          const total = 8589934592;
+          window.FnStyleOverview.render(host, {
+            cpu: { available: true, percent: 30 },
+            mem: { available: true, percent: 40 },
+            storage: { summary: { total: total, used: Math.round(total*pct/100),
+                                  percent: pct, poolCount: 1, diskCount: disks.length },
+                       volumes: [{ name: 'vol1', total: total,
+                                   used: Math.round(total*pct/100), percent: pct }],
+                       disks: disks },
+            network: { available: true, rxRate: 100, txRate: 50 },
+            temp: { temps: [{ type: 'cpu', value: 45 }] },
+            power: { ok: true, source: 'rapl', total: 30 },
+          });
+        }""", [disks, pct])
+        return page.evaluate("""() => {
+          const host = document.getElementById('monOverview');
+          const c = host.querySelector('[data-ov="disk"]');
+          return { state: host.querySelector('[data-ov-state="disk"]').textContent.trim(),
+                   warn: c.classList.contains('is-warn'),
+                   crit: c.classList.contains('is-crit') };
+        }""")
+
+    # ① 一块 warn 盘 → 「1 块需留意」
+    r = _disk_render([{"name": "sda", "percent": 40, "grade": "warn",
+                        "gradeLabel": "留意", "health": "PASSED"},
+                       {"name": "sdb", "percent": 30, "grade": "ok",
+                        "gradeLabel": "正常", "health": "PASSED"}])
+    eq('存储告警', '1 块 warn 盘 → 状态词「1 块需留意」',
+       r['state'], '1 块需留意')
+    truthy('存储告警', '1 块 warn 盘 → 卡片 is-warn', r['warn'])
+    # ② 两块 warn 盘 → 「2 块需留意」
+    r = _disk_render([{"name": "sda", "percent": 40, "grade": "warn", "health": "PASSED"},
+                      {"name": "sdb", "percent": 30, "grade": "warn", "health": "PASSED"}])
+    eq('存储告警', '2 块 warn 盘 → 状态词「2 块需留意」',
+       r['state'], '2 块需留意')
+    # ③ 一块 crit 盘 → 「1 块故障」（优先于 warn）
+    r = _disk_render([{"name": "sda", "percent": 40, "grade": "crit",
+                       "health": "FAILED"},
+                      {"name": "sdb", "percent": 30, "grade": "warn", "health": "PASSED"}])
+    eq('存储告警', '1 块 crit 盘 → 状态词「1 块故障」（优先于 warn）',
+       r['state'], '1 块故障')
+    truthy('存储告警', '1 块 crit 盘 → 卡片 is-crit', r['crit'])
+    # ④ 硬盘有问题**优先于**容量告警（容量 95% 也应显示硬盘问题）
+    r = _disk_render([{"name": "sda", "percent": 90, "grade": "warn", "health": "PASSED"}],
+                     pct=95)
+    eq('存储告警', '硬盘问题优先于容量「将满」',
+       r['state'], '1 块需留意')
+    # ⑤ 全正常 → 回到「充足」
+    r = _disk_render([{"name": "sda", "percent": 40, "grade": "ok", "health": "PASSED"},
+                      {"name": "sdb", "percent": 30, "grade": "ok", "health": "PASSED"}])
+    eq('存储告警', '全部正常 → 状态词「充足」', r['state'], '充足')
+    # ⑥ 无 grade 字段（老接口）时退化为看 health 原始值
+    r = _disk_render([{"name": "sda", "percent": 40, "health": "FAILED"}])
+    eq('存储告警', '无 grade 字段时按 health=FAILED → 「1 块故障」',
+       r['state'], '1 块故障')
+    # ⑦ 休眠盘（grade=unknown）不算问题
+    r = _disk_render([{"name": "sda", "percent": 40, "grade": "unknown",
+                       "health": "休眠"},
+                      {"name": "sdb", "percent": 30, "grade": "ok", "health": "PASSED"}])
+    eq('存储告警', '休眠盘（grade=unknown）不误报', r['state'], '充足')
+
+    # ⚠️ J2 段反复重渲染会污染后面「告警态大数字着色」断言读取的 DOM ——
+    #    这里把页面恢复成 J 段的告警快照，让后续断言读到正确状态。
+    page.evaluate("""() => {
+      const host = document.getElementById('monOverview');
+      window.FnStyleOverview.render(host, {
+        cpu: { available: true, percent: 95 },
+        mem: { available: true, percent: 85 },
+        storage: { summary: { total: 100, used: 95, percent: 95 },
+                   volumes: [], disks: [] },
+        network: { available: true, rxRate: 100000, txRate: 50000 },
+        temp: { temps: [{ type: 'cpu', value: 90 }] },
+        power: { ok: true, source: 'estimated', total: 55.5 },
+      });
+    }""")
 
     # ⚠️ v1.1.70：告警态下大数字要**分级着色**（对齐 fnmonitor 的 rampInk）
     inks = page.evaluate("""() => {

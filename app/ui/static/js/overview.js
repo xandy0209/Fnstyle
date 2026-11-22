@@ -253,10 +253,21 @@
     });
     g.appendChild(val);
     if (iconParts && iconParts.length) {
-      /* ⚠️ v1.1.72：仪表 76 → 64px，图标同步缩到 17×17，
-         保持官方比例（24/92 ≈ 26% → 17/64 ≈ 26.6%）。
-         偏移 (100-17)/2 = 41.5 → 正好居中；缩放 17/24 = 0.7083。 */
-      var ig = svgEl('g', { transform: 'translate(41.5 41.5) scale(0.7083)' });
+      /* ⚠️ v1.1.73：仪表 64 → 84px，中心图标放大（老板：「图标需放大，
+         目前太小一点都不协调」）。
+
+         换算（viewBox 100 单位，仪表 84px → 1 单位 = 0.84px）：
+         · 官方 fnmonitor：92px 仪表 + <use width=24> → 图标框 24 单位，
+           CPU 图形墨迹跨 2.5~21.5 = 19 单位 → 19 × 0.92 = **17.5px**；
+         · v1.1.72：64px 仪表 + scale 0.7083 → 墨迹 19 × 0.7083 × 0.64
+           = **仅 8.6px** → 这就是老板说「太小不协调」的根因；
+         · v1.1.73 目标：墨迹 ≥ 22px，明显大于官方比例、视觉够分量。
+           反推缩放：scale = 22 / (19 × 0.84) ≈ **1.44**
+           → 图标框 = 24 × 1.44 = 34.6 单位（= 29px），
+             居中偏移 = (100 - 34.6) / 2 = **32.7**。
+         校验：图标框 34.6 单位 < 环内径 73 单位（r40 - 描边 3.5），
+         不会压到圆环。 */
+      var ig = svgEl('g', { transform: 'translate(32.7 32.7) scale(1.44)' });
       ig.appendChild(buildIcon(iconParts, 'ov-gauge-ico'));
       svg.appendChild(ig);
     }
@@ -709,15 +720,47 @@
       dv.textContent = okNum(dk.pct) ? fmtInt(dk.pct) : '--';
       inkTo(dv, okNum(dk.pct) ? rampInk(dk.pct, 'cap') : '');
     }
-    var smartBad = 0;
+    /* ⚠️ v1.1.73 老板反馈「存储卡片右上角需对存在的问题进行表示，
+       例如"一块需留意"等」——
+       之前的逻辑：容量正常时只显示「充足」，
+       硬盘 SMART 分级（grade=warn/crit）被**完全掩盖**。
+       现在改成**硬盘问题优先**：
+         · 有 crit 盘 → 「N 块故障」
+         · 有 warn 盘 → 「N 块需留意」
+         · 否则按容量 → 充足 / 偏满 / 将满
+       数字「1 块需留意」而不是「1」——老板原话就是这个措辞。 */
+    var smartBad = 0, smartCrit = 0, smartWarn = 0;
     dk.disks.forEach(function (x) {
-      var g = String((x && (x.grade || x.health || x.smartStatus)) || '');
-      if (/warn|crit|bad|fail/i.test(g)) smartBad++;
+      if (!x) return;
+      /* 分级优先用后端算好的 grade（ok/warn/crit/unknown），
+         退化才看 health 原始值（PASSED/FAILED）。 */
+      var g = String(x.grade || '').toLowerCase();
+      if (g === 'crit') { smartCrit++; smartBad++; return; }
+      if (g === 'warn') { smartWarn++; smartBad++; return; }
+      var h = String(x.health || '').toLowerCase();
+      if (/fail|bad|critical/.test(h)) { smartCrit++; smartBad++; }
+      else if (/warn|caution/.test(h)) { smartWarn++; smartBad++; }
     });
-    setState(host, 'disk', ld || (smartBad ? 'warn' : ''),
-      dk.pct == null ? '无存储池'
-        : (ld === 'crit' ? '将满' : (ld === 'warn' ? '偏满'
-          : (smartBad ? smartBad + ' 块需留意' : '充足'))));
+    var diskState = '';
+    var diskStateTxt;
+    if (dk.pct == null) {
+      diskStateTxt = '无存储池';
+    } else if (smartCrit > 0) {
+      diskState = 'crit';
+      diskStateTxt = smartCrit + ' 块故障';
+    } else if (smartWarn > 0) {
+      diskState = 'warn';
+      diskStateTxt = smartWarn + ' 块需留意';
+    } else if (ld === 'crit') {
+      diskState = 'crit';
+      diskStateTxt = '将满';
+    } else if (ld === 'warn') {
+      diskState = 'warn';
+      diskStateTxt = '偏满';
+    } else {
+      diskStateTxt = '充足';
+    }
+    setState(host, 'disk', diskState || ld, diskStateTxt);
     var diskSub = [];
     if (dk.total > 0) {
       /* ⚠️ 十进制容量（对齐 fnmonitor 的 F.dsize）：
