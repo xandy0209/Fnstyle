@@ -21,6 +21,7 @@
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -357,6 +358,21 @@ try:
 except Exception as e:
     check('MonitorCollector 实例能调 alert_status()', False, repr(e))
 
+# ⚠️ v1.1.85：测试推送读的是**已保存**的配置（后端不接受请求体里的地址）。
+#    若前端不先保存，用户「填了地址就点测试」会拿到「请先配置 Webhook 地址」。
+#    ⇒ 前端必须先 POST /monitor/alerts 再 POST /monitor/alerts/test。
+_tui = open(os.path.join(UI, 'static/js/thresholds-ui.js'), encoding='utf-8').read()
+_test_blk = _strip_comments(_tui)
+_i_save = _test_blk.find("'monitor/alerts', {")
+_i_test = _test_blk.find("'monitor/alerts/test'")
+check('测试推送前先保存当前表单配置',
+      _i_save >= 0 and _i_test >= 0 and _i_save < _i_test,
+      "save@%s test@%s" % (_i_save, _i_test))
+check('测试推送复用了 collectAlerts()（不重复造配置）',
+      'collectAlerts()' in _test_blk[_i_test - 800:_i_test] if _i_test > 0 else False)
+check('保存失败时不再继续发测试消息',
+      'throw new Error' in _test_blk[_i_test - 800:_i_test + 600] if _i_test > 0 else False)
+
 # ---------------------------------------------------------------------------
 section('K. 采集器启动了告警线程')
 # ---------------------------------------------------------------------------
@@ -365,7 +381,28 @@ check('采集器有 _alert_loop', 'def _alert_loop(' in mc)
 check('采集器启动告警线程', '_start_alerts()' in mc)
 check('告警线程是独立线程', 'threading.Thread(target=self._alert_loop' in mc)
 check('有 ALERT_INTERVAL 常量', 'ALERT_INTERVAL' in mc)
-check('COLLECT_VERSION 已升到 1.1.84', 'COLLECT_VERSION = "1.1.84"' in mc)
+# ⚠️ 别写死版本号（`/version\s+= 1\.1\.59/` = 永久负债，每次升版必红，
+#    还容易被当「既有失败」忽略好几轮）⇒ 改成「格式合法」+「各处彼此一致」。
+_mv = re.search(r'COLLECT_VERSION\s*=\s*"([^"]+)"', mc)
+check('COLLECT_VERSION 存在且格式合法',
+      _mv is not None and re.match(r'^\d+\.\d+\.\d+$', _mv.group(1)),
+      _mv.group(1) if _mv else '未找到')
+
+# 5 处版本号彼此一致（manifest / index.cgi / app.js / monitor_collect / index.html）
+def _pick(pat, text):
+    m = re.search(pat, text)
+    return m.group(1) if m else None
+
+_v_manifest = _pick(r'(?m)^version\s*=\s*(\S+)', open(os.path.join(ROOT, 'manifest'), encoding='utf-8').read())
+_v_cgi = _pick(r'APP_VERSION\s*=\s*"([^"]+)"', open(os.path.join(UI, 'index.cgi'), encoding='utf-8').read())
+_v_js = _pick(r"APP_VERSION\s*=\s*'([^']+)'", open(os.path.join(UI, 'static/js/app.js'), encoding='utf-8').read())
+_v_html = _pick(r'id="verPill"[^>]*>v([0-9.]+)<', open(os.path.join(UI, 'index.html'), encoding='utf-8').read())
+_v_collect = _mv.group(1) if _mv else None
+_versions = {'manifest': _v_manifest, 'index.cgi': _v_cgi, 'app.js': _v_js,
+             'monitor_collect': _v_collect, 'index.html': _v_html}
+check('5 处版本号彼此一致',
+      len(set(_versions.values())) == 1 and None not in _versions.values(),
+      str(_versions))
 
 # ---------------------------------------------------------------------------
 section('L. 语法检查')

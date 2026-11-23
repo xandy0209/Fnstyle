@@ -481,10 +481,29 @@
         var msg = bodyEl.querySelector('[data-al-msg]');
         testBtn.disabled = true;
         if (msg) { msg.textContent = '发送中…'; msg.className = 'thr-msg'; }
-        fetch(BASE + 'monitor/alerts/test', {
+
+        /* ⚠️ v1.1.84 改进：后端的「测试推送」读的是**已保存**的配置
+           （不接受请求体里的地址），所以用户「填了地址还没保存就点测试」
+           会得到一句莫名其妙的「请先配置 Webhook 地址」。
+           ⇒ 测试前先把当前表单存一次，用真实的用户意图去测。
+           ⚠️ 存的是「用户当前填的内容」，不是「旧配置」⇒ 语义一致。 */
+        var payload = collectAlerts();
+        fetch(BASE + 'monitor/alerts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({})
+          body: JSON.stringify(payload)
+        }).then(function (r) {
+          return r.json().then(function (j) { return { ok: r.ok, j: j }; });
+        }).then(function (sres) {
+          if (!sres.ok || !sres.j || !sres.j.success) {
+            throw new Error((sres.j && sres.j.error) || '保存失败');
+          }
+          alertsData = sres.j;
+          return fetch(BASE + 'monitor/alerts/test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+          });
         }).then(function (r) {
           return r.json().then(function (j) { return { ok: r.ok, j: j }; });
         }).then(function (res) {
@@ -498,8 +517,11 @@
           }
           if (msg) { msg.textContent = '测试消息已发送'; msg.className = 'thr-msg ok'; }
           refreshAlertStatus();
-        }).catch(function () {
-          if (msg) { msg.textContent = '测试推送失败（网络错误）'; msg.className = 'thr-msg err'; }
+        }).catch(function (e) {
+          if (msg) {
+            msg.textContent = (e && e.message) ? e.message : '测试推送失败（网络错误）';
+            msg.className = 'thr-msg err';
+          }
           testBtn.disabled = false;
         });
       });
