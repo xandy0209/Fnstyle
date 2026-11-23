@@ -45,6 +45,37 @@ def check(name, cond, detail=''):
     return ok
 
 
+def pick_bad_ref():
+    """挑一个**已知含水位线漂移缺陷**的版本引用。
+
+    ⚠️ 不能用 HEAD —— 修复提交后 HEAD 就是好版本了。
+    优先级：v1.1.82 tag → 提交历史里最后一个 v1.1.8x 的提交。
+    """
+    def git(*args):
+        r = subprocess.run(['git', '-C', ROOT] + list(args),
+                           capture_output=True, text=True)
+        return r.stdout.strip() if r.returncode == 0 else ''
+
+    def git_ok(*args):
+        r = subprocess.run(['git', '-C', ROOT] + list(args),
+                           capture_output=True, text=True)
+        return r.returncode == 0
+
+    # ⚠️ 用 git_ok 判成败，别用 `if git(...)` —— git() 返回 stdout 字符串，
+    #    成功时也可能为空串（空串是 falsy ⇒ and 短路 ⇒ 误判成「找不到」）。
+    if git_ok('rev-parse', '--verify', 'v1.1.82') and git_ok(
+            'cat-file', '-e', 'v1.1.82:app/ui/storage_collect.py'):
+        return 'v1.1.82'
+    # 退而求其次：找最后一个 touch 过 storage_collect.py 的 v1.1.8x 提交
+    log = git('log', '--oneline', '--format=%H %s', '--', 'app/ui/storage_collect.py')
+    for line in log.splitlines():
+        sha = line.split()[0]
+        subj = line
+        if 'v1.1.8' in subj and '水位线' not in subj and '漂移' not in subj:
+            return sha
+    raise RuntimeError('找不到已知坏版本，请设置环境变量 BAD_REF')
+
+
 def build_db(path, fixture):
     """把实机导出数据灌进一个真实的 storage.db（结构与实机一致）。"""
     import storage_collect as sc
@@ -116,15 +147,20 @@ def main():
         n = build_db(db, fixture)
         print('已在临时库灌入 %d 个 power 点\n' % n)
 
-        # ---------- ① 修复前（HEAD v1.1.82）----------
+        # ---------- ① 修复前（已知坏版本 v1.1.82）----------
         print('=' * 66)
-        print('① 修复前（HEAD = v1.1.82）：复现老板截图的断档')
+        print('① 修复前（v1.1.82）：复现老板截图的断档')
         print('=' * 66)
         old_dir = os.path.join(tmp, 'old')
         os.makedirs(old_dir)
+        # ⚠️ 必须取**显式的已知坏版本**，不能取 HEAD ——
+        #    修复提交后 HEAD 已是好版本，取 HEAD 会拿到修复版，断言必假失败。
+        #    坏版本来源优先级：BAD_REF 环境变量 → v1.1.82 tag → 含 v1.1.82 的历史提交。
+        bad_ref = os.environ.get('BAD_REF') or pick_bad_ref()
+        print('  坏版本来源 = %s' % bad_ref)
         with open(os.path.join(old_dir, 'storage_collect.py'), 'w') as f:
             subprocess.check_call(
-                ['git', '-C', ROOT, 'show', 'HEAD:app/ui/storage_collect.py'],
+                ['git', '-C', ROOT, 'show', '%s:app/ui/storage_collect.py' % bad_ref],
                 stdout=f)
         # ⚠️ 两版代码必须**各自独立进程**跑 —— 同进程里 sys.path 切换会串味
         #    （storage_collect 的模块级 import 缓存会拿到另一版）。
