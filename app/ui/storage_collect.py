@@ -2226,6 +2226,46 @@ class HistoryStore(object):
                 pass
         return self._day_start(time.time() - self.DAILY_KEEP_DAYS * 86400), False
 
+    def _daily_archived_boundary(self, conn):
+        """daily_summary 里**已归档的最大自然日的次日 00:00**。
+
+        ⚠️ v1.1.83 新增。用于水位线钳位 —— 当老库水位线漂到未来时，
+           真正的「已归档边界」不在水位线上，而在 daily_summary 的内容里。
+           以它为准才能既补回漏归档的天、又不会把已归档的天重复累加
+           （daily_summary 的 UPSERT 是 `value = value + excluded.value`，
+           重复归档同一天会让 kwh 翻倍）。
+
+        返回时间戳；表为空 / 查询失败时返回 None。
+        """
+        try:
+            r = conn.execute("SELECT MAX(day) FROM daily_summary").fetchone()
+            if not r or not r[0]:
+                return None
+            parts = str(r[0]).split('-')
+            if len(parts) != 3:
+                return None
+            y, m, d = int(parts[0]), int(parts[1]), int(parts[2])
+            return time.mktime((y, m, d + 1, 0, 0, 0, 0, 0, -1))
+        except Exception:
+            return None
+
+    def _earliest_power_day(self, conn):
+        """metrics 里**最早一个 power 点**那天的 00:00。
+
+        ⚠️ v1.1.83 新增。daily_summary 为空时用它当实时尾段的起点 ——
+           这样「还没归档过的最早那天」也不会被漏掉（否则柱状图上
+           最早那天恒为 null）。
+        没有 power 点时返回 None。
+        """
+        try:
+            r = conn.execute(
+                "SELECT MIN(ts) FROM metrics WHERE metric='power'").fetchone()
+            if not r or r[0] is None:
+                return None
+            return self._day_start(float(r[0]))
+        except Exception:
+            return None
+
     def _daily_aggregate(self, conn, start, end, default_dt=60):
         """汇总 metrics 中 start <= ts < end 的行 → {(day, key): value}。只读。
 
@@ -2291,6 +2331,19 @@ class HistoryStore(object):
         注：向上取整可能让 target 超过"当前已有的数据"，
         `_daily_aggregate` 只统计 ts < end 的**现存**点，
         未来时段没有点 → 天然安全，不会凭空造数据。
+
+        ⚠️ v1.1.83：**水位线必须被「当前时刻」钳住**（实机故障修复）。
+           旧逻辑在 `wm >= target` 时把 target 推到「wm 之后的下一个自然日」，
+           而 while 循环随即把水位线写成 target —— 于是
+           **每次调用 archive_daily 水位线就 +1 天**。
+           而 cutoff = now - 7d 每 24 小时才 +1 天 ⇒
+           水位线以约 24 倍速飞向未来（实机 4 天漂到 +67 天 ⇒ 2027-01-29）。
+           后果：daily_rows() 的实时尾段起点 tail_start = 水位线，
+           水位线一旦越过「现在」，昨天/今天的功率点就被整段跳过
+           ⇒ /api/power/daily 返回 kwh=null（柱状图断档），
+           而 /api/power/stats（直查 metrics）仍有数 —— 同一份数据两个结果。
+           修法：① 水位线永远不许超过「今天 00:00」；
+                ② 归档目标永远由 cutoff 决定，绝不由水位线自己推着走。
         """
         if not self.db_path:
             return 0
@@ -2303,7 +2356,63 @@ class HistoryStore(object):
         try:
             conn = self._connect(write=True)
             try:
-                wm, _ = self._daily_watermark(conn)
+                wm, has_wm = self._daily_watermark(conn)
+                # ⚠️ v1.1.83：水位线钳位 —— 绝不允许超过「今天 00:00」。
+                #    归档只处理**已经过去的完整自然日**；今天的数据永远留在
+                #    metrics 里，由 daily_rows() 的实时尾段负责。
+                #    （超出今天的部分没有点可归档，写进去只会把水位线推歪。）
+                today0 = self._day_start(time.time())
+                if wm > today0:
+                    # 老库水位线已经漂到未来（v1.1.62~v1.1.82 的 bug 产物）
+                    # → 拉回到**真实边界**再补归档。
+                    #
+                    #   ⚠️ 不能直接夹到「今天 00:00」：那样夹回后，
+                    #      [真实边界, 今天00:00) 这段（如「昨天」）既不在
+                    #      daily_summary 里、也不在实时尾段里 ⇒ 数据被吞掉，
+                    #      柱状图仍然缺一天（今天能显示、昨天还是 null）。
+                    #
+                    #   正确做法：水位线 = 「daily_summary 里已归档的最大日的次日 00:00」。
+                    #      已归档的天不重复（UPSERT 是累加，重复会翻倍），
+                    #      未归档的天由下面的 while 循环**补归档**。
+                    #      daily_summary 为空时，用「最早有 power 点那天的 00:00」
+                    #      当真实边界 —— 否则补归档区间为空，昨天会被吞掉。
+                    real_wm = self._daily_archived_boundary(conn)
+                    if real_wm is None:
+                        real_wm = self._earliest_power_day(conn)
+                    if real_wm is None or real_wm > today0:
+                        real_wm = today0
+                    if real_wm < today0:
+                        # 补归档 [real_wm, today0)：把漏掉的天补进 daily_summary
+                        # ⚠️ UPSERT_DAILY_ADD 是**累加**语义 —— 这段区间必须
+                        #    与 daily_summary 已有的天**完全不重叠**。
+                        #    real_wm = MAX(day)+1 的 00:00 ⇒ 天然不重叠；
+                        #    real_wm = 最早 power 日 ⇒ daily_summary 为空，也不重叠。
+                        try:
+                            agg = self._daily_aggregate(conn, real_wm, today0, default_dt)
+                            if agg:
+                                with conn:
+                                    for (day, k), v in agg.items():
+                                        conn.execute(
+                                            self._UPSERT_DAILY_MAX
+                                            if k in self._DAILY_MAX_KEYS
+                                            else self._UPSERT_DAILY_ADD, (day, k, v))
+                                        n += 1
+                        except Exception:
+                            pass
+                        # 补完 [real_wm, today0) 后，水位线推进到 today0 ——
+                        # 「今天 00:00 之前」的天都已经进 daily_summary 了。
+                        wm = today0
+                    else:
+                        wm = real_wm
+                    has_wm = True
+                    try:
+                        with conn:
+                            conn.execute(
+                                "INSERT INTO meta(key, value) VALUES('daily_archived_until', ?) "
+                                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                                (repr(wm),))
+                    except Exception:
+                        pass
                 # ⚠️ v1.1.62：归档必须按**完整自然日**结算。
                 #    target 向上取整到下一个自然日 00:00 —— 这样每次推进的边界
                 #    都落在自然日边界上，daily_summary 里每个自然日要么完整归档
@@ -2316,15 +2425,47 @@ class HistoryStore(object):
                 #    「晚于老水位线的下一个自然日边界」，把老水位线到该边界
                 #    这一段照常归档掉（老库遗留的一次性代价），
                 #    之后所有推进都落在自然日边界上。
-                if wm >= target:
-                    # 老水位线已越过对齐点 → target 推到下一个自然日边界，
-                    # 把 [老wm, 下一个边界) 这段补归档掉，之后水位线就对齐了。
-                    nxt = self._day_start(wm)
-                    if nxt <= wm:
-                        nxt += 86400
-                    target = nxt
+                #
+                #    ⚠️ v1.1.83：这段「对齐」**只在第一次**做（把老水位线
+                #    归整到自然日边界），做完就必须让 target 回到 cutoff 决定
+                #    的值上 —— 否则水位线会被自己推着每天 +1 天（见上方说明）。
+                #    判据：对齐只在「老水位线尚未落在自然日边界」时做一次，
+                #    做过之后 wm 本身就是自然日边界，后续无需再对齐。
+                if has_wm and wm >= target:
+                    wm_day = self._day_start(wm)
+                    if wm_day < wm:
+                        # 老水位线不在自然日边界上 → 归整一次：
+                        # 把 [wm_day, wm) 这段补归档掉，水位线落到自然日边界。
+                        # ⚠️ 归整的上界也不能超过「今天 00:00」——
+                        #    否则水位线又会被推到未来（v1.1.83 的老教训）。
+                        cap = min(float(wm), today0)
+                        nxt = wm_day
+                        while cap > nxt:
+                            end = min(cap, nxt + self.DAILY_CHUNK)
+                            with conn:
+                                agg = self._daily_aggregate(conn, nxt, end, default_dt)
+                                for (day, k), v in agg.items():
+                                    conn.execute(self._UPSERT_DAILY_MAX
+                                                 if k in self._DAILY_MAX_KEYS
+                                                 else self._UPSERT_DAILY_ADD, (day, k, v))
+                                    n += 1
+                                conn.execute(
+                                    "INSERT INTO meta(key, value) "
+                                    "VALUES('daily_archived_until', ?) "
+                                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                                    (repr(end),))
+                            nxt = end
+                        wm = nxt
+                # 归档目标只由 cutoff（target）决定，水位线自己不再推进它。
+                # ⚠️ v1.1.83：归档**永远不越过「今天 00:00」**。
+                #    今天的数据由 daily_rows 的实时尾段负责（尾段覆盖 [W, now)）；
+                #    归档一旦越过今天，水位线就会站到未来 ⇒ 又回到本次故障的老路。
+                #    （正常调用方 cleanup() 传的 cutoff = now - 7d，永远不会超；
+                #     但 archive_daily 是公开方法，必须自己守住这条线。）
                 while wm < target:
-                    end = min(float(target), wm + self.DAILY_CHUNK)
+                    end = min(float(target), wm + self.DAILY_CHUNK, today0)
+                    if end <= wm:
+                        break
                     with conn:
                         agg = self._daily_aggregate(conn, wm, end, default_dt)
                         for (day, k), v in agg.items():
@@ -2365,6 +2506,28 @@ class HistoryStore(object):
                 wm, has = self._daily_watermark(conn)
                 # 从未归档过（刚装上）时只实时汇总今天，避免扫全库
                 tail_start = wm if has else max(wm, self._day_start(now))
+                # ⚠️ v1.1.83：实时尾段的起点必须与 daily_summary **无缝衔接**。
+                #
+                #    尾段负责 [W, now)，daily_summary 负责 [0, W)，
+                #    所以 W 必须是「daily_summary 已归档的最大日的次日 00:00」。
+                #
+                #    旧代码直接拿水位线当 W —— 水位线一旦漂到未来
+                #    （v1.1.62~v1.1.82 的 bug：每次 archive_daily +1 天，
+                #      实机 4 天漂到 2027-01-29），tail_start > now
+                #    ⇒ 尾段查不到任何点 ⇒ 昨天/今天全部 null
+                #    （实机 2026-11-23 截图的现象）。
+                #
+                #    现在改为：**以 daily_summary 的真实内容为准**。
+                #      · daily_summary 非空 → W = MAX(day)+1 的 00:00
+                #      · daily_summary 为空 → W = 最早有 power 点那天的 00:00
+                #    这样无论水位线多离谱，两段都能无缝衔接、既不漏也不重。
+                boundary = self._daily_archived_boundary(conn)
+                if boundary is None:
+                    boundary = self._earliest_power_day(conn)
+                if boundary is not None:
+                    tail_start = boundary
+                if tail_start > now:
+                    tail_start = self._day_start(now)
                 for (day, k), v in self._daily_aggregate(conn, tail_start, now + 1,
                                                           default_dt).items():
                     if day < first:
@@ -2430,6 +2593,25 @@ class HistoryStore(object):
             del_before = cutoff
             if has and wm is not None and wm < del_before:
                 del_before = wm
+            # ⚠️ v1.1.83：删除线**永远不该晚于当前时刻**。
+            #    老库 bug 会把归档水位线推到未来（如 2027-01-29），
+            #    若直接拿它当删除线，「未来的点」会被当成「已归档」而删掉。
+            #    → 钳到「现在」。
+            now_ts = time.time()
+            if del_before > now_ts:
+                del_before = now_ts
+            if del_before > cutoff:
+                del_before = cutoff
+            # ⚠️ v1.1.83：retention_days=0 = 「立即清空全部」，是**显式指令**，
+            #    不该被归档水位线收窄。
+            #    否则会出现这个组合故障：
+            #      · 水位线修好后停在「今天 00:00」
+            #      · min(cutoff=now, wm=今天00:00) → 删除线 = 今天 00:00
+            #      · ⇒ 今天零点之后的点全部留下，「清空全部」名不副实
+            #    （实测：删除 0 条、剩余 3 条）
+            #    ⇒ 显式清空时删除线直接取「现在」，把 ts < now 的全部删光。
+            if days == 0:
+                del_before = now_ts
             conn = self._connect(write=True)
             try:
                 cur = conn.execute("DELETE FROM metrics WHERE ts < ?", (del_before,))

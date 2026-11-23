@@ -34,15 +34,15 @@
 
 | 安装包 | 直链 |
 |---|---|
-| `fnstyle_1.1.82_all.fpk` | `https://github.com/xandy0209/Fnstyle/releases/download/v1.1.82/fnstyle_1.1.82_all.fpk` |
+| `fnstyle_1.1.83_all.fpk` | `https://github.com/xandy0209/Fnstyle/releases/download/v1.1.83/fnstyle_1.1.83_all.fpk` |
 
-或从 [Releases 页面](https://github.com/xandy0209/Fnstyle/releases/tag/v1.1.82) 下载。
+或从 [Releases 页面](https://github.com/xandy0209/Fnstyle/releases/tag/v1.1.83) 下载。
 
 校验值：
 
 | 文件 | 大小（字节） | MD5 | SHA256 |
 |---|---:|---|---|
-| `fnstyle_1.1.82_all.fpk` | 1,513,928 | `ed9c7f6ae4e143ff9bc8bf7d57a1b328` | `203bf3fdb30ed91697c7a1399221a98a90ee57d6b22025edd82f15423be1a285` |
+| `fnstyle_1.1.83_all.fpk` | 1,517,291 | `b6626e018a341f4e53e14d2c221aed64` | `28d00fc8e94512718961435d0c03fc7833a31b98add482153e1c496e7ddb96e5` |
 
 ### 安装步骤
 
@@ -51,8 +51,8 @@
 **方式 B · 命令行**（宿主上以 root 执行）：
 
 ```bash
-trim-cli app install-fpk fnstyle_1.1.82_all.fpk --dry-run --yes
-trim-cli app install-fpk fnstyle_1.1.82_all.fpk --yes
+trim-cli app install-fpk fnstyle_1.1.83_all.fpk --dry-run --yes
+trim-cli app install-fpk fnstyle_1.1.83_all.fpk --yes
 ```
 
 > ⚠️ **不支持覆盖安装**，升级需先卸载再装。卸载不会删除数据目录里的配置、主题与上传图片。
@@ -105,7 +105,7 @@ FnStyle 内置**「有更新自动提醒」**能力，无需接入任何第三�
 ```bash
 git clone https://github.com/xandy0209/Fnstyle.git
 cd Fnstyle
-bash build.sh              # 产出 ./fnstyle_1.1.82_all.fpk（仓库根目录）
+bash build.sh              # 产出 ./fnstyle_1.1.83_all.fpk（仓库根目录）
 ```
 
 `build.sh` 输出到仓库根目录，发布前需自行 `cp` 到 `dist/`。脚本会重算 `manifest` 的 `checksum`（即 `app.tgz` 的 MD5）。

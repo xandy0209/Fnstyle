@@ -1,5 +1,5 @@
 appname               = fnstyle
-version           = 1.1.82
+version           = 1.1.83
 display_name          = FnStyle
 desc                  = 集中管理飞牛个性化设置与丰富主题库：网站标题、登录框、LOGO、壁纸、毛玻璃、任务栏等独立配置，内置多源主题库，支持一键应用到 fnOS 系统，卸载后自动还原系统默认样式。
 platform              = all
@@ -15,5 +15,5 @@ desktop_applaunchname = fnstyle.main
 service_port          = 9910
 checkport             = false
 ctl_stop              = true
-changelog         = 1.1.82：修复「个性化设置」滑块数值标签在点击「默认」按钮后丢失单位的问题。【现象】面板首次打开显示「60%」，点一次该字段旁的「默认」按钮后变成「60」——单位被吃掉，登录框水平位置/垂直位置两个滑块都会犯。【根因】滑块数值标签（.range-val）的更新逻辑散在**三处**：① 初始渲染 renderPersonalize() 里带 f.unit；② 拖动时的 input 事件里带 f.unit；③ 「默认」按钮回填时**漏了 f.unit**（只有裸的 v.textContent = input.value）。三处独立实现，必然漂移。【修复】抽出统一出口 setRangeLabel(key, f, value)，三处全部改走它；并在 verify/verify_default_values.py 增加 F 段静态回归（33 项），断言不再存在漏单位的裸 textContent 赋值。【顺带】新增 verify/probe_login_defaults.py 实机探针（21 项）：读个性化设置面板的实际值 → 改脏 → 点「默认」→ 回读 → 核对后端落盘 → 收尾还原存量配置。【本轮复查背景】老板重申「个性化设置中登录框水平位置默认为60%」，实机复查确认 v1.1.81 的三个出厂默认（60% / 隐藏 / 8）已全部生效（API 与 UI 双向核对），并顺带抓出上述单位丢失缺陷。
-checksum              = 125448f041464eccaced566f9b05d0d2
+changelog         = 1.1.83：修复「能耗详情」的每日用电柱状图从某天起整段断档（昨天、今天都是空柱）的问题。【现象】老板截图：11/19~11/21 三根正常柱高，11/22 只剩一根贴底矮线，今天只有一个实时圆点；悬浮提示显示「-- kWh」。【根因】不是断电、不是采集停了、不是前端渲染 bug —— 数据一直好好地躺在库里（实机 11/22 有 1322 个功率点、11/23 有 488 个，/api/power/stats 直查 metrics 也正常显示今天的用电量），而是**归档水位线漂移到了未来**：storage_collect.archive_daily 的「对齐分支」会把归档目标推到「水位线之后的下一个自然日」，随后的 while 循环又把水位线写成该目标 —— 于是**每次调用水位线就 +1 天**。而归档的截止线 cutoff = now - 7d 每 24 小时才 +1 天 ⇒ 水位线以约 24 倍速飞向未来（实机装应用 4 天内从 11/19 漂到 2027-01-29，meta.daily_archived_until = 1801152000.0）。daily_rows() 的实时尾段起点 tail_start 取的就是水位线，一旦水位线越过「现在」，昨天和今天的点就被整段跳过 ⇒ /api/power/daily 返回 kwh=null，而 /api/power/stats（直查 metrics）仍有数 —— 同一份数据两条路径两个结果。该缺陷自 v1.1.62 引入。【修复】① archive_daily 的水位线**永远钳在「今天 00:00」之内**，且归档目标只由 cutoff 决定，绝不由水位线自己推着走（删掉水位线自我推进的逻辑）；② 老库水位线已漂到未来时，按 daily_summary 的**真实归档边界**拉回并补归档漏掉的天（避免与已归档的天重复累加导致 kwh 翻倍）；③ daily_rows 的实时尾段起点改为「daily_summary 已归档的最大日的次日 00:00」，daily_summary 为空时退回「最早一个功率点那天的 00:00」，保证两段无缝衔接；④ cleanup 的删除线额外钳到「当前时刻」。【验证】新增 verify/repro_watermark_drift.py（根因复现）、verify/verify_watermark_clamp.py（四层验证：水位线不再单调 +1 天/次、老库夹回后昨天今天可读、删除线不越界、30 天 744 次调用的长期稳态总量守恒）、verify/verify_real_db_recovery.py（**真实实机数据**端到端：修复前 HEAD 版本用实机数据复现 null，修复后 11/22 = 0.6709 kWh、11/23 = 0.4701 kWh，且已归档的 11/19~11/21 不被重复累加）；新增 verify/nas_fetch_real_db.py 一键从 NAS 只读导出实机库做取证。【实机效果】已打补丁部署到 NAS 并验证：11/22 由 null 恢复为 0.6628 kWh、11/23 由 null 恢复为 0.4739 kWh，归档水位线由 2027-01-29 拉回 2026-11-22。【顺带】修正 verify/repro_power_gap.py 的过时结论 —— 断电本身并不导致 null（断电当天实测仍有完整读数），真正的根因是水位线漂移；verify_power_daily.py 由 61/62 变为 62/62 全通过。
+checksum              = 3797439ba4992eb91df3bb2642196695
