@@ -185,16 +185,41 @@
       init.headers['Content-Type'] = 'application/json';
       init.body = typeof opts.body === 'string' ? opts.body : JSON.stringify(opts.body);
     }
+    /* ⚠️ v1.1.89：请求超时保护。
+       服务重装/重启期间，TCP 连接会**建立但迟迟不返回**
+       （Python 服务刚起、采集线程还没跑出第一帧），
+       fetch 处于 pending 状态 —— **既不 resolve 也不 reject**，
+       ⇒ 调用方的 then 永远不跑，界面停在「正在加载」骨架且无提示。
+       光靠 .catch 没用（pending 不会触发 catch），必须主动 abort。 */
+    var ctrl = null;
+    var timedOut = false;
+    try {
+      ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    } catch (e) { ctrl = null; }
+    var to = null;
+    if (ctrl) {
+      init.signal = ctrl.signal;
+      var ms = opts.timeout || 15000;
+      to = setTimeout(function () {
+        timedOut = true;
+        try { ctrl.abort(); } catch (e) {}
+      }, ms);
+    }
     return fetch(url, init).then(function (r) {
+      if (to) clearTimeout(to);
       return r.text().then(function (txt) {
         try { return JSON.parse(txt); }
         catch (e) { return { success: false, message: '响应解析失败: ' + txt.slice(0, 120) }; }
       });
     }).catch(function (e) {
+      if (to) clearTimeout(to);
       /* ⚠️ 这里把网络异常折叠成响应对象返回（而不是 reject），
          调用方拿到的是 { success:false, message:... } —— 会被 isConfig() 判为「非配置」。
          文案要让用户一眼看懂该做什么：顶栏状态灯移除后，这里是唯一的失败提示。
          ⚠️ 只能保留 2 个键：isConfig() 用 Object.keys(r).length <= 2 来识别包装对象。 */
+      if (timedOut) {
+        return { success: false, message: '请求超时，服务可能正在启动，请稍后重试' };
+      }
       return { success: false, message: '后端服务不可用，请确认应用已启动' };
     });
   }
@@ -1550,7 +1575,7 @@
   var AUTOINSTALL_KEY = 'fnstyle_autoinstall_update_v1';
   /* 当前版本号：与 manifest 的 version 保持一致，发版时同步修改。
      顶栏版本胶囊与「发现新版本」提示都基于它展示。 */
-  var APP_VERSION = '1.1.88';
+  var APP_VERSION = '1.1.89';
 
   /* 顶栏右侧更新控件：版本胶囊 + 检查/下载按钮 + 状态文字。
      reason：error 态下展示在状态文字与悬停提示里的诊断摘要（可省略）。

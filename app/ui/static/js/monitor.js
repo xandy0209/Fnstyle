@@ -1446,7 +1446,10 @@
     var box = $('#monOverview');
     if (!box) return;
     if (!window.FnStyleOverview || !window.FnStyleOverview.render) {
-      box.innerHTML = '<div class="loading"><span class="spin"></span> 概览模块未加载</div>';
+      /* ⚠️ v1.1.89：不要用带 .spin 的 loading 骨架 ——
+         overview.js 加载失败时页面会永远转圈，看起来像「彻底坏掉」。
+         纯文字提示更诚实。 */
+      box.innerHTML = '<div class="mon-empty">概览模块未加载</div>';
       return;
     }
     /* 把独立的功耗统计挂上去（可能为 null —— 还没拿到 / 接口失败） */
@@ -3124,16 +3127,35 @@
   function render(d) {
     if (!d || d.success === false) {
       var msg = (d && (d.error || d.message)) || '监控服务不可用';
-      ['monStorage', 'monCore', 'monTempOverview', 'monTempSide',
-        'monPowerOverview', 'monPowerStats', 'monPowerDaily'].forEach(function (id) {
-        var b = $('#' + id);
-        if (b) b.innerHTML = emptyBox(msg);
-      });
+      /* ⚠️ v1.1.89：统一走 showMonitorUnavailable()，
+         保证各区块**全部**被替换，不再有任何区块永远停在 loading 骨架上。 */
+      showMonitorUnavailable(msg);
+      /* ⚠️⚠️ v1.1.89：概览容器（#monOverview）**不能**只靠 showMonitorUnavailable()。
+         它由 overview.js 专门管理（buildCards + _built 缓存）——
+         一旦被 innerHTML 清空，后续**没有任何代码会重建它**
+         （错误/预热分支都直接 return，不会调用 renderOverview）
+         ⇒ 六张卡片永远消失。
+         所以这里必须**照样调一次 renderOverview()** ——
+         overview.js 的 render() 对缺失数据是安全的（各字段用 okNum 判空），
+         会渲染出「-- / 无数据」占位，而不是空白。
+         （配套：overview.js 的 render() 已加自愈 —— 容器被清空过就重建。） */
+      renderOverview(d && d.success !== false ? d : {}, pstats);
       setStatus('err', msg);
       return;
     }
     if (d.warming) {
+      /* ⚠️ v1.1.89：预热分支原来只改状态栏就 return ——
+         三处 loading 骨架（「正在采集监控数据…」「汇总关键指标…」「读取存储信息…」）
+         原样保留，**看起来像彻底坏掉**。
+         现在把骨架换成明确的「预热中」提示，并安排重试，
+         服务跑出第一帧后自动重画。 */
       setStatus('', d.message || '监控数据采集中，请稍候…');
+      showMonitorUnavailable('监控数据采集中，请稍候…');
+      /* 同上：概览容器必须重建，否则预热结束后六卡不会回来。
+         ⚠️ 传 {} 而不是 null —— overview.js 内部对缺失字段有 okNum 判空，
+            传空对象即可渲染出「-- / 无数据」占位。 */
+      renderOverview({}, pstats);
+      scheduleRetry();
       return;
     }
     // system（主机名 / 型号）挂在顶层，转给存储板块渲染机箱顶栏
@@ -3184,21 +3206,90 @@
 
   /* ---------------- 数据拉取 ---------------- */
 
+  /* ⚠️ v1.1.89：请求超时保护（修「页面永远停在 loading 骨架」）
+     ------------------------------------------------------------
+     现象（老板 2026-11-23 实测）：应用重装/服务重启期间打开页面，
+     概览、存储、温度、能耗**全部卡在 index.html 的静态 loading 骨架**
+     （「正在采集监控数据…」「汇总关键指标…」「读取存储信息…」），
+     且**没有任何错误提示**，刷新前一直不动。
+
+     真凶：① fetchMonitor() 的 fetch **既没有 .catch 也没有超时** ——
+     ② 服务重启期间，`api/monitor` 的 TCP 连接会**建立但迟迟不返回**
+        （后端 Python 服务刚起、采集线程还没跑出第一帧），
+        fetch 处于 **pending** 状态，**既不 resolve 也不 reject**；
+     ③ refresh() 因此永不进入 render() ⇒ 三处 loading 骨架原样保留；
+     ④ 没有超时 ⇒ 永远等下去 ⇒ 用户看到「彻底坏掉」。
+
+     ★ 注意：光加 .catch **不够** —— pending 的请求不会触发 catch。
+       必须用 AbortController **主动超时中断**。
+
+     修法：① fetchMonitor() 加 8 秒超时（AbortController）；
+          ② 超时/失败统一收敛成 {success:false, error:...}，
+             由 render() 的既有分支显示明确的错误文案；
+          ③ refresh() 补 .catch 兜底（防止 render() 内部抛错导致整链断掉）；
+          ④ 服务不可用时**自动重试**（1s/2s/4s 退避），服务恢复后自动接上。 */
+  var MON_TIMEOUT_MS = 8000;
+  /* 连续失败次数与重试定时器 */
+  var monFailStreak = 0;
+  var monRetryTimer = null;
+  /* ⚠️ v1.1.89：防并发标记（失败重试与自动刷新可能同时触发） */
+  var monInFlight = false;
+  /* refresh() 因「已有请求在飞」被跳过时的返回值 */
+  var MON_SKIPPED = { skipped: true, success: false, error: '已有刷新请求在进行中' };
+
   function fetchMonitor() {
-    return fetch(BASE + 'monitor', { method: 'GET', headers: {} })
+    var ctrl = null;
+    var timedOut = false;
+    try {
+      ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    } catch (e) { ctrl = null; }
+    /* ⚠️ 变量名不要用 timer —— 模块级已有 `var timer`（自动刷新 setInterval），
+       这里用 `to`（timeout）避免遮蔽。 */
+    var to = null;
+    if (ctrl) {
+      to = setTimeout(function () {
+        timedOut = true;
+        try { ctrl.abort(); } catch (e) {}
+      }, MON_TIMEOUT_MS);
+    }
+    var init = { method: 'GET', headers: {} };
+    if (ctrl) init.signal = ctrl.signal;
+    return fetch(BASE + 'monitor', init)
       .then(function (r) {
+        if (to) clearTimeout(to);
         return r.text().then(function (txt) {
           try { return JSON.parse(txt); }
           catch (e) { return { success: false, error: '响应解析失败：' + txt.slice(0, 120) }; }
         });
       })
-      .catch(function () {
+      .catch(function (e) {
+        if (to) clearTimeout(to);
+        if (timedOut) {
+          return { success: false, error: '监控数据请求超时（服务可能正在启动），稍后自动重试' };
+        }
         return { success: false, error: '后端服务不可用，请确认应用已启动' };
       });
   }
 
   function refresh() {
+    /* ⚠️ v1.1.89：防并发 —— 失败重试（1s 起）与自动刷新（3s）可能同时触发。
+       没有这层保护时，服务挂起期间会堆积多个 pending 请求。 */
+    if (monInFlight) return Promise.resolve(MON_SKIPPED);
+    monInFlight = true;
     return fetchMonitor().then(function (d) {
+      monInFlight = false;
+      /* ⚠️ v1.1.89：三态判定，不能只看 d.success ——
+         后端预热时返回的是 {success:true, available:false, warming:true}，
+         若按「success !== false 即恢复」处理，会把失败计数清零、
+         撤掉重试定时器 ⇒ 预热期间的退避重试被自己掐掉。 */
+      if (d && d.success !== false && !d.warming) {
+        /* 完全恢复：清失败计数、撤掉重试定时器 */
+        monFailStreak = 0;
+        if (monRetryTimer) { clearTimeout(monRetryTimer); monRetryTimer = null; }
+      } else {
+        /* 失败或预热中：走退避重试（scheduleRetry 内部负责计数） */
+        scheduleRetry();
+      }
       lastData = d;
       // 把本次采样的读写速率推进趋势图缓冲（fnmonitor 的 feed() 同款位置）
       // 去重时间戳优先用 storage.ts（采集时刻的浮点值，唯一性最强），
@@ -3217,7 +3308,66 @@
         window.FnStyleCompute.updateLive(d);
       }
       return d;
+    })
+    /* ⚠️ v1.1.89：refresh() 原本**没有 .catch** ——
+       render() 内部任何一处抛错都会变成未捕获的 Promise rejection，
+       整条刷新链断掉，页面就永远停在 loading 骨架且无提示。
+       这里兜住，并把失败计入退避重试。 */
+    .catch(function (e) {
+      monInFlight = false;
+      /* ⚠️ 失败计数只在 scheduleRetry() 里递增一次 ——
+         这里再 ++ 会让退避延迟翻倍（1s→2s→8s→10s），收敛过慢。 */
+      var msg = '监控数据刷新失败：' + ((e && e.message) || e);
+      setStatus('err', msg);
+      showMonitorUnavailable(msg);
+      scheduleRetry();
+      return null;
     });
+  }
+
+  /* ⚠️ v1.1.89：把所有「loading 骨架」统一换成明确提示。
+     ★ 容器清单必须与 index.html 的静态骨架**一一对应**：
+       monStorage（读取存储信息）/ monCore（读取运行状态）/
+       monTempOverview（读取传感器）/ monTempSide（读取风扇）/
+       monPowerOverview（读取功耗）/ monPowerStats（读取用电统计）/
+       monPowerDaily（读取每日用电）
+     —— 漏任何一个，那个区块就会永远停在转圈骨架上（= 老板截图的现象）。
+
+     ⚠️ **monOverview 不在本清单里** —— 它由 renderOverview() 独家管理。
+        原因：overview.js 内部有 _built 缓存（buildCards 只建一次），
+        容器一旦被 innerHTML 清空且**没有** renderOverview() 重建，
+        六张卡片就永远消失（v1.1.89 实测踩过）。
+        所以概览容器改由 renderOverview 在**所有三条路径**
+        （正常 / 错误 / 预热）都调用 —— 它对缺失数据安全（渲染「-- / 无数据」占位），
+        且 overview.js 未加载时 renderOverview 自身有兜底文字（不会转圈）。 */
+  var MON_SKELETON_IDS = [
+    'monStorage', 'monCore', 'monTempOverview',
+    'monTempSide', 'monPowerOverview', 'monPowerStats', 'monPowerDaily'
+  ];
+
+  function showMonitorUnavailable(msg) {
+    MON_SKELETON_IDS.forEach(function (id) {
+      var b = $('#' + id);
+      if (b) b.innerHTML = emptyBox(msg);
+    });
+  }
+
+  /* ⚠️ v1.1.89：服务不可用时的自动重试（1s → 2s → 4s → 8s → 10s 退避）。
+     服务重启完成后页面能**自动接上**，不必用户手动刷新。
+     ⚠️ 失败计数只在这里递增（refresh() 的 catch 里不要再 ++）。 */
+  function scheduleRetry() {
+    if (monRetryTimer) return;
+    monFailStreak = Math.min(monFailStreak + 1, 5);
+    var delay = Math.min(1000 * Math.pow(2, monFailStreak - 1), 10000);
+    monRetryTimer = setTimeout(function () {
+      monRetryTimer = null;
+      /* ⚠️ v1.1.89：本次重试可能被「防并发」跳过（已有请求在飞）。
+         若就此结束，重试链会**断掉** —— 页面永远不再自动恢复。
+         所以跳过时必须再排一次。 */
+      refresh().then(function (r) {
+        if (r && r.skipped) scheduleRetry();
+      });
+    }, delay);
   }
 
   /* 巡检历史抽屉开着时，只重绘内容区（保持滚动位置）。 */

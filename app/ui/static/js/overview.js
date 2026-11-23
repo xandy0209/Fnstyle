@@ -716,7 +716,16 @@
 
   function render(host, d) {
     if (!host) return;
-    if (!host._built) { buildCards(host); host._built = true; }
+    /* ⚠️ v1.1.89：自愈 —— 容器被外部清空过（innerHTML 被替换）时必须重建卡片。
+       _built 标志挂在 DOM 节点上（host._built），而 host.innerHTML = ...
+       会**清掉子节点但保留 host 自身的属性** ⇒ _built 仍是 true
+       ⇒ 下次 render() 认为「已建过」而不重建 ⇒ 六张卡片永远回不来
+       （v1.1.89 的 showMonitorUnavailable() 替换骨架文案时踩到了这个坑）。
+       判据：容器里已没有 .ov-metric ⇒ 说明被清空过 ⇒ 重建。 */
+    if (!host._built || !host.querySelector('.ov-metric')) {
+      buildCards(host);
+      host._built = true;
+    }
 
     /* ---- 处理器 ---- */
     var cpu = (d && d.cpu) || {};
