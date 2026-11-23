@@ -494,6 +494,153 @@ if _m:
           'border-top' in _blk and 'none' in _blk, _blk.strip()[:120])
 
 # ---------------------------------------------------------------------------
+section('O. 硬盘健康：warn 级 SMART 问题也要推送（v1.1.87）')
+# ---------------------------------------------------------------------------
+# 老板原话：「通知中的硬盘监控通知需要对硬盘的一些不重要的警告信息也需要推送通知，
+#   例如目前已有的『SMART 告警：UDMA CRC 错误 60』，类似这种都需要推送通知。」
+#
+# ⚠️ v1.1.84 之前只判 crit（SMART FAIL / 不可纠正错误），
+#    warn 级的 SMART 计数（重映射扇区 / 待处理扇区 / UDMA CRC）全被丢掉。
+
+
+def _snap(disks):
+    return {'cpu': {'percent': 10}, 'mem': {'percent': 10},
+            'storage': {'disks': disks, 'volumes': []},
+            'temp': {'temps': [], 'disks': []}}
+
+
+def _disk_alerts(disks):
+    return [a for a in ma.evaluate(_snap(disks)) if a['metric'] == 'diskHealth']
+
+
+# ① UDMA CRC 错误（老板点名的那个）
+al = _disk_alerts([{'name': 'sdc', 'health': 'PASSED', 'grade': 'warn',
+                    'udma_crc': 60, 'reallocated_sectors': 0,
+                    'pending_sectors': None, 'uncorrectable': None}])
+check('UDMA CRC 错误 60 会产生告警（老板点名的场景）', len(al) == 1, str(al))
+if al:
+    check('UDMA CRC 告警级别 = warn', al[0]['level'] == 'warn', al[0].get('level'))
+    check('UDMA CRC 告警文本含「UDMA CRC 错误 60」',
+          'UDMA CRC 错误 60' in al[0]['text'], al[0].get('text'))
+    check('UDMA CRC 告警含盘名 sdc', 'sdc' in al[0]['text'], al[0].get('text'))
+    check('UDMA CRC 告警带 subkey（供去抖区分）',
+          bool(al[0].get('subkey')), str(al[0].get('subkey')))
+
+# ② 重映射扇区 / 待处理扇区 也算 warn
+al = _disk_alerts([{'name': 'sda', 'health': 'PASSED', 'grade': 'warn',
+                    'udma_crc': 0, 'reallocated_sectors': 3,
+                    'pending_sectors': 0, 'uncorrectable': None}])
+check('重映射扇区 > 0 会产生 warn 告警',
+      len(al) == 1 and al[0]['level'] == 'warn', str(al))
+al = _disk_alerts([{'name': 'sda', 'health': 'PASSED', 'grade': 'warn',
+                    'udma_crc': 0, 'reallocated_sectors': 0,
+                    'pending_sectors': 2, 'uncorrectable': None}])
+check('待处理扇区 > 0 会产生 warn 告警',
+      len(al) == 1 and al[0]['level'] == 'warn', str(al))
+
+# ③ 不可纠正错误 → crit
+al = _disk_alerts([{'name': 'sdd', 'health': 'PASSED', 'grade': 'crit',
+                    'udma_crc': 1, 'reallocated_sectors': 0,
+                    'pending_sectors': 0, 'uncorrectable': 5}])
+check('不可纠正错误 > 0 判 crit',
+      len(al) == 1 and al[0]['level'] == 'crit', str(al))
+
+# ④ SMART 自检未通过 → crit
+al = _disk_alerts([{'name': 'sde', 'health': 'FAILED', 'grade': 'crit',
+                    'udma_crc': 0, 'reallocated_sectors': 0,
+                    'pending_sectors': 0, 'uncorrectable': None}])
+check('SMART 自检未通过判 crit',
+      len(al) == 1 and al[0]['level'] == 'crit', str(al))
+
+# ⑤ ⚠️ 重映射扇区**快速增长**（grade=crit 但计数没超 0）——
+#    这条信息只在 detail 文本里，若代码里写成
+#    「issues 为空就 continue」，这类 crit 会**永远漏报**。
+al = _disk_alerts([{'name': 'sdg', 'health': 'PASSED', 'grade': 'crit',
+                    'udma_crc': 0, 'reallocated_sectors': 0,
+                    'pending_sectors': 0, 'uncorrectable': None,
+                    'detail': '重映射扇区增长 +12 个（3 → 15）'}])
+check('重映射快速增长（只有 detail 文本）也会告警',
+      len(al) == 1 and al[0]['level'] == 'crit', str(al))
+if al:
+    check('快速增长告警文本含增长量', '+12' in al[0]['text'], al[0].get('text'))
+
+# ⑥ 逐盘判定：两块盘都有问题 ⇒ 两条告警（不能只报第一块）
+al = _disk_alerts([
+    {'name': 'sda', 'health': 'PASSED', 'grade': 'warn', 'udma_crc': 60,
+     'reallocated_sectors': 0, 'pending_sectors': 0, 'uncorrectable': None},
+    {'name': 'sdb', 'health': 'PASSED', 'grade': 'warn', 'udma_crc': 5,
+     'reallocated_sectors': 0, 'pending_sectors': 0, 'uncorrectable': None},
+])
+check('两块盘都有问题 ⇒ 两条告警（逐盘判定）', len(al) == 2, str(len(al)))
+check('两条告警的盘名不同',
+      len({a.get('disk') for a in al}) == 2, str([a.get('disk') for a in al]))
+
+# ⑦ 同一块盘多个问题 ⇒ 逐项列出（不能只报第一个）
+al = _disk_alerts([{'name': 'sda', 'health': 'PASSED', 'grade': 'warn',
+                    'udma_crc': 60, 'reallocated_sectors': 3,
+                    'pending_sectors': 0, 'uncorrectable': None}])
+check('同盘多个 SMART 问题 ⇒ 逐项列出', len(al) == 2, str(len(al)))
+
+# ⑧ 全健康 ⇒ 不告警；休眠盘（grade=unknown）⇒ 不告警
+al = _disk_alerts([{'name': 'sdf', 'health': 'PASSED', 'grade': 'ok',
+                    'udma_crc': 0, 'reallocated_sectors': 0,
+                    'pending_sectors': 0, 'uncorrectable': 0}])
+check('全健康的盘不告警', len(al) == 0, str(al))
+al = _disk_alerts([{'name': 'sdh', 'health': 'PASSED', 'grade': 'unknown',
+                    'detail': '休眠中，未唤醒检测', 'udma_crc': None,
+                    'reallocated_sectors': None, 'pending_sectors': None,
+                    'uncorrectable': None}])
+check('休眠盘（未唤醒检测）不告警', len(al) == 0, str(al))
+
+# ⑨ 去抖键必须**两级**（metric + subkey）
+#    ⚠️ 只按 metric 去重时，第二条告警会被误判成「同级别重复」而**静默丢掉**。
+_st = ma.AlertState()
+_al = [{'metric': 'diskHealth', 'subkey': 'sda·重映射扇区', 'level': 'warn'},
+       {'metric': 'diskHealth', 'subkey': 'sda·UDMA CRC 错误', 'level': 'warn'},
+       {'metric': 'diskHealth', 'subkey': 'sdb·UDMA CRC 错误', 'level': 'warn'}]
+_r1 = [_st.should_send(a['metric'], a['level'], 1000.0, 300, a['subkey'])
+       for a in _al]
+check('首轮：三条硬盘告警都应推送', all(_r1), str(_r1))
+_r2 = [_st.should_send(a['metric'], a['level'], 1001.0, 300, a['subkey'])
+       for a in _al]
+check('静默期内：三条都不重复推', not any(_r2), str(_r2))
+_r3 = [_st.should_send(a['metric'], a['level'], 1301.0, 300, a['subkey'])
+       for a in _al]
+check('过静默期后：三条都能再推', all(_r3), str(_r3))
+
+# ⑩ 回到正常后应能重新触发（update_normal 要带 subkey）
+_st2 = ma.AlertState()
+_st2.should_send('diskHealth', 'warn', 1000.0, 300, 'sdc·UDMA CRC 错误')
+_st2.update_normal('diskHealth', 'sdc·UDMA CRC 错误')
+check('回到正常后重新触发',
+      _st2.should_send('diskHealth', 'warn', 1001.0, 300, 'sdc·UDMA CRC 错误'),
+      '')
+
+# ⑪ 等级升级 warn → crit 立即发（不受静默期限制）
+_st3 = ma.AlertState()
+_st3.should_send('diskHealth', 'warn', 1000.0, 300, 'sdc·X')
+check('warn → crit 立即推送（不受静默期限制）',
+      _st3.should_send('diskHealth', 'crit', 1001.0, 300, 'sdc·X'), '')
+
+# ⑫ 消息体里硬盘告警文案要能看出盘名与问题
+_msg = ma.build_message(
+    _disk_alerts([{'name': 'sdc', 'health': 'PASSED', 'grade': 'warn',
+                   'udma_crc': 60, 'reallocated_sectors': 0,
+                   'pending_sectors': None, 'uncorrectable': None}]),
+    hostname='mynas')
+check('消息体含硬盘告警', bool(_msg), '')
+if _msg:
+    _c = _msg['text']['content']
+    check('消息体含「UDMA CRC 错误 60」',
+          'UDMA CRC 错误 60' in _c, _c[:200])
+    check('消息体含盘名 sdc', 'sdc' in _c, _c[:200])
+
+# ⑬ 磁盘健康的指标描述要提到 warn 级（前端展示用）
+_desc = ma.METRIC_BY_KEY['diskHealth'].get('desc', '')
+check('磁盘健康描述提到 UDMA CRC（前端说明同步）',
+      'UDMA CRC' in _desc, _desc)
+
+# ---------------------------------------------------------------------------
 shutil.rmtree(TMP, ignore_errors=True)
 print('\n' + '=' * 70)
 print('verify_alerts_notify: PASS %d / FAIL %d' % (PASS, FAIL))

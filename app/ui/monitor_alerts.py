@@ -132,7 +132,11 @@ METRICS = [
         "key": "diskHealth", "label": "硬盘健康", "group": "storage",
         "unit": "", "warn_key": None, "crit_key": None,
         "default": True,
-        "desc": "SMART 自检未通过或存在不可纠正错误时告警。",
+        # ⚠️ v1.1.87：描述同步扩展到 warn 级 ——
+        #    现在「重映射扇区 / 待处理扇区 / UDMA CRC 错误」任一 > 0 也会推送，
+        #    不只是「自检未通过 / 不可纠正错误」。
+        "desc": "SMART 出现非零计数（重映射扇区 / 待处理扇区 / UDMA CRC 错误等）"
+                "或自检未通过、存在不可纠正错误时告警。",
     },
 ]
 
@@ -447,10 +451,10 @@ def evaluate(snapshot):
                     dtname, dtmax, LEVEL_LABEL[lv], thr)
             alerts.append(a)
 
-    # ---- 硬盘健康（SMART 判故障）----
-    dh = _disk_health_alert(snapshot)
-    if dh:
-        alerts.append(dh)
+    # ---- 硬盘健康（SMART 判定，**逐盘**，含 warn 级计数）----
+    # ⚠️ v1.1.87：从「只报 crit」扩展到「warn 级也报」，
+    #    且改为返回列表（原来只返回第一块有问题的盘）。
+    alerts.extend(_disk_health_alerts(snapshot))
 
     return alerts
 
@@ -545,30 +549,134 @@ def _max_disk_temp(snapshot):
     return best, best_name
 
 
-def _disk_health_alert(snapshot):
-    """硬盘健康告警：SMART 自检未通过 / 存在不可纠正错误 → crit。
+def _smart_issues(d):
+    """从单盘条目里挑出「非零 SMART 计数」，返回 [(标签, 计数), ...]。
 
-    ⚠️ 口径与后端 grade_disk 一致（不可纠正错误 → 故障；
-       SMART 自检未通过 → 故障）。其余非零计数只算 warn，
-       但那属于「巡检日志」范畴，不作为推送告警（太吵）。
+    ⚠️ 口径与 storage_collect.grade_disk 一致：
+       · uncorrectable（不可纠正错误）→ crit
+       · reallocated（重映射扇区）/ pending（待处理扇区）/ udma_crc（UDMA CRC 错误）
+         → 任一 > 0 即 warn
+    ⚠️ 数值必须用 `_num` 判空 —— 0 是合法值（健康的盘全是 0），
+       `not v` 会把 0 当成「没数据」。
+    """
+    out = []
+    for key, label in (
+            ("uncorrectable", "不可纠正错误"),
+            ("reallocated_sectors", "重映射扇区"),
+            ("pending_sectors", "待处理扇区"),
+            ("udma_crc", "UDMA CRC 错误"),
+    ):
+        n = _num(d.get(key))
+        if n is not None and n > 0:
+            out.append((label, int(n)))
+    return out
+
+
+def _disk_health_alerts(snapshot):
+    """硬盘健康告警：**逐盘**判定，返回告警列表。
+
+    ⚠️ v1.1.87：原来只判 crit（SMART FAIL / 不可纠正错误），
+       warn 级的 SMART 问题（重映射扇区 / 待处理扇区 / UDMA CRC 错误）
+       **全部被丢掉** —— 代码里写着「那属于巡检日志范畴，不作为推送告警（太吵）」。
+       老板明确要求这类也要推：
+       > 「通知中的硬盘监控通知需要对硬盘的一些不重要的警告信息也需要推送通知，
+       >   例如目前已有的『SMART 告警：UDMA CRC 错误 60』，类似这种都需要推送通知。」
+       ⇒ 现在 warn 级也产出告警。
+
+    ⚠️ 级别口径（与 storage_collect.grade_disk 对齐）：
+       · crit —— SMART 自检未通过 / 不可纠正错误 > 0
+       · warn —— 重映射扇区 / 待处理扇区 / UDMA CRC 错误 任一 > 0
+       · 其余 —— 不告警
+
+    ⚠️ **逐盘判定，不只报第一个盘** —— 三块盘里两块有问题时，
+       只报一块会漏掉另一块。
     """
     storage = snapshot.get("storage") or {}
+    out = []
     for d in (storage.get("disks") or []):
-        g = (d.get("grade") or "").lower()
+        name = d.get("name") or d.get("dev") or "硬盘"
         health = (d.get("health") or "")
-        if g == "crit" or re_fail(health):
-            name = d.get("name") or "硬盘"
-            return {
-                "metric": "diskHealth",
-                "label": METRIC_BY_KEY["diskHealth"]["label"],
-                "level": "crit",
-                "value": None,
-                "unit": "",
-                "threshold": None,
-                "text": "硬盘 %s 健康检查异常（%s），请立即检查。" % (
-                    name, health or g or "未知原因"),
-            }
-    return None
+        grade = (d.get("grade") or "").lower()
+
+        issues = _smart_issues(d)
+        detail = d.get("detail") or ""
+
+        # ---- crit：SMART 自检未通过 ----
+        if re_fail(health):
+            # ⚠️ detail 传空串 —— health 已在 extra 里出现过，
+            #    再当 detail 附加就会变成「（FAILED）（该盘全部：FAILED）」。
+            out.append(_mk_disk(name, "crit", "SMART 自检未通过",
+                                 "", subkey="%s·SMART" % name,
+                                 extra="（%s）" % health if health else ""))
+            continue
+
+        # ---- crit：不可纠正错误 ----
+        unc = [c for lbl, c in issues if lbl == "不可纠正错误"]
+        if unc:
+            out.append(_mk_disk(
+                name, "crit",
+                "不可纠正错误 %d 个" % unc[0],
+                "；".join("%s %d 个" % (lbl, c) for lbl, c in issues),
+                subkey="%s·不可纠正错误" % name))
+            continue
+
+        # ---- warn：其余非零计数 ----
+        # ⚠️ 逐项列出，不要只报第一个 —— 「UDMA CRC 错误 60」与
+        #    「重映射扇区 3」是两条不同的信息，合并成一条会让人误以为只有一个问题。
+        for lbl, c in issues:
+            out.append(_mk_disk(
+                name, "warn", "%s %d 个" % (lbl, c),
+                "；".join("%s %d 个" % (l2, c2) for l2, c2 in issues),
+                subkey="%s·%s" % (name, lbl)))
+
+        # ⚠️ grade 兜底：后端已判 crit（但快照里没带具体计数）时也要报出来。
+        #    例如重映射扇区**快速增长**（delta ≥ 门限）—— 那条信息只在
+        #    detail 文本里，没有独立计数字段。
+        #    ⚠️ 这段**不能**放在「issues 为空就 continue」之后 ——
+        #    快速增长场景恰好是 issues 为空的（计数没超 0，只是涨得快），
+        #    提前 continue 会让这类 crit **永远漏报**。
+        #    判据是「这块盘还没产出过 crit 告警」，按**盘名**比较
+        #    （不能拿 subkey 比 —— subkey 带问题项后不等于盘名）。
+        if grade == "crit" and not any(a["level"] == "crit" and a.get("disk") == name
+                                       for a in out):
+            out.append(_mk_disk(name, "crit",
+                                 detail or "健康检查异常",
+                                 "",   # ⚠️ detail 已作为主信息，别再重复一遍
+                                 subkey="%s·健康检查" % name))
+    return out
+
+
+def _mk_disk(name, level, reason, detail="", subkey=None, extra=""):
+    """构造一条硬盘健康告警。
+
+    ⚠️ `subkey` = 去抖用的次级键 —— 硬盘健康是**逐盘逐项**判定的，
+       「sda 的 UDMA CRC」与「sda 的重映射扇区」是两条独立告警，
+       必须各自去抖 ⇒ subkey 带问题项（盘名·问题项）。
+       若只用盘名，同一块盘的第二个问题会被误判成「同级别重复」而**静默丢掉**。
+
+    ⚠️ `detail` 是「该盘全部问题」的汇总，只在**与主信息不同时**才附加 ——
+       否则会出现「UDMA CRC 错误 60 个（UDMA CRC 错误 60 个）」这种重复表述。
+    """
+    m = METRIC_BY_KEY.get("diskHealth", {})
+    label = m.get("label", "硬盘健康")
+    parts = ["硬盘 %s：%s" % (name, reason)]
+    if extra:
+        parts.append(extra)
+    if detail and detail != reason and detail not in reason:
+        parts.append("（该盘全部：%s）" % detail)
+    tail = "，请检查。" if level == "warn" else "，请立即检查。"
+    return {
+        "metric": "diskHealth",
+        "subkey": subkey if subkey is not None else name,
+        "disk": name,
+        "label": label,
+        "level": level,
+        "value": None,
+        "unit": "",
+        "threshold": None,
+        "text": "".join(parts) + tail,
+        "detail": detail,
+    }
 
 
 def re_fail(health):
@@ -715,21 +823,27 @@ def dispatch(cfg, alerts):
 # ---------------------------------------------------------------------------
 
 class AlertState(object):
-    """记录每个指标的上一次告警级别与推送时间，用于边沿触发与静默期。
+    """记录每个告警的上一次级别与推送时间，用于边沿触发与静默期。
 
     ⚠️ 状态**不持久化**：服务重启后状态清空，
        意味着重启后可能会重发一次当前正在发生的告警。
        这是有意的 —— 静默期本来就不该跨重启生效（重启往往正是问题发生的时候）。
+
+    ⚠️ v1.1.87：去抖键从「metric」改成「(metric, subkey)」两级。
+       原因：硬盘健康现在是**逐盘逐项**判定（sda 的 UDMA CRC 与 sdb 的
+       重映射扇区是两条独立告警）。若仍按 metric 去重，
+       第二条会被误判成「同级别重复」而**静默丢掉** ⇒ 漏报。
+       subkey 由告警的 `subkey` 字段给出（硬盘是「盘名·问题项」），缺省则为空串。
     """
 
     def __init__(self):
         self._lock = threading.Lock()
-        # key: (metric, level) -> 上次推送时间戳
+        # key: (metric, subkey, level) -> 上次推送时间戳
         self._sent = {}
-        # key: metric -> 上一次的级别（'' 表示正常）
+        # key: (metric, subkey) -> 上一次的级别（'' 表示正常）
         self._level = {}
 
-    def should_send(self, metric, level, now, cooldown):
+    def should_send(self, metric, level, now, cooldown, subkey=""):
         """判断这次告警是否该推送。
 
         规则：
@@ -738,9 +852,10 @@ class AlertState(object):
           ③ **同级别重复**：距上次推送不足 cooldown 秒 → 不发；
           ④ 其余情况 → 不发。
         """
+        subkey = subkey or ""
         with self._lock:
-            prev = self._level.get(metric, "")
-            last = self._sent.get((metric, level), 0)
+            prev = self._level.get((metric, subkey), "")
+            last = self._sent.get((metric, subkey, level), 0)
             if not prev:
                 send = True
             elif prev != level and level == "crit":
@@ -750,37 +865,38 @@ class AlertState(object):
             else:
                 send = (now - last) >= cooldown
             if send:
-                self._sent[(metric, level)] = now
-            self._level[metric] = level
+                self._sent[(metric, subkey, level)] = now
+            self._level[(metric, subkey)] = level
             return send
 
-    def update_normal(self, metric):
+    def update_normal(self, metric, subkey=""):
         """指标回到正常 —— 清掉它的告警记录，下次超限会重新触发。"""
         with self._lock:
-            self._level[metric] = ""
+            key = (metric, subkey or "")
+            self._level[key] = ""
             for k in list(self._sent.keys()):
-                if k[0] == metric:
+                if k[0] == metric and k[1] == (subkey or ""):
                     self._sent.pop(k, None)
 
-    def mark_level(self, metric, level):
+    def mark_level(self, metric, level, subkey=""):
         """只更新当前级别，不推送。
 
         ⚠️ 用于「推送未启用」的场景：照样记住当前处于告警状态，
            这样用户事后启用推送时不会立刻收到一串早已发生的旧告警。
         """
         with self._lock:
-            self._level[metric] = level or ""
+            self._level[(metric, subkey or "")] = level or ""
 
     def active_metrics(self):
-        """当前处于告警状态的指标列表（给采集循环清理用）。"""
+        """当前处于告警状态的告警键列表（给采集循环清理用）。"""
         with self._lock:
-            return [k for k, v in self._level.items() if v]
+            return ["%s|%s" % (k[0], k[1]) for k, v in self._level.items() if v]
 
     def snapshot(self):
         with self._lock:
             return {
-                "levels": dict(self._level),
-                "sent": {"%s/%s" % k: v for k, v in self._sent.items()},
+                "levels": {"%s|%s" % (k[0], k[1]): v for k, v in self._level.items()},
+                "sent": {"%s|%s|%s" % k: v for k, v in self._sent.items()},
             }
 
 

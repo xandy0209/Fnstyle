@@ -64,7 +64,7 @@ except Exception:  # pragma: no cover
 #    （nicDetail 里有新字段、但缺 tunnel 键，正是新旧代码混合的指纹）。
 #    这个常量会随 power 数据一起上报，从 API 一眼就能确认
 #    「NAS 上跑的到底是哪一版代码」，省掉逐字段比对。
-COLLECT_VERSION = "1.1.86"
+COLLECT_VERSION = "1.1.87"
 
 
 # ⚠️ v1.1.84：告警判定周期（秒）。
@@ -1473,16 +1473,25 @@ class MonitorCollector(object):
             picked.append(a)
 
         # 已回到正常的指标要清掉告警状态，否则下次超限不会重新触发
-        active = set(a.get("metric") for a in picked)
+        # ⚠️ v1.1.87：去抖键从 metric 改成 (metric, subkey) ——
+        #    硬盘健康是**逐盘逐项**判定（sda 的 UDMA CRC 与 sdb 的重映射扇区
+        #    是两条独立告警），只按 metric 清会互相干扰。
+        def _akey(a):
+            return "%s|%s" % (a.get("metric"), a.get("subkey") or "")
+
+        active = set(_akey(a) for a in picked)
         for key in list(self._alert_state.active_metrics()):
             if key not in active:
-                self._alert_state.update_normal(key)
+                self._alert_state.update_normal(
+                    key.split("|", 1)[0],
+                    (key.split("|", 1)[1] if "|" in key else ""))
 
         if not picked or not cfg.get("enabled"):
             # 未启用推送时**仍然更新状态** ——
             # 这样用户之后启用推送，不会因为「早就超限了」而立刻收到一串旧告警。
             for a in picked:
-                self._alert_state.mark_level(a.get("metric"), a.get("level"))
+                self._alert_state.mark_level(a.get("metric"), a.get("level"),
+                                             a.get("subkey") or "")
             with self._alert_lock:
                 self._alert_last = {
                     "at": int(time.time()),
@@ -1497,7 +1506,8 @@ class MonitorCollector(object):
         to_send = []
         for a in picked:
             if self._alert_state.should_send(a.get("metric"), a.get("level"),
-                                             now, cooldown):
+                                             now, cooldown,
+                                             a.get("subkey") or ""):
                 to_send.append(a)
 
         if not to_send:
