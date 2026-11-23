@@ -64,7 +64,14 @@ except Exception:  # pragma: no cover
 #    （nicDetail 里有新字段、但缺 tunnel 键，正是新旧代码混合的指纹）。
 #    这个常量会随 power 数据一起上报，从 API 一眼就能确认
 #    「NAS 上跑的到底是哪一版代码」，省掉逐字段比对。
-COLLECT_VERSION = "1.1.83"
+COLLECT_VERSION = "1.1.84"
+
+
+# ⚠️ v1.1.84：告警判定周期（秒）。
+#   比采集周期（3 秒）慢，比分钟级告警快。
+#   温度类指标在临界点会来回抖 —— 判定太快会频繁翻转状态，
+#   靠 AlertState 的边沿触发兜住，但没必要白白消耗 CPU。
+ALERT_INTERVAL = 15
 
 
 # ----------------------------- 基础工具 -----------------------------
@@ -1370,6 +1377,16 @@ class MonitorCollector(object):
         self._cpu_thread = None
         self._cpu_lock = threading.Lock()
         self._cpu_cache = {}
+        # ⚠️ v1.1.84：告警线程（超阈值判定 + 通知推送）
+        #   独立成线程而不是塞进采集循环：
+        #   · 采集循环 3 秒一次，是「显示」用的，不能被推送拖慢；
+        #   · 推送是网络 IO，失败时要等超时（最多 10 秒），
+        #     塞进采集循环会让整个监控页面都卡住；
+        #   · 告警判定周期 15 秒 —— 比采集慢，但比分钟级告警及时。
+        self._alert_thread = None
+        self._alert_state = None
+        self._alert_last = None      # 最近一次推送结果（给前端看）
+        self._alert_lock = threading.Lock()
 
     def snapshot(self):
         with self._lock:
@@ -1388,6 +1405,135 @@ class MonitorCollector(object):
         _storage_monitor()
         # 启动历史写入线程（每 60 秒一条，供处理器抽屉的趋势图使用）
         self._start_history()
+        # ⚠️ v1.1.84：启动告警线程（超阈值判定 + 通知推送）
+        self._start_alerts()
+
+    # ---------------- 告警线程（v1.1.84） ----------------
+
+    def _start_alerts(self):
+        """启动告警判定与推送线程。
+
+        独立成线程：采集循环 3 秒一次是给页面显示用的，
+        推送是网络 IO（失败要等超时），两者混在一起会拖慢监控页面。
+        """
+        if self._alert_thread is not None:
+            return
+        try:
+            import monitor_alerts as ma
+        except Exception:
+            return
+        try:
+            self._alert_state = ma.AlertState()
+            self._alert_thread = threading.Thread(target=self._alert_loop,
+                                                  daemon=True)
+            self._alert_thread.start()
+        except Exception:
+            self._alert_thread = None
+
+    def _alert_loop(self):
+        """告警循环：每 ALERT_INTERVAL 秒判定一次，超阈值就推送。
+
+        判定周期 15 秒的理由：
+          · 采集周期是 3 秒 —— 每 3 秒判一次太频繁，
+            温度在临界点附近会来回抖，判定结果频繁翻转；
+          · 15 秒足够快（用户不会察觉「晚了 15 秒」），
+            又足够慢（不会因为抖动而反复触发）。
+        · 真正的「刷屏」防护在 AlertState 里（边沿触发 + 静默期 + 等级升级立即发）。
+        """
+        try:
+            import monitor_alerts as ma
+        except Exception:
+            return
+
+        interval = ALERT_INTERVAL
+        while not self._stop.is_set():
+            try:
+                self._alert_once(ma)
+            except Exception:
+                pass
+            self._stop.wait(interval)
+
+    def _alert_once(self, ma):
+        """执行一次告警判定与推送。"""
+        cfg = ma.load_config()
+        snap = self.snapshot()
+        alerts = ma.evaluate(snap)
+        if self._alert_state is None:
+            self._alert_state = ma.AlertState()
+
+        # 只保留「配置里勾选了的指标」与「配置里勾选了的级别」
+        metrics_cfg = cfg.get("metrics") or {}
+        levels_cfg = cfg.get("levels") or []
+        picked = []
+        for a in alerts:
+            if not metrics_cfg.get(a.get("metric"), False):
+                continue
+            if levels_cfg and a.get("level") not in levels_cfg:
+                continue
+            picked.append(a)
+
+        # 已回到正常的指标要清掉告警状态，否则下次超限不会重新触发
+        active = set(a.get("metric") for a in picked)
+        for key in list(self._alert_state.active_metrics()):
+            if key not in active:
+                self._alert_state.update_normal(key)
+
+        if not picked or not cfg.get("enabled"):
+            # 未启用推送时**仍然更新状态** ——
+            # 这样用户之后启用推送，不会因为「早就超限了」而立刻收到一串旧告警。
+            for a in picked:
+                self._alert_state.mark_level(a.get("metric"), a.get("level"))
+            with self._alert_lock:
+                self._alert_last = {
+                    "at": int(time.time()),
+                    "alerts": len(picked),
+                    "pushed": False,
+                    "message": "通知推送未启用" if picked else "",
+                }
+            return
+
+        now = time.time()
+        cooldown = int(cfg.get("cooldown") or 0)
+        to_send = []
+        for a in picked:
+            if self._alert_state.should_send(a.get("metric"), a.get("level"),
+                                             now, cooldown):
+                to_send.append(a)
+
+        if not to_send:
+            with self._alert_lock:
+                self._alert_last = {
+                    "at": int(time.time()),
+                    "alerts": len(picked),
+                    "pushed": False,
+                    "message": "处于静默期，未重复推送",
+                }
+            return
+
+        ok, msg, results = ma.dispatch(cfg, to_send)
+        with self._alert_lock:
+            self._alert_last = {
+                "at": int(time.time()),
+                "alerts": len(picked),
+                "pushed": bool(ok),
+                "message": msg,
+                "results": results,
+                "sent": [
+                    {"metric": a.get("metric"), "level": a.get("level"),
+                     "text": a.get("text")}
+                    for a in to_send
+                ],
+            }
+
+    def alert_status(self):
+        """最近一次告警推送状态（给前端 /api/monitor/alerts/status 用）。"""
+        with self._alert_lock:
+            last = dict(self._alert_last) if self._alert_last else None
+        return {
+            "success": True,
+            "last": last,
+            "state": self._alert_state.snapshot() if self._alert_state else {},
+        }
 
     def _start_history(self):
         """启动历史写入线程（趋势图数据源）。
@@ -1421,6 +1567,8 @@ class MonitorCollector(object):
                 m.stop()
             except Exception:
                 pass
+        # ⚠️ v1.1.84：告警线程靠 _stop 事件退出，
+        #   不需要额外 join（它是 daemon 线程，进程退出即结束）。
 
     def _loop(self):
         while not self._stop.is_set():

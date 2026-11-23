@@ -35,7 +35,7 @@
     </div>
     <!-- 顶栏右侧：当前版本号 + 检查更新入口 + 新页面打开 -->
     <div class="topbar-right" id="topbarUpdate">
-      <span class="ver-pill" id="verPill" title="当前版本">v1.1.83</span>
+      <span class="ver-pill" id="verPill" title="当前版本">v1.1.84</span>
       <span class="ub-status" id="tbUpdateStatus"></span>
       <button class="btn sm icon-btn" id="tbCheckUpdate" type="button" title="检查更新" aria-label="检查更新">
         <svg class="upd-ico" viewBox="0 0 24 24" aria-hidden="true">
@@ -451,6 +451,8 @@
 <!-- ================== 阈值门限配置抽屉（右侧滑出） ==================
      v1.1.79：入口是顶栏的「配置管理」按钮（#tbOpenThresholds）。
      v1.1.80：入口移到监控面板状态条右端（老板反馈：按钮放在下方状态条右侧）。
+     v1.1.84：抽屉内容扩展为「阈值门限 + 电费设置」两段
+              （电价面板从能耗计算抽屉搬过来，见 thresholds-ui.js）。
      内容由 thresholds-ui.js 渲染（表单清单来自 GET api/monitor/thresholds）。 -->
 <div class="mon-drawer-overlay" id="monThresholdOverlay" hidden>
   <aside class="mon-drawer" role="dialog" aria-modal="true"
@@ -458,7 +460,7 @@
     <header class="mon-drawer-head">
       <div class="mon-drawer-head-main">
         <h3 id="monThresholdTitle"><span class="mon-drawer-ico" aria-hidden="true">⚙️</span>配置管理</h3>
-        <p class="mon-drawer-sub" id="monThresholdSub">系统监控阈值门限</p>
+        <p class="mon-drawer-sub" id="monThresholdSub">阈值门限 · 电费设置 · 告警通知</p>
       </div>
       <button type="button" class="mon-drawer-close" id="btnCloseMonThreshold"
               title="关闭（Esc）" aria-label="关闭">✕</button>

@@ -3206,6 +3206,130 @@ html.mon-scroll-lock body {
 }
 
 .thr-sec { margin-top: 1.25rem; }
+/* ⚠️ v1.1.84：电价分节（配置管理抽屉里的「电费设置」）
+   —— 与阈值分组之间要有一道视觉分界：阈值是「监控告警的门限」，
+      电价是「算账的参数」，两类东西混在一段里容易看串。
+      用一条虚线 + 更大的上间距隔开，语义清晰又不抢戏。 */
+.thr-sec-tariff {
+  margin-top: 1.6rem;
+  padding-top: 1.25rem;
+  border-top: 1px dashed var(--border);
+}
+.thr-sec-tariff .tariff-box {
+  margin-top: .1rem;
+}
+
+/* ⚠️ v1.1.84：告警通知分节 */
+.thr-sec-alerts {
+  margin-top: 1.6rem;
+  padding-top: 1.25rem;
+  border-top: 1px dashed var(--border);
+}
+
+/* 分节内的二级小标题（投递通道 / 告警级别 / 告警指标 …） */
+.thr-sub {
+  font-size: .7rem;
+  font-weight: 600;
+  letter-spacing: .03em;
+  color: var(--text-secondary);
+  margin: 1rem 0 .35rem;
+}
+/* 小标题与下方内容块之间不要额外的行间距（thr-rows 自带边框） */
+.thr-sub + .thr-rows { margin-top: 0; }
+
+/* 勾选行：左对齐的复选框 + 文字 */
+.thr-row-check {
+  padding: .55rem 1.05rem;
+}
+.thr-check {
+  display: flex;
+  align-items: center;
+  gap: .55rem;
+  font-size: .78rem;
+  color: var(--text-primary);
+  cursor: pointer;
+  user-select: none;
+}
+.thr-check input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+/* 勾选行里的说明文字缩进对齐到文字起点 */
+.thr-row-check .thr-desc {
+  margin-left: 1.55rem;
+}
+
+/* 开关行（总开关） */
+.thr-row-switch .thr-lbl { font-weight: 600; }
+.thr-switch {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+.thr-switch input[type="checkbox"] {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.thr-switch-track {
+  display: block;
+  width: 34px;
+  height: 19px;
+  border-radius: 10px;
+  background: var(--border);
+  position: relative;
+  transition: background .18s ease;
+}
+.thr-switch-track::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform .18s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .3);
+}
+.thr-switch input:checked + .thr-switch-track {
+  background: var(--accent);
+}
+.thr-switch input:checked + .thr-switch-track::after {
+  transform: translateX(15px);
+}
+.thr-switch input:focus-visible + .thr-switch-track {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 宽输入框（Webhook 地址）
+   ⚠️ v1.1.84：全局 `input[type="url"]` 的特异性是 (0,1,1)，
+   比 `.thr-input-wide` 的 (0,1,0) 高 ⇒ 它的 width:100% 会压掉这里的 240px。
+   ⇒ 必须用 (0,2,0) 级别的选择器钉住宽度。 */
+.thr-row input.thr-input-wide[type="url"],
+.thr-row input.thr-input-wide[type="password"] {
+  width: 240px;
+  flex: none;
+  max-width: 100%;
+  height: 28px;
+  padding: 0 .6rem;
+  font-size: .74rem;
+  text-align: left;
+}
+
+/* 告警段的操作条与状态回显 */
+.thr-actions-alerts { margin-top: 1.1rem; }
+.thr-alert-status {
+  margin-top: .55rem;
+  font-size: .68rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
 .thr-sec-t {
   margin: 0 0 .5rem;
   font-size: .78rem;
@@ -4946,8 +5070,19 @@ html.mon-scroll-lock body {
   min-width: 58px;
   white-space: nowrap;
 }
-.tariff-input {
+/* ⚠️ v1.1.84 修复（实测）：全局控件规则里有 `width: 100%`
+   （`input[type="text"], input[type="number"], input[type="url"], textarea, select`）
+   —— 其中 `input[type="number"]` 的特异性是 (0,1,1)，**高于** `.tariff-input` 的 (0,1,0)，
+   于是它的 `width:100%` 压掉了这里的 140px ⇒ 输入框撑满整行（实测 437px）。
+
+   ⚠️ 不是「不生效」，是**尺寸悄悄变了** —— 元素还在、值也在，只是宽度变了。
+   ⚠️ 排查手法：CSSOM 遍历找「命中该元素且带 width 的规则」，
+      注意现代浏览器里普通 CSSStyleRule 也有 `cssRules`（空数组但 truthy），
+      用 `if (r.cssRules)` 判断会把普通规则当成嵌套容器跳过 ⇒ 必须用 `r.type === 1` 判断。 */
+.tariff-box input.tariff-input {
   width: 140px;
+  flex: none;
+  max-width: 100%;
 }
 .tariff-unit {
   font-size: 12px;

@@ -2655,14 +2655,12 @@
     html += '<div class="mon-dkv" data-pwr-energy><div class="mon-dkv-row">' +
       '<span class="k">今日</span><span class="v">统计加载中…</span></div></div>';
 
-    /* --- ⑤-b 电价设置（v1.1.57）---
-       ⚠️ v1.1.63：面板已简化为**单一电费单价**（不分阶梯/分时/地区）。
-       放在「用电与电费」正下方，因为它决定上面那些电费数字怎么算出来的
-       —— 紧邻才合乎阅读顺序。 */
-    html += '<div class="mon-cmp-sec"><span>电价设置</span>' +
-      '<span class="faint">影响本页电费计算</span></div>';
-    html += '<div class="tariff-box" data-tariff-box>' +
-      '<div class="mon-info">电价配置加载中…</div></div>';
+    /* --- ⑤-b 电价设置 ---
+       ⚠️ v1.1.84：电价设置**已迁到「配置管理」抽屉**（thresholds-ui.js）。
+       原来放在这里，是因为「上面就是电费数字，改价方便」；
+       老板要求把配置统一收敛到设置抽屉 ⇒ 这里不再重复渲染，
+       避免同一份配置出现两个入口、两套口径。
+       抽屉里改完单价，这里的数字会在下次刷新时按新单价重算。 */
 
     /* --- ⑥ 估算参数 --- */
     var ep = p.estimation_params || {};
@@ -2865,11 +2863,23 @@
   }
 
   /* --------------------------------------------------------------------------
-     电价设置面板（v1.1.57）
+     电价设置面板（v1.1.57 起）—— v1.1.84 迁到「配置管理」抽屉
      -------------------------------------------------------------------------- */
+  /* ⚠️ v1.1.84 变更记录（重要，别改回去）：
+       ① 电价面板的**实现**仍然留在 monitor.js（这里是全应用唯一一份），
+          但改成**可复用模块**导出（window.FnStyleTariff）——
+          之前它是「能耗计算抽屉」的一部分（powerSheetHtml 里硬编码渲染），
+          老板要求把配置统一收敛到设置抽屉 ⇒ 渲染位置改了，实现没动。
+       ② 为什么实现不搬去 thresholds-ui.js：
+          电价属于「监控/能耗」域的数据（/api/power/tariff、power_tariff.py），
+          放在 monitor.js 里与「配置管理」抽屉的**编排**职责分离更清晰；
+          thresholds-ui.js 只负责「把它画到抽屉里」。
+       ③ 旧入口 loadTariff(scope) 保留兼容：能耗抽屉里已经没有电价面板了，
+          所以它会直接返回（找不到 [data-tariff-box]），
+          但 compute.js 的调用点不必同步删 —— 少改一处少一处风险。 */
   var tariffCache = null, tariffAt = 0, TARIFF_TTL = 60000;
 
-  /* 电价面板（v1.1.63 简化版）
+  /* 电价面板 HTML（v1.1.63 简化版）
      ------------------------------------------------------------
      老板决定：「不使用阶梯电价计费方式，根据成都最低档对应的电价进行计算
      （并提供可配置能力），删除阶梯计费和档位信息等，也不区分区域，
@@ -2906,8 +2916,10 @@
 
   /* 采集电价面板的当前表单状态
      ⚠️ v1.1.63 简化：面板只剩一个「电费单价」输入框。
-        抽屉每 3 秒 live 重建一次 → body.innerHTML 重置 → 面板被整体重绘
-        → 用户**正在输入**的单价被清空。现在重绘前抓一份状态，重绘后回填。
+        v1.1.84：面板已迁到「配置管理」抽屉 —— 那个抽屉**不会**每 3 秒重建，
+        所以「重绘吃掉用户输入」的问题自然消失；
+        但 capture/restore 仍然保留（保存成功后要重绘面板，
+        此时用户的输入值不能被后端旧值覆盖）。
         （v1.1.62 及之前还要抓 enabled / valley_start / valley_end /
           voltage / proj_rate / 季节参数 —— 全部随电价模型简化而废弃。） */
   function captureTariffForm(box) {
@@ -3010,7 +3022,9 @@
         不是电价面板容器。早期版本直接 box.innerHTML = ...，
         把抽屉里原有的内容（实时功耗、堆叠条、趋势图、部件明细、
         用电与电费、估算参数）**全部覆盖**掉了 —— 用户反馈「抽屉内容没了」。
-        现在必须先定位到 [data-tariff-box] 再只更新它。 */
+        现在必须先定位到 [data-tariff-box] 再只更新它。
+     ⚠️ v1.1.84：能耗计算抽屉里已不再有电价面板 ⇒ 这个入口基本是空转，
+        真正被用的是 FnStyleTariff.mount() （配置管理抽屉调用）。 */
   function loadTariff(scope) {
     if (!scope || !window.fetch) return;
     var tbox = scope.querySelector ? scope.querySelector('[data-tariff-box]') : null;
@@ -3050,6 +3064,46 @@
       applyTariff(tbox, j);
     }).catch(function () {
       tbox.innerHTML = '<div class="mon-info">电价配置读取失败</div>';
+    });
+  }
+
+  /* --------------------------------------------------------------------------
+     电价配置面板 —— 对外接口（v1.1.84）
+     --------------------------------------------------------------------------
+     供「配置管理」抽屉（thresholds-ui.js）调用。
+
+     mount(host, opts)
+       host : 面板容器元素（会被整体替换内容）
+       opts : { onSaved: fn }  保存成功后的回调（可选）
+       返回 Promise（数据加载完成后 resolve），便于调用方串联。
+     -------------------------------------------------------------------------- */
+  function mountTariff(host, opts) {
+    if (!host) return Promise.resolve(null);
+    opts = opts || {};
+    function paint(d) {
+      if (!d) return;
+      tariffCache = d;
+      tariffAt = Date.now();
+      applyTariff(host, d);
+    }
+    if (tariffCache && Date.now() - tariffAt < TARIFF_TTL) {
+      paint(tariffCache);
+      return Promise.resolve(tariffCache);
+    }
+    host.innerHTML = '<div class="mon-info">电价配置加载中…</div>';
+    return fetch(BASE + 'power/tariff').then(function (r) {
+      return r.ok ? r.json() : null;
+    }).then(function (j) {
+      if (!j || !j.success) {
+        host.innerHTML = '<div class="mon-info">电价配置读取失败</div>';
+        return null;
+      }
+      paint(j);
+      if (opts.onSaved) opts.onSaved(j);
+      return j;
+    }).catch(function () {
+      host.innerHTML = '<div class="mon-info">电价配置读取失败</div>';
+      return null;
     });
   }
 
@@ -3457,5 +3511,33 @@
     // 滚动锁：抽屉打开/关闭时成对调用，避免锁计数泄漏
     lockScroll: lockPageScroll,
     unlockScroll: unlockPageScroll
+  };
+
+  /* --------------------------------------------------------------------------
+     电价配置面板（v1.1.84 新增对外接口）
+     --------------------------------------------------------------------------
+     「配置管理」抽屉（thresholds-ui.js）用它把电价面板画出来。
+     为什么要独立成一个模块而不是直接在 thresholds-ui.js 里写：
+       ① 电价的**实现**（面板 HTML / 读写 / 校验 / 保存 / 口径说明）
+          属于监控域，与 /api/power/tariff、power_tariff.py 同源，
+          放在 monitor.js 里只有一份，不会出现「两处各写一遍」；
+       ② thresholds-ui.js 的职责是「**编排**设置抽屉」，
+          不应该再去实现电价业务逻辑；
+       ③ 加载顺序无要求 —— 阈值抽屉是用户点了才打开的，
+          那时 monitor.js 早已加载完毕。
+     -------------------------------------------------------------------------- */
+  window.FnStyleTariff = {
+    /* 把电价面板挂到 host 里（host 会被整体替换内容）。
+       返回 Promise，数据到位后 resolve。 */
+    mount: mountTariff,
+    /* 面板 HTML 生成（供需要自己拼 DOM 的场景） */
+    html: tariffPanelHtml,
+    /* 保存成功后让所有「依赖电费数字」的地方重算 */
+    invalidateStats: function () {
+      pstats = null; pstatsAt = 0;
+      pwrEnergyCache = null; pwrEnergyAt = 0;
+      if (lastData) renderPowerOverview(lastData);
+      ensurePowerStats();
+    }
   };
 })();

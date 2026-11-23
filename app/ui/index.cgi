@@ -24,7 +24,7 @@ set -uo pipefail
 # ------------------------- 版本与更新检查 -------------------------
 # ⚠️ 必须与 manifest 的 version 保持一致（自动更新靠它判断「是否比线上新」）。
 # GitHub 发布新版本时，两处都要改：manifest 的 version + 本常量。
-APP_VERSION="1.1.83"
+APP_VERSION="1.1.84"
 
 # ----------------------------- 路径配置 -----------------------------
 # APP_ROOT 是 fnOS 安装后创建的标准软链：
@@ -2379,6 +2379,44 @@ PY
                 http_json "503 Service Unavailable" '{"success":false,"error":"监控服务未就绪，请确认应用服务已启动"}'
             fi
             rm -f "$TH_FILE"
+        fi
+        exit 0
+        ;;
+
+    /api/monitor/alerts|/api/monitor/alerts/test|/api/monitor/alerts/status)
+        # ⚠️ v1.1.84：超阈值告警通知配置。
+        #   GET  /api/monitor/alerts         读配置
+        #   POST /api/monitor/alerts         写配置
+        #   POST /api/monitor/alerts/test    测试推送
+        #   GET  /api/monitor/alerts/status  推送状态
+        #   同样转发给本机 9910 —— 告警判定与推送都在采集服务那边跑
+        #   （采集服务常驻，浏览器关了也能推）。
+        AL_PATH="${REL#/api/monitor}"
+        AL_URL="http://127.0.0.1:9910/api/monitor${AL_PATH}"
+        AL_FILE="${TMPDIR:-/tmp}/fnstyle_al.$$"
+        if [ "$REQ_METHOD" = "POST" ]; then
+            AL_BODY="$(read_body)"
+            printf '%s' "$AL_BODY" > "$AL_FILE.req"
+            if [ -s "$AL_FILE.req" ]; then
+                if curl -s --max-time 20 -X POST \
+                       -H "Content-Type: application/json" \
+                       --data-binary "@$AL_FILE.req" \
+                       -o "$AL_FILE" "$AL_URL" 2>/dev/null && [ -s "$AL_FILE" ]; then
+                    http_json_file_nobom "200 OK" "$AL_FILE"
+                else
+                    http_json "503 Service Unavailable" '{"success":false,"error":"监控服务未就绪，请确认应用服务已启动"}'
+                fi
+            else
+                http_json "400 Bad Request" '{"success":false,"error":"请求体为空"}'
+            fi
+            rm -f "$AL_FILE" "$AL_FILE.req"
+        else
+            if curl -s --max-time 15 -o "$AL_FILE" "$AL_URL" 2>/dev/null && [ -s "$AL_FILE" ]; then
+                http_json_file_nobom "200 OK" "$AL_FILE"
+            else
+                http_json "503 Service Unavailable" '{"success":false,"error":"监控服务未就绪，请确认应用服务已启动"}'
+            fi
+            rm -f "$AL_FILE"
         fi
         exit 0
         ;;

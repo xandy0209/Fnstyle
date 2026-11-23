@@ -466,6 +466,16 @@ class Handler(BaseHTTPRequestHandler):
             if self.command == "POST":
                 return self._handle_thresholds_save()
             return self._handle_thresholds_get()
+        if p == "/api/monitor/alerts":
+            if self.command == "POST":
+                return self._handle_alerts_save()
+            return self._handle_alerts_get()
+        if p == "/api/monitor/alerts/test":
+            if self.command == "POST":
+                return self._handle_alerts_test()
+            return self._handle_alerts_get()
+        if p == "/api/monitor/alerts/status":
+            return self._handle_alerts_status()
         if p == "/api/power/stats":
             return self._handle_power_stats()
         if p == "/api/power/daily":
@@ -800,6 +810,151 @@ class Handler(BaseHTTPRequestHandler):
         data["success"] = True
         data["message"] = msg
         self._send_json(200, data)
+        return True
+
+    # ---------------- 告警通知（v1.1.84） ----------------
+
+    def _handle_alerts_get(self):
+        """读取告警通知配置：GET /api/monitor/alerts
+
+        ⚠️ v1.1.84：老板需求「对于超阈值的生成告警消息，
+           提供通过飞牛的通知消息Webhook进行推送的能力，
+           同时提供通知消息的选择配置。」
+           本接口返回「可选项清单 + 当前配置」，
+           前端据此渲染配置表单（新增选项不必改前端）。
+        """
+        try:
+            import monitor_alerts as ma
+        except Exception as e:
+            self._send_json(500, {"success": False, "error": str(e)})
+            return True
+        try:
+            data = ma.describe()
+            data["success"] = True
+            self._send_json(200, data)
+        except Exception as e:
+            self._send_json(500, {"success": False, "error": str(e)})
+        return True
+
+    def _handle_alerts_save(self):
+        """保存告警通知配置：POST /api/monitor/alerts
+
+        body = {
+          "enabled": true,
+          "webhook_url": "https://...",
+          "webhook_secret": "",
+          "channels": ["webhook"],
+          "levels": ["warn", "crit"],
+          "metrics": {"cpu": true, "mem": true, ...},
+          "cooldown": 300
+        }
+        ⚠️ 只提交要改的键即可（未提交的键保持原值）。
+        """
+        try:
+            import monitor_alerts as ma
+        except Exception as e:
+            self._send_json(500, {"success": False, "error": str(e)})
+            return True
+
+        body = self._read_json_body()
+        if not isinstance(body, dict):
+            self._send_json(400, {"success": False, "error": "请求体格式错误"})
+            return True
+
+        if body.get("__reset"):
+            ok, msg = ma.reset_config()
+        else:
+            ok, msg = ma.save_config(body)
+        if not ok:
+            self._send_json(400, {"success": False, "error": msg})
+            return True
+        data = ma.describe()
+        data["success"] = True
+        data["message"] = msg
+        self._send_json(200, data)
+        return True
+
+    def _handle_alerts_test(self):
+        """测试推送：POST /api/monitor/alerts/test
+
+        发一条**测试消息**（不含真实告警），用于验证 Webhook 地址是否可用。
+        ⚠️ 必须在配置里勾选「Webhook 通道」且填了地址才发得出去。
+        """
+        try:
+            import monitor_alerts as ma
+        except Exception as e:
+            self._send_json(500, {"success": False, "error": str(e)})
+            return True
+
+        cfg = ma.load_config()
+        if not cfg.get("webhook_url"):
+            self._send_json(400, {"success": False,
+                                  "error": "请先配置 Webhook 地址"})
+            return True
+
+        payload = ma.build_message([{
+            "metric": "test",
+            "label": "测试消息",
+            "level": "warn",
+            "value": None,
+            "unit": "",
+            "threshold": None,
+            "text": "这是一条 FnStyle 测试消息 —— 收到即说明 Webhook 通道配置正确。",
+        }])
+        results = []
+        ok_any = False
+        for ch in (cfg.get("channels") or ["webhook"]):
+            if ch == "webhook":
+                ok, msg = ma.send_webhook(cfg.get("webhook_url") or "", payload,
+                                          cfg.get("webhook_secret") or "")
+            elif ch == "fnos":
+                ok, msg = ma.send_fnos(payload)
+            else:
+                ok, msg = False, "未知通道：%s" % ch
+            results.append({"channel": ch, "ok": ok, "message": msg})
+            if ok:
+                ok_any = True
+        self._send_json(200 if ok_any else 400, {
+            "success": ok_any,
+            "error": "" if ok_any else "；".join(
+                "%s: %s" % (r["channel"], r["message"]) for r in results
+                if not r["ok"]),
+            "results": results,
+        })
+        return True
+
+    def _handle_alerts_status(self):
+        """告警推送状态：GET /api/monitor/alerts/status
+
+        返回最近一次判定的告警数、推送结果、通道状态。
+        ⚠️ 这让用户能确认「告警到底推没推出去」——
+           推送是**看不见**的操作，没有状态回显会让人完全无从确认。
+        """
+        try:
+            import monitor_alerts as ma
+        except Exception as e:
+            self._send_json(500, {"success": False, "error": str(e)})
+            return True
+        if _MONITOR is None or _mc is None:
+            self._send_json(503, {"success": False, "error": "监控模块不可用"})
+            return True
+        try:
+            # ⚠️ `_mc` 是**模块** monitor_collect，`_MONITOR` 才是 MonitorCollector 实例。
+            #    `alert_status` 是实例方法 ⇒ 必须调 `_MONITOR`，写成 `_mc.alert_status()`
+            #    会报 "module 'monitor_collect' has no attribute 'alert_status'"。
+            st = _MONITOR.alert_status()
+        except Exception as e:
+            self._send_json(500, {"success": False, "error": str(e)})
+            return True
+        try:
+            import fnos_notify
+            st["fnos"] = fnos_notify.status()
+        except Exception:
+            st["fnos"] = {"available": False, "detail": "fnOS 通知模块不可用"}
+        cfg = ma.load_config()
+        st["enabled"] = bool(cfg.get("enabled"))
+        st["channels"] = cfg.get("channels") or []
+        self._send_json(200, st)
         return True
 
     def _handle_power_daily(self):
