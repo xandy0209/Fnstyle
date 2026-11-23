@@ -34,7 +34,7 @@
 
 | 安装包 | 直链 |
 |---|---|
-| `fnstyle_1.1.83_all.fpk` | `https://github.com/xandy0209/Fnstyle/releases/download/v1.1.83/fnstyle_1.1.83_all.fpk` |
+| `fnstyle_1.1.83_all.fpk` | 1,517,514 | `d002b80a0ee4d7c9a456fb93d896615e` | `0df8f11a2fa17b46224782f5db10c61c25257bda1a6ab7f4dab87473fb5de9a7` |
 
 或从 [Releases 页面](https://github.com/xandy0209/Fnstyle/releases/tag/v1.1.83) 下载。
 
@@ -42,7 +42,7 @@
 
 | 文件 | 大小（字节） | MD5 | SHA256 |
 |---|---:|---|---|
-| `fnstyle_1.1.83_all.fpk` | 1,517,291 | `b6626e018a341f4e53e14d2c221aed64` | `28d00fc8e94512718961435d0c03fc7833a31b98add482153e1c496e7ddb96e5` |
+| `fnstyle_1.1.83_all.fpk` | 1,517,436 | `bb1087eb094bd80b0ecf122b040f5f47` | `4fb7401e4132a7b2c61e4cedf6eb4c6f0dca801149b259186b504eef6d4e769c` |
 
 ### 安装步骤
 
