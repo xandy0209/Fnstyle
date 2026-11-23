@@ -424,6 +424,76 @@ check('push 用了绕过代理的 opener', 'ProxyHandler({})' in
       open(os.path.join(UI, 'monitor_alerts.py'), encoding='utf-8').read())
 
 # ---------------------------------------------------------------------------
+section('N. 阈值按钮区的位置约定（v1.1.85）')
+# ---------------------------------------------------------------------------
+# ⚠️ 老板反馈：「恢复默认门限 / 保存阈值」按钮位置不对，
+#    要求挪到**阈值配置下方**（阈值分组之后、电费设置之前）。
+#    这条约定必须锁死，否则以后改版式又滑回抽屉底部。
+_thr = open(os.path.join(UI, 'static/js/thresholds-ui.js'), encoding='utf-8').read()
+_thr_code = _strip_comments(_thr)
+
+# 1) bodyHtml 里：按钮区必须在 tariffSectionHtml 之前
+# ⚠️ 两个坑：
+#    a) 必须限定在 **bodyHtml 函数体内**找 —— `tariffSectionHtml()` /
+#       `alertsSectionHtml()` 的**函数定义**在文件前部，全文件 find 会命中定义。
+#    b) 提取函数体**不能**用 `find('function ', start+10)` —— 函数体里有匿名
+#       `function (g)`（forEach 回调），会把它当函数结束点 ⇒ 只截出前 181 字符。
+#       正解：按大括号配平数出函数体范围。
+def _func_body(code, name):
+    """按大括号配平提取 `function name(...) {...}` 的函数体（不含函数头）。"""
+    i = code.find('function ' + name)
+    if i < 0:
+        return ''
+    j = code.find('{', i)
+    if j < 0:
+        return ''
+    depth = 0
+    for k in range(j, len(code)):
+        if code[k] == '{':
+            depth += 1
+        elif code[k] == '}':
+            depth -= 1
+            if depth == 0:
+                return code[j + 1:k]
+    return ''
+
+
+_bh = _func_body(_thr_code, 'bodyHtml')
+check('找到 bodyHtml 函数体', len(_bh) > 500, 'len=%s' % len(_bh))
+_i_actions = _bh.find("thr-actions-thresholds")
+_i_tariff = _bh.find("tariffSectionHtml()")
+_i_alerts = _bh.find("alertsSectionHtml()")
+check('bodyHtml 里按钮区在电价段之前',
+      _i_actions > 0 and _i_tariff > 0 and _i_actions < _i_tariff,
+      'actions=%s tariff=%s' % (_i_actions, _i_tariff))
+check('bodyHtml 里按钮区在告警段之前',
+      _i_actions > 0 and _i_alerts > 0 and _i_actions < _i_alerts,
+      'actions=%s alerts=%s' % (_i_actions, _i_alerts))
+
+# 2) renderThresholdsOnly 必须**单独**处理按钮区
+#    （它是 .thr-actions-thresholds 不是 .thr-sec ⇒ 不显式处理就会「重绘后消失」）
+_rtl = _thr_code
+check('renderThresholdsOnly 显式替换按钮区',
+      'newActions' in _rtl and 'oldActions' in _rtl
+      and "querySelector('.thr-actions-thresholds')" in _rtl,
+      '')
+
+# 3) ⚠️ 回归点：插入新分段时必须**同时跳过**电价段与告警段，
+#    只跳过电价段会插进一个重复的告警段（实测分段数 7 → 8）。
+check('插入新分段时跳过告警段（避免重复插入）',
+      'newAlerts' in _rtl and 's === newAlerts' in _rtl,
+      '')
+
+# 4) CSS：按钮区不再有上边框（中间位置再画线会与电价区虚线叠在一起）
+_css = open(os.path.join(UI, 'static/css/app.css'), encoding='utf-8').read()
+_m = re.search(r'\.thr-actions-thresholds\s*\{([^}]*)\}', _css)
+check('.thr-actions-thresholds 样式存在', _m is not None, '')
+if _m:
+    _blk = _m.group(1)
+    check('.thr-actions-thresholds 去掉了上边框',
+          'border-top' in _blk and 'none' in _blk, _blk.strip()[:120])
+
+# ---------------------------------------------------------------------------
 shutil.rmtree(TMP, ignore_errors=True)
 print('\n' + '=' * 70)
 print('verify_alerts_notify: PASS %d / FAIL %d' % (PASS, FAIL))

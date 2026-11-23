@@ -254,8 +254,20 @@ def main():
     ck.check("密钥框是 password 类型（不显示明文）",
              sj.get("secretType") == "password", str(sj.get("secretType")))
     ck.check("地址框是 url 类型", sj.get("urlType") == "url", str(sj.get("urlType")))
-    ck.check("默认开关是关闭态", sj.get("enabledChecked") is False,
-             str(sj.get("enabledChecked")))
+    # ⚠️ v1.1.85：不能硬编码「默认开关是关闭态」。
+    #    告警配置是**持久化**的（存在数据目录的 monitor_alerts.json），
+    #    上一轮实机测试留下的 enabled=true 会让这条断言必然假红。
+    #    ⇒ 改成断言「开关状态与后端返回的配置一致」—— 这才是真正的契约。
+    try:
+        import urllib.request as _u
+        _op = _u.build_opener(_u.ProxyHandler({}))
+        _cfg = json.loads(_op.open(URL.rstrip("/") + "/api/monitor/alerts", timeout=8).read().decode())
+        _srvEnabled = bool(_cfg.get("config", {}).get("enabled"))
+    except Exception as e:
+        _srvEnabled = None
+    ck.check("告警总开关状态与后端配置一致",
+             _srvEnabled is not None and sj.get("enabledChecked") is _srvEnabled,
+             "ui=%s server=%s" % (sj.get("enabledChecked"), _srvEnabled))
     ck.check("开关轨道有实际尺寸",
              sj.get("swW", 0) > 20 and sj.get("swH", 0) > 10, str(sj))
     # ⚠️ v1.1.84 修复过：`.thr-input-wide` 曾被 `input[type="url"]` / `input[type="password"]`
@@ -364,8 +376,18 @@ def main():
         sj2 = _asdict(d)
         ck.check("点开关后 checked 翻转",
                  sj2.get("now") != sj2.get("was"), str(sj2))
-        ck.check("开关轨道视觉同步（checked 时背景变主色）",
-                 sj2.get("now") is True, str(sj2))
+        # ⚠️ 点击开关**不会自动保存**（要按「保存通知配置」）⇒
+        #    UI 状态此时必然与后端不同，不能拿它跟后端比。
+        #    真正该断言的是：① UI 翻转了 ② 这次点击**没有**偷偷改后端。
+        try:
+            _op2 = _u.build_opener(_u.ProxyHandler({}))
+            _cfg2 = json.loads(_op2.open(URL.rstrip("/") + "/api/monitor/alerts", timeout=8).read().decode())
+            _srvEnabled2 = bool(_cfg2.get("config", {}).get("enabled"))
+        except Exception:
+            _srvEnabled2 = None
+        ck.check("点开关不会自动改后端配置（仍需点保存）",
+                 _srvEnabled2 is _srvEnabled,
+                 "before=%s after=%s" % (_srvEnabled, _srvEnabled2))
     except Exception:
         ck.check("点开关后 checked 翻转", False, str(d))
 
@@ -399,6 +421,136 @@ def main():
              "url.right=%s body.right=%s" % (nj.get("urlRight"), nj.get("bodyRight")))
     cdp.send("Emulation.clearDeviceMetricsOverride")
     cdp.pump(0.8)
+
+    # ---- 阈值按钮区位置（v1.1.85）----
+    # ⚠️ v1.1.85：老板反馈「恢复默认门限 / 保存阈值」位置不对，
+    #    要求挪到**阈值配置下方**（阈值分组之后、电费设置之前）。
+    #    原先它们在抽屉最底部 ⇒ 离操作的表单隔了两大段，
+    #    而且紧挨着「保存通知配置」，两个「保存」很容易点错。
+    ck = new_ck("H. 阈值按钮区的位置（v1.1.85）", TOTAL)
+    d = cdp.js("""(() => {
+      const body = document.getElementById('monThresholdBody');
+      if (!body) return JSON.stringify({missing:true});
+      const act = body.querySelector('.thr-actions-thresholds');
+      const secs = Array.from(body.querySelectorAll('.thr-sec'));
+      const tariff = body.querySelector('.thr-sec-tariff');
+      const alerts = body.querySelector('.thr-sec-alerts');
+      /* ⚠️ 用**子节点下标**判顺序，不碰 compareDocumentPosition。
+         那玩意儿的位语义（谁在谁的 FOLLOWING 方向）改错过两次，
+         每次都是「条件写反 ⇒ 探针假红」⇒ 产品被冤。
+         DOM 顺序用 indexOf 一目了然，且不会搞反。 */
+      const acts = body.querySelectorAll('.thr-actions-thresholds');
+      const actEl = acts[0];
+      const kids = Array.prototype.slice.call(body.children);
+      const idxOf = (x) => x ? kids.indexOf(x) : -1;
+      const iAct = idxOf(actEl);
+      const iTariff = idxOf(tariff);
+      const iAlerts = idxOf(alerts);
+      const thrSecs = secs.filter(s => !s.classList.contains('thr-sec-tariff')
+                                     && !s.classList.contains('thr-sec-alerts'));
+      const iThrLast = thrSecs.length ? idxOf(thrSecs[thrSecs.length - 1]) : -1;
+      const ar = actEl ? actEl.getBoundingClientRect() : null;
+      const tr = tariff ? tariff.getBoundingClientRect() : null;
+      const lr = alerts ? alerts.getBoundingClientRect() : null;
+      const lastThr = thrSecs.length ? thrSecs[thrSecs.length-1].getBoundingClientRect() : null;
+      return JSON.stringify({
+        missing: false,
+        actCount: acts.length,
+        iAct: iAct, iTariff: iTariff, iAlerts: iAlerts, iThrLast: iThrLast,
+        childOrder: kids.map(k => (k.className || '').split(' ')[0]),
+        hasReset: !!body.querySelector('[data-thr-reset]'),
+        hasSave: !!body.querySelector('[data-thr-save]'),
+        hasMsg: !!body.querySelector('[data-thr-msg]'),
+        actTop: ar ? Math.round(ar.top) : 0,
+        actBottom: ar ? Math.round(ar.bottom) : 0,
+        actH: ar ? Math.round(ar.height) : 0,
+        actRight: ar ? Math.round(ar.right) : 0,
+        tariffTop: tr ? Math.round(tr.top) : 0,
+        alertsTop: lr ? Math.round(lr.top) : 0,
+        lastThrBottom: lastThr ? Math.round(lastThr.bottom) : 0,
+        bodyRight: Math.round(body.getBoundingClientRect().right)
+      });
+    })()""")
+    hj = _asdict(d)
+    ck.check("阈值按钮区存在（且只有一个）",
+             hj.get("missing") is False and hj.get("actCount") == 1,
+             "count=%s" % hj.get("actCount"))
+    ck.check("按钮区在**所有阈值分组之后**",
+             hj.get("iAct", -1) > hj.get("iThrLast", -1),
+             "iAct=%s iThrLast=%s order=%s" % (hj.get("iAct"), hj.get("iThrLast"),
+                                              hj.get("childOrder")))
+    ck.check("按钮区在「电费设置」之前",
+             0 < hj.get("iAct", -1) < hj.get("iTariff", -1),
+             "iAct=%s iTariff=%s" % (hj.get("iAct"), hj.get("iTariff")))
+    ck.check("按钮区在「告警通知」之前",
+             0 < hj.get("iAct", -1) < hj.get("iAlerts", -1),
+             "iAct=%s iAlerts=%s" % (hj.get("iAct"), hj.get("iAlerts")))
+    ck.check("按钮区里有「恢复默认门限」按钮", hj.get("hasReset") is True)
+    ck.check("按钮区里有「保存阈值」按钮", hj.get("hasSave") is True)
+    ck.check("按钮区里有提示位（data-thr-msg）", hj.get("hasMsg") is True)
+    # 几何上也必须紧跟阈值分组（不是被排到别处）
+    ck.check("按钮区顶边紧跟最后一个阈值分组底边（间距 < 40px）",
+             0 <= hj.get("actTop", 0) - hj.get("lastThrBottom", 0) <= 40,
+             "actTop=%s lastThrBottom=%s" % (hj.get("actTop"), hj.get("lastThrBottom")))
+    ck.check("按钮区在电价段上方（actBottom ≤ tariffTop）",
+             hj.get("actBottom", 10 ** 9) <= hj.get("tariffTop", 0) + 1,
+             "actBottom=%s tariffTop=%s" % (hj.get("actBottom"), hj.get("tariffTop")))
+    ck.check("按钮区有实际高度（画出来了，不是空容器）",
+             hj.get("actH", 0) > 15, "h=%s" % hj.get("actH"))
+    ck.check("按钮区未溢出抽屉右界",
+             hj.get("actRight", 0) <= hj.get("bodyRight", 0) + 1,
+             "act.right=%s body.right=%s" % (hj.get("actRight"), hj.get("bodyRight")))
+
+    # ---- 交互：点「恢复默认门限」后按钮区不能消失 ----
+    # ⚠️ v1.1.85 的核心回归点：`renderThresholdsOnly()` 原来按 `.thr-sec` 增删，
+    #    而按钮区**不是** .thr-sec ⇒ 重绘后按钮会凭空消失。
+    #    这里必须**真的点一次**并断言按钮仍在。
+    ck = new_ck("I. 点「恢复默认门限」后按钮区仍在", TOTAL)
+    d = cdp.js("""(() => {
+      const b = document.querySelector('#monThresholdBody [data-thr-reset]');
+      if (!b) return JSON.stringify({missing:true});
+      b.scrollIntoView({block:'center'});
+      b.click();
+      return JSON.stringify({clicked:true});
+    })()""")
+    cdp.pump(1.8)
+    d = cdp.js("""(() => {
+      const body = document.getElementById('monThresholdBody');
+      const acts = body ? body.querySelectorAll('.thr-actions-thresholds') : [];
+      const a = acts[0];
+      const r = a ? a.getBoundingClientRect() : null;
+      const secs = body ? Array.from(body.querySelectorAll('.thr-sec')) : [];
+      const tariff = body ? body.querySelector('.thr-sec-tariff') : null;
+      /* 同上：用子节点下标判顺序，不碰 compareDocumentPosition 位语义 */
+      const kids = Array.prototype.slice.call(body ? body.children : []);
+      const iAct = a ? kids.indexOf(a) : -1;
+      const iTariff = tariff ? kids.indexOf(tariff) : -1;
+      return JSON.stringify({
+        count: acts.length,
+        hasReset: !!(body && body.querySelector('[data-thr-reset]')),
+        hasSave: !!(body && body.querySelector('[data-thr-save]')),
+        hasMsg: !!(body && body.querySelector('[data-thr-msg]')),
+        h: r ? Math.round(r.height) : 0,
+        secCount: secs.length,
+        iAct: iAct, iTariff: iTariff,
+        msgText: (body && body.querySelector('[data-thr-msg]')) ?
+                 (body.querySelector('[data-thr-msg]').textContent || '') : ''
+      });
+    })()""")
+    rj = _asdict(d)
+    ck.check("重绘后按钮区仍在（没有凭空消失）",
+             rj.get("count") == 1, "count=%s" % rj.get("count"))
+    ck.check("重绘后「恢复默认门限」按钮仍在", rj.get("hasReset") is True)
+    ck.check("重绘后「保存阈值」按钮仍在", rj.get("hasSave") is True)
+    ck.check("重绘后提示位仍在", rj.get("hasMsg") is True)
+    ck.check("重绘后按钮区仍有实际高度", rj.get("h", 0) > 15, "h=%s" % rj.get("h"))
+    ck.check("重绘后分段数量不变（阈值 5 + 电费 + 告警 = 7）",
+             rj.get("secCount") == 7, "secCount=%s" % rj.get("secCount"))
+    ck.check("重绘后按钮区仍在电价段之前（位置没跑掉）",
+             0 < rj.get("iAct", -1) < rj.get("iTariff", -1),
+             "iAct=%s iTariff=%s" % (rj.get("iAct"), rj.get("iTariff")))
+    ck.check("重绘给出了结果提示",
+             bool(rj.get("msgText")), str(rj.get("msgText")))
 
     print()
     ck.finish()

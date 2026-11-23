@@ -3426,6 +3426,21 @@ html.mon-scroll-lock body {
   padding-top: 1rem;
   border-top: 1px solid var(--border);
 }
+/* ⚠️ v1.1.85：阈值按钮区（恢复默认门限 / 保存阈值）从抽屉底部
+   移到了**阈值分组正下方**（老板要求「调整到阈值配置下方显示」）。
+
+   原来的 .thr-actions 带 `border-top` —— 那是为「抽屉最底部」设计的
+   （上方是最后一屏内容，用一道线把按钮托出来）。
+   移到中间后：上方紧贴着阈值分组的最后一行，再画一道线会显得拥挤；
+   而下方紧接着就是电价区的虚线分界（.thr-sec-tariff 的 border-top），
+   两道线叠在一起更乱。
+   ⇒ 去掉上边框，改用「较大的下间距」把按钮区和下面的电价区分开。 */
+.thr-actions-thresholds {
+  border-top: none;
+  margin-top: 1.15rem;
+  padding-top: 0;
+  margin-bottom: .35rem;
+}
 .thr-msg {
   font-size: .74rem;
   color: var(--text-secondary);

@@ -262,6 +262,22 @@
       html += '</div></section>';
     });
 
+    /* ⚠️ v1.1.85：按钮区从「抽屉最底部」移到「阈值配置下方」。
+       老板反馈：按钮位置不对，应该在阈值配置下面显示。
+
+       为什么原来不对：v1.1.84 把电价设置、告警通知两段接在阈值分组之后，
+       按钮区又留在最底部 ⇒ 「保存阈值」离它操作的表单隔了两大段，
+       用户改完门限要往下翻过电价和告警配置才找得到按钮，
+       而且按钮紧挨着「保存通知配置」，两个「保存」很容易点错。
+
+       ⇒ 按钮紧跟阈值分组，既贴着它操作的表单，
+          又和下面「保存通知配置」在视觉上分开（各自成段）。 */
+    html += '<div class="thr-actions thr-actions-thresholds">';
+    html += '<button type="button" class="btn sm" data-thr-reset>恢复默认门限</button>';
+    html += '<button type="button" class="btn primary sm" data-thr-save>保存阈值</button>';
+    html += '<span class="thr-msg" data-thr-msg></span>';
+    html += '</div>';
+
     /* ⚠️ v1.1.84：电价设置放在**阈值分组之后**——
        阈值是「监控告警的门限」，电价是「算账的参数」，
        两者不是一类东西，视觉上分开成两段更清楚。 */
@@ -271,12 +287,6 @@
        它是「这些门限超了之后要怎么办」，逻辑上依赖前面的门限配置，
        放最后读起来是自然的因果顺序。 */
     html += alertsSectionHtml();
-
-    html += '<div class="thr-actions">';
-    html += '<button type="button" class="btn sm" data-thr-reset>恢复默认门限</button>';
-    html += '<button type="button" class="btn primary sm" data-thr-save>保存阈值</button>';
-    html += '<span class="thr-msg" data-thr-msg></span>';
-    html += '</div>';
 
     return html;
   }
@@ -321,25 +331,45 @@
       return;
     }
     /* 重建阈值区：把所有 .thr-sec（阈值分组）替换成新内容，
-       保留电价区（.thr-sec-tariff）与底部按钮区不动。 */
+       保留电价区（.thr-sec-tariff）与告警段（.thr-sec-alerts）不动。
+
+       ⚠️ v1.1.85：按钮区（.thr-actions-thresholds）现在夹在阈值分组与电价区之间，
+          它**不是** .thr-sec ⇒ 上面的「删除所有 .thr-sec」不会碰它，
+          但「插入到电价区之前」也**不会**把它带上
+          ⇒ 必须**单独**替换按钮区，否则会出现「阈值区重绘后按钮消失」。
+          做法：先删旧按钮区，再把新按钮区插到电价区之前。 */
     var tmp = document.createElement('div');
     tmp.innerHTML = bodyHtml();
     var newSecs = tmp.querySelectorAll('.thr-sec');
     var newTariff = tmp.querySelector('.thr-sec-tariff');
-    /* 先删掉旧的阈值区（保留电价区） */
+    var newAlerts = tmp.querySelector('.thr-sec-alerts');
+    var newActions = tmp.querySelector('.thr-actions-thresholds');
+    /* 先删掉旧的阈值区（保留电价区与告警段） */
     var tariffSec = bodyEl.querySelector('.thr-sec-tariff');
+    var alertsSec = bodyEl.querySelector('.thr-sec-alerts');
     Array.prototype.forEach.call(secs, function (s) {
-      if (s === tariffSec) return;   /* 电价区不动 */
+      if (s === tariffSec || s === alertsSec) return;   /* 电价区 / 告警段不动 */
       if (s.parentNode) s.parentNode.removeChild(s);
     });
-    /* 把新的阈值区插到电价区之前 */
+    /* 删掉旧按钮区（它要被新的替换） */
+    var oldActions = bodyEl.querySelector('.thr-actions-thresholds');
+    if (oldActions && oldActions.parentNode) {
+      oldActions.parentNode.removeChild(oldActions);
+    }
+    /* 把新的阈值区 + 按钮区插到电价区之前 */
     var anchor = bodyEl.querySelector('.thr-sec-tariff');
     Array.prototype.forEach.call(newSecs, function (s) {
-      if (s === newTariff) return;   /* 电价区用旧的 */
+      /* ⚠️ 电价区与告警段都用**旧的**（上面没删它们）⇒ 这里必须一并跳过。
+         只跳过电价区会插进来一个**新的告警段** ⇒ 抽屉里出现两个告警段
+         （实测分段数 7 → 8）。 */
+      if (s === newTariff || s === newAlerts) return;
       if (anchor && anchor.parentNode) {
         anchor.parentNode.insertBefore(s, anchor);
       }
     });
+    if (newActions && anchor && anchor.parentNode) {
+      anchor.parentNode.insertBefore(newActions, anchor);
+    }
     bindBody();
   }
 
