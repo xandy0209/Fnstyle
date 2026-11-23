@@ -64,7 +64,7 @@ except Exception:  # pragma: no cover
 #    （nicDetail 里有新字段、但缺 tunnel 键，正是新旧代码混合的指纹）。
 #    这个常量会随 power 数据一起上报，从 API 一眼就能确认
 #    「NAS 上跑的到底是哪一版代码」，省掉逐字段比对。
-COLLECT_VERSION = "1.1.87"
+COLLECT_VERSION = "1.1.88"
 
 
 # ⚠️ v1.1.84：告警判定周期（秒）。

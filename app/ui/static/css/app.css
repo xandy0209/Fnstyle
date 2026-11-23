@@ -5543,14 +5543,20 @@ html.mon-scroll-lock body {
 .ov-metric[data-ov="mem"] .ov-m-sub,
 .ov-metric[data-ov="disk"] .ov-m-sub,
 .ov-metric[data-ov="temp"] .ov-m-sub,
-.ov-metric[data-ov="pwr"] .ov-m-sub,
-.ov-metric[data-ov="net"] .ov-m-sub {
+.ov-metric[data-ov="pwr"] .ov-m-sub {
   position: relative;
   /* ⚠️ v1.1.76：数字下移 10px → 副标题同步下移，-5 → **5px**。
-     这样「数字字形底 → 副标题顶 = 10px」的间距保持不变。
-     net 卡虽无仪表，但它的副标题与其它卡在同一行，
-     必须同步下移，否则两行卡片的内容基线会错位。 */
+     这样「数字字形底 → 副标题顶 = 10px」的间距保持不变。 */
   top: 5px;
+}
+/* ⚠️ v1.1.88：net 卡**单独一条**（不再与其它五张共享）——
+   v1.1.76 的 5px 是为了配合「主数字下移 10px」；
+   而 v1.1.88 把 net 的 `.ov-net-vals` 改成**上移 10px**，
+   副标题必须同步上移，否则「数字 → 副标题」的间距会从 10px 变成 15px，
+   与其它五张卡不一致（两行卡片的副标题基线会错位）。 */
+.ov-metric[data-ov="net"] .ov-m-sub {
+  position: relative;
+  top: -5px;
 }
 /* ⚠️ v1.1.74：网络卡**没有仪表**（仪表只有 cpu/mem/disk/temp/pwr 五张），
    它的 .ov-m-main 里装的是 .ov-net-vals（上下行两行，横跨整列），
@@ -5614,12 +5620,31 @@ html.mon-scroll-lock body {
   align-content: start;
   /* ⚠️ v1.1.74：与副标题的间距 10px（同样抵消 row-gap 3.2px） */
   margin-top: 6.8px;
-  /* ⚠️ v1.1.76：副标题随环形图一起下移 10px（保持两行卡片基线一致），
-     网络卡**没有仪表**，但它的副标题在第二行，
-     必须与第一行卡片的副标题同步下移，否则两行内容基线错位。
-     这里把数字区也下移 10px，保持「数字 → 副标题 = 10px」不变。 */
+  /* ⚠️ v1.1.88 老板反馈「网络卡片左侧的文本内容上移 15px，
+     目前已经覆盖在趋势图上了」——
+     ⚠️ v1.1.76 这里曾把数字区**下移** 10px（top:10px），
+     是为了跟第一行卡片的副标题基线对齐。但网络卡**没有仪表**，
+     下移反而把它挤进了副标题与趋势图之间 ⇒ 文字互相盖住。
+
+     ⚠️⚠️ 真正的病根不在这里，而在下面 `.ov-net-vals .row` 的
+     **全局表单行样式泄漏**（见该规则的 padding/border 说明）——
+     泄漏导致两行各高 46/39px（内容只有 23/17px），
+     `.ov-net-vals` 总高 89px 严重溢出锁死的 `.ov-m-main`（48px），
+     第二行直接压在副标题（今日流量）上，副标题又贴着趋势图，
+     「↑上行速率」那一行**被趋势线直接穿过**（实机截图确认）。
+
+     修掉泄漏后，`.ov-net-vals` 只剩 44px（23 + 17 + gap 3.5），
+     完全装得进 48px 的 `.ov-m-main` ⇒ 不动 main 高度、不破坏六卡等高。
+
+     这里的 top 从 +10px 改为 **-10px**（上移 20px）：
+     · v1.1.76 的 +10px 是为了跟第一行卡片副标题对齐，
+       但网络卡没有仪表，那个对齐并不必要；
+     · 上移 20px 后，第一行速率与上方标题拉开到 13px 净空，
+       第二行速率底边距副标题顶边 28px，彻底不重叠；
+     · 再往上会顶到标题「网络」的墨迹（标题墨迹底 474，
+       vals 顶 472 时重叠 2px）⇒ -10px 是「不撞标题」的上限。 */
   position: relative;
-  top: 10px;
+  top: -10px;
 }
 .ov-net-vals .row {
   display: flex;
@@ -5632,6 +5657,26 @@ html.mon-scroll-lock body {
      导致网络卡比其余五卡高 64px、六卡不等高。
      这里改成 start → 行高贴合内容。 */
   align-self: start;
+  /* ⚠️⚠️ v1.1.88：必须**清掉全局 `.row`（表单行）的 padding / border**！
+
+     ⚠️ 全局 `.row` 是**表单行**样式：
+        padding: .7rem 0; border-bottom: 1px dashed var(--border);
+     `.ov-net-vals .row` 只覆盖了 display / align-items / gap / align-self，
+     **漏掉了 padding 和 border** ⇒ 表单行样式泄漏进卡片。
+
+     后果（实机实测 v1.1.88）：
+       · row1（下行速率）实高 46px（内容只有 23px）—— 多出的 22.4px 是 padding，
+         另 1px 是 border-bottom；
+       · row2（上行速率）实高 39px（内容只有 17px）；
+       · 两行合计 89px，而 `.ov-m-main` 锁死 48px ⇒ 溢出 41px；
+       · 第二行底边 587px 压在副标题顶边 544px 上（重叠 43px），
+         副标题（今日流量）又紧贴趋势图 ⇒ 文字被趋势线穿过。
+
+     ⇒ padding:0 + border-bottom:0 后：
+       row1 23px / row2 17px / vals 合计 44px ⇒ 完全装得下，
+       副标题与趋势图之间恢复净空。 */
+  padding: 0;
+  border-bottom: 0;
 }
 .ov-net-vals .row .ov-dnum { --dm-h: 23px; }
 .ov-net-vals .row.sec .ov-dnum { --dm-h: 15px; }
