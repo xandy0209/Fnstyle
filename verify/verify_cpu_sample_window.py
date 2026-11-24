@@ -10,10 +10,14 @@
     窗口    每核 jiffy    单 jiffy 占比
     0.25s      ~25          4.0%      ← 读数在 2%~64% 间乱跳
     3s        ~300          0.33%
-    10s      ~1000          0.10%     ← 数值稳定
+    5s        ~500          0.20%     ← v1.1.90 起采用的窗口
+    10s      ~1000          0.10%
 
-fnmonitor 在 NAS 上的实测配置（/vol1/@appdata/fnmonitor/config.json）
-为 `interval = 10`，因此 FnStyle 也改成 10 秒窗口。
+⚠️ v1.1.90：窗口由 10 秒改为 **5 秒** —— 与**飞牛自身**「运行状态」卡片的
+CPU 更新时长（前端轮询 5 秒）对齐，让两边用户看到的刷新节奏一致。
+
+fnmonitor 在 NAS 上的采集配置为 `interval = 10`，但那是**采集缓存**周期，
+与**前端展示刷新**不是一回事 —— 本次对齐的是用户看到的更新时长。
 
 本测试用 **NAS 真机采集的 /proc/stat 样本**（verify/fixtures/cpu_stat_samples.json）
 驱动真实代码，验证：
@@ -81,8 +85,9 @@ def test_structure():
     src = open(os.path.join(ROOT, "app", "ui", "monitor_collect.py"),
               encoding="utf-8").read()
 
-    check("CPU_SAMPLE_WINDOW == 10",
-          getattr(mc, "CPU_SAMPLE_WINDOW", None) == 10,
+    # ⚠️ v1.1.90：窗口由 10 秒改为 5 秒（与飞牛自身的 CPU 更新时长对齐）
+    check("CPU_SAMPLE_WINDOW == 5",
+          getattr(mc, "CPU_SAMPLE_WINDOW", None) == 5,
           "(实际 %s)" % getattr(mc, "CPU_SAMPLE_WINDOW", "缺失"))
     check("主循环不再有 0.25 秒双采样",
           "time.sleep(0.25)" not in src,
@@ -116,9 +121,15 @@ def test_quantization():
     check("3s 窗口单 jiffy ≈ 0.33%",
           abs(jiffy_weight(3) - 1.0 / 3) < 0.005,
           "(%.3f%%)" % jiffy_weight(3))
+    check("5s 窗口单 jiffy ≈ 0.2%",
+          abs(jiffy_weight(5) - 0.2) < 0.005,
+          "(%.3f%%)" % jiffy_weight(5))
     check("10s 窗口单 jiffy ≈ 0.1%",
           abs(jiffy_weight(10) - 0.1) < 0.005,
           "(%.3f%%)" % jiffy_weight(10))
+    check("5s 窗口分辨率比 0.25s 好 20 倍",
+          jiffy_weight(0.25) / jiffy_weight(5) > 19,
+          "(%.0f 倍)" % (jiffy_weight(0.25) / jiffy_weight(5)))
     check("10s 窗口分辨率比 0.25s 好 40 倍",
           jiffy_weight(0.25) / jiffy_weight(10) > 39,
           "(%.0f 倍)" % (jiffy_weight(0.25) / jiffy_weight(10)))
@@ -174,8 +185,9 @@ def test_real_samples():
 
     mc.read_text = fake_read_text
     try:
-        w025 = []
-        w10 = []
+        # ⚠️ v1.1.90：按窗口标签自动分组 —— fixture 里若补进 5s 样本，
+        #    无需改代码即可自动参与对比。
+        by_window = {}
         for s in samples:
             frames = s["frames"]
             mc._CPU_STATE.update({"last": None, "lastTime": None, "cores": None})
@@ -195,23 +207,44 @@ def test_real_samples():
                 continue
 
             rec = (r2["percent"], r2["coresPercent"])
-            (w025 if s["window"] == "0.25s" else w10).append(rec)
+            by_window.setdefault(s["window"], []).append(rec)
+
+        w025 = by_window.get("0.25s", [])
+        w10 = by_window.get("10s", [])
+        w5 = by_window.get("5s", [])
 
         check("所有样本都产出有效读数",
-              len(w025) + len(w10) == len(samples),
-              "(%d/%d)" % (len(w025) + len(w10), len(samples)))
+              sum(len(v) for v in by_window.values()) == len(samples),
+              "(%d/%d)" % (sum(len(v) for v in by_window.values()), len(samples)))
 
         # 汇总读数的波动幅度
+        def rng_of(recs):
+            vals = [x[0] for x in recs]
+            return (max(vals) - min(vals)) if vals else 0.0
+
+        for label, recs in (("0.25s", w025), ("5s   ", w5), ("10s  ", w10)):
+            if recs:
+                vals = [x[0] for x in recs]
+                print("    %s 窗口读数: %s  → 极差 %.1f"
+                      % (label, vals, rng_of(recs)))
+
         if w025 and w10:
-            t025 = [x[0] for x in w025]
-            t10 = [x[0] for x in w10]
-            rng025 = max(t025) - min(t025)
-            rng10 = max(t10) - min(t10)
-            print("    0.25s 窗口读数: %s  → 极差 %.1f" % (t025, rng025))
-            print("    10s   窗口读数: %s  → 极差 %.1f" % (t10, rng10))
+            rng025 = rng_of(w025)
+            rng10 = rng_of(w10)
             check("10s 窗口波动小于 0.25s 窗口",
                   rng10 < rng025,
                   "(%.1f < %.1f)" % (rng10, rng025))
+        if w5 and w025:
+            rng5 = rng_of(w5)
+            check("5s 窗口波动小于 0.25s 窗口",
+                  rng5 < rng_of(w025),
+                  "(%.1f < %.1f)" % (rng5, rng_of(w025)))
+        if w5 and w10:
+            # 5s 窗口量化分辨率比 10s 差（0.2% vs 0.1%），
+            # 波动可能略大于 10s，但不应回到 0.25s 那种失控水平。
+            check("5s 窗口波动小于 0.25s 窗口",
+                  rng_of(w5) < rng_of(w025) if w025 else True,
+                  "(%.1f vs 0.25s %.1f)" % (rng_of(w5), rng_of(w025)))
 
         # 每核数值的离散度：越低越稳定
         def spread(recs):
@@ -232,6 +265,10 @@ def test_real_samples():
         check("0.25s 窗口出现 0%/100% 极端跳变", extreme025)
         check("10s 窗口未出现极端跳变", not extreme10,
               "(更符合 fnmonitor 显示形态)")
+        if w5:
+            extreme5 = any(0.0 in cores or 100.0 in cores for _, cores in w5)
+            check("5s 窗口未出现极端跳变", not extreme5,
+                  "(5s 窗口同样不该出现 0%/100%)")
     finally:
         mc.read_text = orig_read_text
 

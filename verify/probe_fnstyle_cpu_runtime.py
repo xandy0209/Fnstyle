@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 探针（实跑）：在**真实运行环境**里跑 FnStyle 的 CPU 采集器，测它实际的
-CPU 百分比产出节奏 —— 验证静态结论「10 秒一帧」。
+CPU 百分比产出节奏 —— 验证静态结论「5 秒一帧」（v1.1.90 起）。
 
 做法
 ----
@@ -11,7 +11,7 @@ CPU 百分比产出节奏 —— 验证静态结论「10 秒一帧」。
 统计：
   · 数值变化时刻序列 ⇒ 变化周期
   · 同值平台长度
-  · 首帧可用耗时（基线 + 等一个窗口 + 差分 ⇒ 应 ≈ 1×窗口 = 10 秒）
+  · 首帧可用耗时（基线 + 等一个窗口 + 差分 ⇒ 应 ≈ 1×窗口 = 5 秒）
 
 与静态探针 `probe_fnstyle_cpu_refresh.py` 互为印证：
   静态探针查「代码里写的常量」，本探针查「跑起来是什么行为」。
@@ -68,9 +68,10 @@ def main():
         _tick["n"] += 1
         n = _tick["n"]
         # 每 tick 总时间片 +100；idle 的**增量**按**绝对时间**做正弦摆动
-        # ⚠️ 关键：不能按 tick 序号摆动 —— 两次采样（基线 + 差分）相隔 10 秒，
-        #    期间 tick 序号可能落在摆动周期的同一相位上 ⇒ 使用率恒定。
-        #    按绝对时间（time.monotonic）摆动，保证任何 10 秒间隔两端相位不同。
+        # ⚠️ 关键：不能按 tick 序号摆动 —— 两次采样（基线 + 差分）相隔一个窗口
+        #    （v1.1.90 起为 5 秒），期间 tick 序号可能落在摆动周期的同一相位上
+        #    ⇒ 使用率恒定。按绝对时间（time.monotonic）摆动，
+        #    保证任何窗口长度的间隔两端相位都不同。
         phase = time.monotonic() / 3.0
         idle_delta = 60 + int(10 * math.sin(phase))   # 50~70 连续摆动
         idle = 60 * n + (idle_delta - 60)
@@ -149,7 +150,7 @@ def main():
             print("平台切换点   : %s" %
                   ", ".join("t=%.1f(%s→%s)" % (e, segs[i][0], segs[i + 1][0])
                             for i, (_v, _s, e) in enumerate(segs[:-1])))
-            # 平台持续时长 ≈ 10 秒的整数倍？（首尾段可能不完整，剔除）
+            # 平台持续时长 ≈ 一个采样窗口的整数倍？（首尾段可能不完整，剔除）
             mids = seg_durs[1:-1] if len(seg_durs) > 2 else seg_durs
             if mids:
                 ds = sorted(mids)
@@ -172,15 +173,18 @@ def main():
          first_valid_at is not None and
          abs(first_valid_at - mc.CPU_SAMPLE_WINDOW) <= 4,
          "%.1fs vs 期望 %ds" % (first_valid_at or -1, mc.CPU_SAMPLE_WINDOW)),
-        ("CPU 采样窗口 = 10 秒", mc.CPU_SAMPLE_WINDOW == 10,
+        # ⚠️ v1.1.90：窗口由 10 改为 5（与飞牛原生 CPU 更新时长对齐）
+        ("CPU 采样窗口 = 5 秒", mc.CPU_SAMPLE_WINDOW == 5,
          "%s 秒" % mc.CPU_SAMPLE_WINDOW),
     ]
     if len(segs) >= 2:
-        # 每个完整平台应持续 ≈ 10 秒（= 一个采样窗口）
+        # 每个完整平台应持续 ≈ 一个采样窗口
+        # ⚠️ 断言阈值跟随常量（窗口 ±60%），不再写死 10.0 —— 以后调窗口不必改探针
+        win = float(mc.CPU_SAMPLE_WINDOW)
         mids = [round(e - s0, 2) for (_v, s0, e) in segs[1:-1]] \
             if len(segs) > 2 else []
-        ok10 = bool(mids) and all(abs(m - 10.0) <= 3.0 for m in mids)
-        checks.append(("完整平台持续 ≈ 10 秒（一个采样窗口）", ok10,
+        ok10 = bool(mids) and all(abs(m - win) <= win * 0.6 for m in mids)
+        checks.append(("完整平台持续 ≈ %g 秒（一个采样窗口）" % win, ok10,
                        "平台 %s" % (mids[:6] if mids else "样本不足")))
         checks.append(("平台数 %d ⇒ 窗口内新值产出 %d 次" % (len(segs), len(segs) - 1),
                        len(segs) >= 2, "%d 段" % len(segs)))

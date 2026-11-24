@@ -64,7 +64,7 @@ except Exception:  # pragma: no cover
 #    （nicDetail 里有新字段、但缺 tunnel 键，正是新旧代码混合的指纹）。
 #    这个常量会随 power 数据一起上报，从 API 一眼就能确认
 #    「NAS 上跑的到底是哪一版代码」，省掉逐字段比对。
-COLLECT_VERSION = "1.1.89"
+COLLECT_VERSION = "1.1.90"
 
 
 # ⚠️ v1.1.84：告警判定周期（秒）。
@@ -369,9 +369,16 @@ _CPU_STATE = {"last": None, "lastTime": None, "cores": None}
 # 窗口内每核能分到的 jiffy 数量决定量化分辨率：
 #   0.25s → ~25 jiffy/核 → 单 jiffy 占 4%   → 读数在 2%~64% 间乱跳
 #   3s    → ~300 jiffy/核 → 单 jiffy 占 0.33%
-#   10s   → ~1000 jiffy/核 → 单 jiffy 占 0.1% → 数值稳定
-# fnmonitor 在 NAS 上的实测配置也是 interval=10，两边口径才能对得上。
-CPU_SAMPLE_WINDOW = 10
+#   5s    → ~500 jiffy/核 → 单 jiffy 占 0.2%
+#   10s   → ~1000 jiffy/核 → 单 jiffy 占 0.1% → 数值最稳
+#
+# ⚠️ v1.1.90：窗口由 10 秒改为 **5 秒**（老板要求：与飞牛自身的 CPU 利用率
+# 更新时长保持一致 —— fnOS 桌面「运行状态」卡片的前端轮询周期是 5 秒）。
+#   代价：量化分辨率从 0.1% 降到 0.2%（单 jiffy 的影响翻倍）。
+#   收益：CPU% 数字刷新周期 10 秒 → 5 秒，与飞牛原生观感对齐。
+#   口径说明：fnmonitor 自身配置仍是 interval=10，但那是「采集缓存」的周期，
+#   与「前端展示刷新」是两回事 —— 这里对齐的是**用户看到的更新时长**。
+CPU_SAMPLE_WINDOW = 5
 
 
 def read_cpu_topology():
@@ -1350,20 +1357,25 @@ class MonitorCollector(object):
 
     ⚠️ CPU 使用率与其它指标的采样窗口**故意不同**：
       - 其它指标（内存/温度/硬盘/GPU）：interval 秒（默认 3 秒）刷新一次
-      - CPU 使用率与每核占用率：CPU_SAMPLE_WINDOW 秒（默认 10 秒）一次
+      - CPU 使用率与每核占用率：CPU_SAMPLE_WINDOW 秒（默认 5 秒）一次
 
-    为什么 CPU 要单独用 10 秒窗口：
+    为什么 CPU 要单独用独立的窗口：
       /proc/stat 的时间片精度是 **1 jiffy = 10ms**（USER_HZ=100）。
       采样窗口内每核能分到的 jiffy 数量决定了量化分辨率：
         0.25s 窗口 → 每核仅 ~25 jiffy → 单 jiffy 占 4% → 读数在 2%~64% 间乱跳
         3s   窗口 → 每核约 300 jiffy → 单 jiffy 占 0.33%
-        10s  窗口 → 每核约 1000 jiffy → 单 jiffy 占 0.1% → 数值稳定
-      fnmonitor 在 NAS 上的实际配置（/vol1/@appdata/fnmonitor/config.json）
-      也是 `interval = 10`，两边口径才能对得上。
+        5s   窗口 → 每核约 500 jiffy → 单 jiffy 占 0.2%
+        10s  窗口 → 每核约 1000 jiffy → 单 jiffy 占 0.1% → 数值最稳
+      ⇒ 窗口越短越「实时」，但读数跳动幅度越大。
 
+    ⚠️ v1.1.90：窗口由 10 秒改为 5 秒 —— 与**飞牛自身**「运行状态」卡片的
+      CPU 更新时长（前端轮询 5 秒）保持一致，用户看到的两边数字刷新节奏相同。
+      注意：fnmonitor 自身配置仍是 interval=10，那是**采集缓存**周期，
+      与**前端展示刷新**不是一回事 —— 本次对齐的是用户看到的观感。
       实测（同一台 NAS、同一份 /proc/stat、fnmonitor 原始算法离线复算）：
         0.25s 窗口读数序列：35.8 / 64.0 / 31.7 / 2.0 / 27.9 / 4.7   ← 极差 62 个百分点
         10s   窗口读数序列：34.4 / 43.7 / 20.7 / 17.8 / 14.9 / 4.8   ← 极差 39 个百分点
+      （5s 窗口的实测序列见 verify/verify_cpu_sample_window.py 输出）
     """
 
     def __init__(self, interval=3):
@@ -1398,7 +1410,7 @@ class MonitorCollector(object):
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
-        # CPU 独立采样线程（10 秒窗口），与 3 秒主循环并行
+        # CPU 独立采样线程（5 秒窗口），与 3 秒主循环并行
         self._cpu_thread = threading.Thread(target=self._cpu_loop, daemon=True)
         self._cpu_thread.start()
         # 启动硬盘巡检线程（定时全盘扫 SMART，独立于 3 秒采集循环）
@@ -1589,7 +1601,7 @@ class MonitorCollector(object):
             self._stop.wait(self.interval)
 
     def _collect_once(self):
-        # CPU 使用率**不在这里采集** —— 它需要 10 秒的采样窗口，
+        # CPU 使用率**不在这里采集** —— 它需要 5 秒的采样窗口，
         # 由独立的 _cpu_loop 线程负责（见类注释里的量化分辨率说明）。
         # 这里只取它最新一次的缓存结果。
         cpu = self._cpu_snapshot()
@@ -1643,7 +1655,7 @@ class MonitorCollector(object):
             self._cache = data
         return data
 
-    # ---------------- CPU 专用采样线程（10 秒窗口） ----------------
+    # ---------------- CPU 专用采样线程（5 秒窗口） ----------------
 
     def _cpu_snapshot(self):
         """取 CPU 线程最近一次的结果（可能还没有 → 返回不可用占位）。"""
@@ -1657,24 +1669,34 @@ class MonitorCollector(object):
 
         采集方式与 fnmonitor 一致 —— **两次采样差分**，采样点间隔就是窗口长度：
           第 1 轮：只记基线（collect_cpu 返回 available=False）
-          第 2 轮：与基线差分 → 得到这 10 秒窗口的使用率
-        所以第一轮有效读数要等 2×10 = 20 秒，之后每 10 秒刷新一次。
+          第 2 轮：与基线差分 → 得到这**一个窗口**的使用率
+        ⇒ 首帧有效读数要等「基线 + 一个完整窗口」≈ 1×CPU_SAMPLE_WINDOW，
+          之后每 CPU_SAMPLE_WINDOW 秒刷新一次。
+
+        ⚠️ v1.1.90：窗口由 10 秒改为 5 秒 —— 与**飞牛自身**「运行状态」卡片
+          的 CPU 更新时长（前端轮询 5 秒）对齐，两边用户看到的刷新节奏一致。
 
         ⚠️ 只有**拿到有效百分比**才更新缓存：
           若某轮差分失败（total_delta<=0，窗口内没有任何 jiffy 流逝），
           必须保留上一轮的有效值 —— 否则一次抖动就会把显示打成「不可用」，
           表现为处理器卡片整块数据消失。
+
+        节奏说明：每轮都是「记基线 → 等一个完整窗口 → 差分」，
+        所以**产出周期恒等于 CPU_SAMPLE_WINDOW**；差分失败时 `continue`
+        回到轮首重新记基线，代价是**跳过失败的那个窗口区间**，
+        但节奏不会乱（下一轮仍从新基线起算一个完整窗口）。
         """
         while not self._stop.is_set():
             try:
                 collect_cpu()          # 第 1 次：记基线（无百分比）
                 # 等一个完整窗口，再取第 2 次做差分
-                self._stop.wait(CPU_SAMPLE_WINDOW)
-                if self._stop.is_set():
+                if self._stop.wait(CPU_SAMPLE_WINDOW):
                     break
                 cpu = collect_cpu()     # 第 2 次：与基线差分
                 if not cpu.get("available"):
-                    continue            # 本轮无有效读数 → 保留上一轮
+                    # 本轮无有效读数 → 保留上一轮的有效值，
+                    # 回到轮首重新记基线（节奏仍是一个窗口一轮）。
+                    continue
                 with self._cpu_lock:
                     self._cpu_cache = cpu
             except Exception:
